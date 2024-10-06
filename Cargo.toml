@@ -1,0 +1,39 @@
+[package]
+name = "regexsolver"
+version = "0.1.0"
+edition = "2021"
+authors = ["Alexandre van Beurden"]
+repository = "https://github.com/RegexSolver/regexsolver"
+license = "MIT"
+keywords = ["automaton", "intersection", "union", "difference", "regex"]
+description = "Manipulate regex and automaton as if they were sets."
+readme = "README.md"
+
+[dependencies]
+env_logger = "0.11.3"
+serde = "1.0.197"
+serde_derive = "1.0.197"
+serde_json = "1.0.114"
+ciborium = "0.2.2"
+z85 = "3.0.5"
+aes-gcm-siv = "0.11.1"
+sha2 = "0.10.8"
+nohash-hasher = "0.2"
+ahash = "0.8.11"
+regex-syntax = "0.8.5"
+petgraph = "0.6.4"
+log = "0.4.21"
+rand = "0.8.5"
+lazy_static = "1.4.0"
+flate2 = { version = "1.0.30", features = [
+    "zlib-ng",
+], default-features = false }
+regex = "1.10.3"
+regex-charclass = { version = "1.0.3", features = ["serde"] }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "my_benchmark"
+harness = false
