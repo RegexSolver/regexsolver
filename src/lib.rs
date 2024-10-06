@@ -26,7 +26,6 @@ pub type IntMap<Key, Value> = HashMap<Key, Value, BuildHasherDefault<NoHashHashe
 pub type IntSet<Key> = HashSet<Key, BuildHasherDefault<NoHashHasher<Key>>>;
 pub type Range = RangeSet<Char>;
 
-
 /// A term is either:
 /// - a regular expression
 /// - an automaton
