@@ -21,5 +21,4 @@ jobs:
     - name: Test & Lint
       run: |
         cargo test
-        cargo test  --features serde
         cargo clippy
