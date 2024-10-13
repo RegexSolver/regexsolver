@@ -68,6 +68,6 @@ let term2 = Term::from_regex("de").unwrap();
 let subtraction = term1.subtraction(&term2).unwrap();
 
 if let Term::RegularExpression(regex) = subtraction {
-    assert_eq!("abc", regex.to_string());
+    println!("{}", regex.to_string()); // abc
 }
 ```
