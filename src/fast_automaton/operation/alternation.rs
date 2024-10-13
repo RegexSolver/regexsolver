@@ -29,7 +29,7 @@ impl FastAutomaton {
         &mut self,
         other: &FastAutomaton,
         new_states: &mut IntMap<usize, usize>,
-        used_bases: &UsedBases,
+        spanning_set: &SpanningSet,
     ) -> Result<IntSet<usize>, EngineError> {
         let mut imcomplete_states = IntSet::with_capacity(other.out_degree(other.start_state) + 1);
         let self_start_state_in_degree = self.in_degree(self.start_state);
@@ -64,7 +64,7 @@ impl FastAutomaton {
                 for (other_to_state, cond) in
                     other.transitions_from_state_enumerate_vec(&other.start_state)
                 {
-                    let cond = cond.project_to(&other.used_bases, used_bases)?;
+                    let cond = cond.project_to(&other.spanning_set, spanning_set)?;
                     let to_state = match new_states.entry(other_to_state) {
                         Entry::Occupied(o) => *o.get(),
                         Entry::Vacant(v) => {
@@ -143,8 +143,8 @@ impl FastAutomaton {
             return Ok(());
         }
 
-        let newly_used_bases = &self.used_bases.merge(&other.used_bases);
-        self.apply_newly_used_bases(newly_used_bases)?;
+        let new_spanning_set = &self.spanning_set.merge(&other.spanning_set);
+        self.apply_new_spanning_set(new_spanning_set)?;
 
         let mut new_states: IntMap<usize, usize> = IntMap::with_capacity_and_hasher(
             other.get_number_of_states(),
@@ -152,7 +152,7 @@ impl FastAutomaton {
         );
 
         let imcomplete_states =
-            self.prepare_start_states(other, &mut new_states, newly_used_bases)?;
+            self.prepare_start_states(other, &mut new_states, new_spanning_set)?;
         self.prepare_accept_states(other, &mut new_states, &imcomplete_states);
 
         for from_state in other.transitions_iter() {
@@ -165,7 +165,7 @@ impl FastAutomaton {
                 }
             };
             for (to_state, condition) in other.transitions_from_state_enumerate_iter(&from_state) {
-                let new_condition = condition.project_to(&other.used_bases, newly_used_bases)?;
+                let new_condition = condition.project_to(&other.spanning_set, new_spanning_set)?;
                 let new_to_state = match new_states.entry(*to_state) {
                     Entry::Occupied(o) => *o.get(),
                     Entry::Vacant(v) => {

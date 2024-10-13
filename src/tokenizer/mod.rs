@@ -1,12 +1,11 @@
 use std::{cmp::Ordering, collections::VecDeque, vec};
 
 use ahash::HashMapExt;
+use crate::fast_automaton::spanning_set::SpanningSet;
 use crate::Range;
 
 use crate::{
-    condition::Condition,
     fast_automaton::{FastAutomaton, State},
-    used_bases::UsedBases,
     IntMap, IntSet,
 };
 
@@ -54,18 +53,18 @@ impl Tokenizer<'_> {
         }
 
         Tokenizer {
-            range_tokenizer: RangeTokenizer::new(automaton.get_used_bases()),
+            range_tokenizer: RangeTokenizer::new(automaton.get_spanning_set()),
             automaton,
             state_to_token,
         }
     }
 
-    pub fn get_number_of_bases(&self) -> usize {
-        self.range_tokenizer.get_number_of_bases()
+    pub fn get_number_of_spanning_ranges(&self) -> usize {
+        self.range_tokenizer.get_number_of_spanning_ranges()
     }
 
-    pub fn get_used_bases(&self) -> &UsedBases {
-        self.range_tokenizer.get_used_bases()
+    pub fn get_spanning_set(&self) -> &SpanningSet {
+        self.range_tokenizer.get_spanning_set()
     }
 }
 

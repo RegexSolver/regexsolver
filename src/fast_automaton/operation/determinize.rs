@@ -11,7 +11,7 @@ impl FastAutomaton {
         }
         let execution_profile = ThreadLocalParams::get_execution_profile();
 
-        let bases = self.get_bases()?;
+        let ranges = self.get_ranges()?;
 
         let initial_vec = VecDeque::from(vec![self.start_state]);
 
@@ -21,14 +21,14 @@ impl FastAutomaton {
         let mut new_states = IntMap::with_capacity(map_capacity);
 
         let mut new_automaton = FastAutomaton::new_empty();
-        new_automaton.used_bases = self.used_bases.clone();
+        new_automaton.spanning_set = self.spanning_set.clone();
 
         worklist.push_back((vec![self.start_state], new_automaton.start_state));
         new_states.insert(Self::simple_hash(&initial_vec), new_automaton.start_state);
 
         let mut new_states_to_add = VecDeque::with_capacity(self.get_number_of_states());
         while let Some((states, r)) = worklist.pop_front() {
-            execution_profile.is_timed_out()?;
+            execution_profile.assert_not_timed_out()?;
 
             for state in &states {
                 if self.accept_states.contains(state) {
@@ -37,7 +37,7 @@ impl FastAutomaton {
                 }
             }
 
-            for base in &bases {
+            for base in &ranges {
                 for from_state in &states {
                     for (to_state, cond) in self.transitions_from_state_enumerate_iter(from_state) {
                         if cond.has_intersection(base) {

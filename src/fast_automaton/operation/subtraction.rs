@@ -18,10 +18,10 @@ impl FastAutomaton {
 
         let mut ranges = Vec::with_capacity(self.get_number_of_states());
         for from_state in self.transitions_iter() {
-            let mut new_condition = Condition::empty(&self.used_bases);
+            let mut new_condition = Condition::empty(&self.spanning_set);
             for (_, condition) in self.transitions_from_state_enumerate_iter(&from_state) {
                 new_condition = new_condition.union(condition);
-                ranges.push(condition.to_range(self.get_used_bases())?);
+                ranges.push(condition.to_range(self.get_spanning_set())?);
             }
 
             new_condition = new_condition.complement();
@@ -31,28 +31,15 @@ impl FastAutomaton {
 
         for (from_state, condition) in &transitions_to_crash_state {
             self.add_transition_to(*from_state, crash_state, condition);
-            ranges.push(condition.to_range(self.get_used_bases())?);
+            ranges.push(condition.to_range(self.get_spanning_set())?);
         }
 
-        let new_bases = UsedBases::compute_used_bases(&ranges);
-        self.project_to_bases(&new_bases)?;
+        let new_spanning_set = SpanningSet::compute_spanning_set(&ranges);
+        self.apply_new_spanning_set(&new_spanning_set)?;
 
         if self.in_degree(crash_state) == 1 {
             self.remove_state(crash_state);
         }
-        Ok(())
-    }
-
-    fn project_to_bases(&mut self, new_bases: &UsedBases) -> Result<(), EngineError> {
-        let previous_bases = self.used_bases.clone();
-
-        for from_state in self.transitions_vec() {
-            for (_, condition) in self.transitions_from_state_enumerate_iter_mut(&from_state) {
-                *condition = condition.project_to(&previous_bases, new_bases)?;
-            }
-        }
-
-        self.used_bases = new_bases.clone();
         Ok(())
     }
 

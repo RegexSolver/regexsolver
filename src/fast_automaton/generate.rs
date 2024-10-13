@@ -15,7 +15,7 @@ impl FastAutomaton {
             .get_bases()?
             .into_iter()
             .map(|c| {
-                let range = c.to_range(self.get_used_bases()).unwrap();
+                let range = c.to_range(self.get_spanning_set()).unwrap();
                 (c, range)
             })
             .collect::<Vec<_>>();
@@ -100,7 +100,7 @@ impl FastAutomaton {
 
         worklist.push_back((vec![], self.start_state));
         while let Some((ranges, state)) = worklist.pop_front() {
-            execution_profile.is_timed_out()?;
+            execution_profile.assert_not_timed_out()?;
             if self.accept_states.contains(&state) {
                 if ranges.is_empty() {
                     strings.insert(String::new());
@@ -137,7 +137,7 @@ impl FastAutomaton {
                 let range = match ranges_cache.entry(cond) {
                     Entry::Occupied(o) => o.get().clone(),
                     Entry::Vacant(v) => {
-                        let range = cond.to_range(&self.used_bases)?;
+                        let range = cond.to_range(&self.spanning_set)?;
                         v.insert(range.clone());
                         range
                     }

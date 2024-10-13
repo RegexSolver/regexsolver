@@ -1,9 +1,9 @@
 use std::{cmp, collections::VecDeque, fmt::Display};
 
+use crate::Range;
 use execution_profile::ThreadLocalParams;
 use regex_charclass::CharacterClass;
 use regex_syntax::hir::{Class, ClassBytes, ClassUnicode, Hir, HirKind};
-use crate::Range;
 
 use self::fast_automaton::FastAutomaton;
 
@@ -14,6 +14,7 @@ mod builder;
 mod operation;
 mod serializer;
 
+/// Represent a regular expression.
 #[derive(Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
 pub enum RegularExpression {
     Character(Range),

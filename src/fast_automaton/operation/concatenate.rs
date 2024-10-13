@@ -124,8 +124,8 @@ impl FastAutomaton {
             return Ok(());
         }
 
-        let newly_used_bases = &self.used_bases.merge(&other.used_bases);
-        self.apply_newly_used_bases(newly_used_bases)?;
+        let new_spanning_set = &self.spanning_set.merge(&other.spanning_set);
+        self.apply_new_spanning_set(new_spanning_set)?;
 
         let mut new_states: IntMap<usize, usize> = IntMap::with_capacity_and_hasher(
             other.get_number_of_states(),
@@ -196,7 +196,7 @@ impl FastAutomaton {
                     }
                 };
                 let projected_condition =
-                    condition.project_to(&other.used_bases, newly_used_bases)?;
+                    condition.project_to(&other.spanning_set, new_spanning_set)?;
                 for new_from_state in new_from_states.iter() {
                     for new_to_state in new_to_states.iter() {
                         self.add_transition_to(

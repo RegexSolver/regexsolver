@@ -4,9 +4,12 @@ use crate::Range;
 use fast_bit_vec::FastBitVec;
 use regex_charclass::{char::Char, CharacterClass};
 
-use crate::{error::EngineError, used_bases::UsedBases};
+use crate::error::EngineError;
+
+use super::spanning_set::SpanningSet;
 mod fast_bit_vec;
 
+/// Contains the condition of a transition in a [`crate::FastAutomaton`]
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Condition(FastBitVec);
 
@@ -24,25 +27,31 @@ impl Hash for Condition {
 
 impl Condition {
     #[inline]
-    pub fn empty(used_bases: &UsedBases) -> Self {
-        Self(FastBitVec::from_elem(used_bases.elements_len(), false))
+    pub fn empty(spanning_set: &SpanningSet) -> Self {
+        Self(FastBitVec::from_elem(
+            spanning_set.spanning_ranges_with_rest_len(),
+            false,
+        ))
     }
 
     #[inline]
-    pub fn total(used_bases: &UsedBases) -> Self {
-        Self(FastBitVec::from_elem(used_bases.elements_len(), true))
+    pub fn total(spanning_set: &SpanningSet) -> Self {
+        Self(FastBitVec::from_elem(
+            spanning_set.spanning_ranges_with_rest_len(),
+            true,
+        ))
     }
 
-    pub fn from_range(range: &Range, used_bases: &UsedBases) -> Result<Self, EngineError> {
+    pub fn from_range(range: &Range, spanning_set: &SpanningSet) -> Result<Self, EngineError> {
         if range.is_empty() {
-            return Ok(Self::empty(used_bases));
+            return Ok(Self::empty(spanning_set));
         } else if range.is_total() {
-            return Ok(Self::total(used_bases));
+            return Ok(Self::total(spanning_set));
         }
 
-        let mut cond = Self::empty(used_bases);
+        let mut cond = Self::empty(spanning_set);
 
-        for (i, base) in used_bases.get_elements().iter().enumerate() {
+        for (i, base) in spanning_set.get_spanning_ranges_with_rest().iter().enumerate() {
             if range.contains_all(base) {
                 cond.0.set(i, true);
             }
@@ -55,10 +64,10 @@ impl Condition {
         Ok(cond)
     }
 
-    pub fn to_range(&self, used_bases: &UsedBases) -> Result<Range, EngineError> {
+    pub fn to_range(&self, spanning_set: &SpanningSet) -> Result<Range, EngineError> {
         let mut range = Range::empty();
 
-        for (i, base) in used_bases.get_elements().iter().enumerate() {
+        for (i, base) in spanning_set.get_spanning_ranges_with_rest().iter().enumerate() {
             if let Some(has) = self.0.get(i) {
                 if has {
                     range = range.union(base);
@@ -73,14 +82,14 @@ impl Condition {
 
     pub fn project_to(
         &self,
-        currently_used_bases: &UsedBases,
-        newly_used_bases: &UsedBases,
+        current_spanning_set: &SpanningSet,
+        new_spanning_set: &SpanningSet,
     ) -> Result<Self, EngineError> {
-        if currently_used_bases == newly_used_bases {
+        if current_spanning_set == new_spanning_set {
             Ok(self.clone())
         } else {
-            let range = self.to_range(currently_used_bases)?;
-            Self::from_range(&range, newly_used_bases)
+            let range = self.to_range(current_spanning_set)?;
+            Self::from_range(&range, new_spanning_set)
         }
     }
 
@@ -122,10 +131,10 @@ impl Condition {
     pub fn has_character(
         &self,
         character: &u32,
-        used_bases: &UsedBases,
+        spanning_set: &SpanningSet,
     ) -> Result<bool, EngineError> {
         if let Some(character) = Char::from_u32(*character) {
-            Ok(self.to_range(used_bases)?.contains(character))
+            Ok(self.to_range(spanning_set)?.contains(character))
         } else {
             Ok(false)
         }
@@ -142,8 +151,8 @@ impl Condition {
     }
 
     #[inline]
-    pub fn get_cardinality(&self, used_bases: &UsedBases) -> Result<u32, EngineError> {
-        Ok(self.to_range(used_bases)?.get_cardinality())
+    pub fn get_cardinality(&self, spanning_set: &SpanningSet) -> Result<u32, EngineError> {
+        Ok(self.to_range(spanning_set)?.get_cardinality())
     }
 }
 
@@ -153,14 +162,14 @@ mod tests {
 
     use super::*;
 
-    fn get_used_bases() -> UsedBases {
+    fn get_spanning_set() -> SpanningSet {
         let ranges = vec![
             Range::new_from_range(Char::new('\0')..=Char::new('\u{2}')),
             Range::new_from_range(Char::new('\u{4}')..=Char::new('\u{6}')),
             Range::new_from_range(Char::new('\u{9}')..=Char::new('\u{9}')),
         ];
 
-        UsedBases::compute_used_bases(&ranges)
+        SpanningSet::compute_spanning_set(&ranges)
     }
 
     fn get_test_cases_range() -> Vec<Range> {
@@ -179,42 +188,42 @@ mod tests {
 
     #[test]
     fn test_empty_total() -> Result<(), String> {
-        let used_bases = get_used_bases();
-        let empty = Condition::empty(&used_bases);
+        let spanning_set = get_spanning_set();
+        let empty = Condition::empty(&spanning_set);
         assert!(empty.is_empty());
-        let total = Condition::total(&used_bases);
+        let total = Condition::total(&spanning_set);
         println!("{total}");
         assert!(total.is_total());
 
-        assert_eq!(Range::empty(), empty.to_range(&used_bases).unwrap());
-        assert_eq!(Range::total(), total.to_range(&used_bases).unwrap());
+        assert_eq!(Range::empty(), empty.to_range(&spanning_set).unwrap());
+        assert_eq!(Range::total(), total.to_range(&spanning_set).unwrap());
 
         assert_eq!(
             empty,
-            Condition::from_range(&Range::empty(), &used_bases).unwrap()
+            Condition::from_range(&Range::empty(), &spanning_set).unwrap()
         );
         assert_eq!(
             total,
-            Condition::from_range(&Range::total(), &used_bases).unwrap()
+            Condition::from_range(&Range::total(), &spanning_set).unwrap()
         );
 
         assert_eq!(empty, total.complement());
         assert_eq!(total, empty.complement());
 
-        let used_bases = UsedBases::new_total();
-        let empty = Condition::empty(&used_bases);
-        let total = Condition::total(&used_bases);
+        let spanning_set = SpanningSet::new_total();
+        let empty = Condition::empty(&spanning_set);
+        let total = Condition::total(&spanning_set);
 
-        assert_eq!(Range::empty(), empty.to_range(&used_bases).unwrap());
-        assert_eq!(Range::total(), total.to_range(&used_bases).unwrap());
+        assert_eq!(Range::empty(), empty.to_range(&spanning_set).unwrap());
+        assert_eq!(Range::total(), total.to_range(&spanning_set).unwrap());
 
         assert_eq!(
             empty,
-            Condition::from_range(&Range::empty(), &used_bases).unwrap()
+            Condition::from_range(&Range::empty(), &spanning_set).unwrap()
         );
         assert_eq!(
             total,
-            Condition::from_range(&Range::total(), &used_bases).unwrap()
+            Condition::from_range(&Range::total(), &spanning_set).unwrap()
         );
 
         assert_eq!(empty, total.complement());
@@ -225,29 +234,29 @@ mod tests {
 
     #[test]
     fn test_from_to_range() -> Result<(), String> {
-        let used_bases = get_used_bases();
+        let spanning_set = get_spanning_set();
 
         for range in get_test_cases_range() {
-            assert_range_convertion_to_range(&range, &used_bases);
-            assert_range_convertion_to_range(&range.complement(), &used_bases);
+            assert_range_convertion_to_range(&range, &spanning_set);
+            assert_range_convertion_to_range(&range.complement(), &spanning_set);
         }
 
         Ok(())
     }
 
-    fn assert_range_convertion_to_range(range: &Range, used_bases: &UsedBases) {
-        let condition = Condition::from_range(range, used_bases).unwrap();
-        let range_from_condition = condition.to_range(used_bases).unwrap();
+    fn assert_range_convertion_to_range(range: &Range, spanning_set: &SpanningSet) {
+        let condition = Condition::from_range(range, spanning_set).unwrap();
+        let range_from_condition = condition.to_range(spanning_set).unwrap();
         assert_eq!(range, &range_from_condition);
 
-        let range_from_condition = condition.complement().to_range(used_bases).unwrap();
+        let range_from_condition = condition.complement().to_range(spanning_set).unwrap();
 
         assert_eq!(range.complement(), range_from_condition);
     }
 
     #[test]
     fn test_project_to() -> Result<(), String> {
-        let currently_used_bases = get_used_bases();
+        let current_spanning_set = get_spanning_set();
 
         let ranges = vec![
             Range::new_from_range(Char::new('\u{0}')..=Char::new('\u{1}')),
@@ -256,14 +265,14 @@ mod tests {
             Range::new_from_range(Char::new('\u{6}')..=Char::new('\u{7}')),
             Range::new_from_range(Char::new('\u{9}')..=Char::new('\u{9}')),
         ];
-        let newly_used_bases = UsedBases::compute_used_bases(&ranges);
+        let new_spanning_set = SpanningSet::compute_spanning_set(&ranges);
 
         for range in get_test_cases_range() {
-            assert_project_to(&range, &currently_used_bases, &newly_used_bases);
+            assert_project_to(&range, &current_spanning_set, &new_spanning_set);
             assert_project_to(
                 &range.complement(),
-                &currently_used_bases,
-                &newly_used_bases,
+                &current_spanning_set,
+                &new_spanning_set,
             );
         }
 
@@ -272,8 +281,8 @@ mod tests {
 
     fn assert_project_to(
         range: &Range,
-        currently_used_characters: &UsedBases,
-        newly_used_characters: &UsedBases,
+        currently_used_characters: &SpanningSet,
+        newly_used_characters: &SpanningSet,
     ) {
         let condition = Condition::from_range(range, currently_used_characters).unwrap();
         let projected_condition = condition
@@ -286,7 +295,7 @@ mod tests {
 
     #[test]
     fn test_union_intersection_complement() -> Result<(), String> {
-        let used_characters = get_used_bases();
+        let used_characters = get_spanning_set();
 
         for range_1 in get_test_cases_range() {
             for range_2 in get_test_cases_range() {
@@ -315,7 +324,7 @@ mod tests {
     fn assert_union_intersection_complement(
         range_1: &Range,
         range_2: &Range,
-        used_characters: &UsedBases,
+        used_characters: &SpanningSet,
     ) {
         let condition_1 = Condition::from_range(range_1, used_characters).unwrap();
         let condition_2 = Condition::from_range(range_2, used_characters).unwrap();
@@ -347,30 +356,30 @@ mod tests {
             Range::new_from_range(Char::new('\u{B}')..=Char::new('\u{63}')),
             Range::new_from_range(Char::new('\u{65}')..=Char::new('\u{10FFFF}')),
         ];
-        let used_bases = UsedBases::compute_used_bases(&ranges);
-        println!("{:?}", used_bases);
+        let spanning_set = SpanningSet::compute_spanning_set(&ranges);
+        println!("{:?}", spanning_set);
 
         let range1 = Range::new_from_ranges(&[
             AnyRange::from(Char::new('\u{0}')..=Char::new('\u{9}')),
             AnyRange::from(Char::new('\u{B}')..=Char::new('\u{63}')),
             AnyRange::from(Char::new('\u{65}')..=Char::new('\u{10FFFF}')),
         ]);
-        let condition1 = Condition::from_range(&range1, &used_bases).unwrap();
-        assert_eq!(range1, condition1.to_range(&used_bases).unwrap());
+        let condition1 = Condition::from_range(&range1, &spanning_set).unwrap();
+        assert_eq!(range1, condition1.to_range(&spanning_set).unwrap());
 
         let range2 = Range::new_from_range(Char::new('\u{B}')..=Char::new('\u{63}'));
-        let condition2 = Condition::from_range(&range2, &used_bases).unwrap();
-        assert_eq!(range2, condition2.to_range(&used_bases).unwrap());
+        let condition2 = Condition::from_range(&range2, &spanning_set).unwrap();
+        assert_eq!(range2, condition2.to_range(&spanning_set).unwrap());
 
         let union_condition = condition1.union(&condition2);
-        let union_range = union_condition.to_range(&used_bases).unwrap();
+        let union_range = union_condition.to_range(&spanning_set).unwrap();
 
         assert_eq!(range1, union_range);
 
         let complement = union_condition.complement();
         assert_eq!(
             union_range.complement(),
-            complement.to_range(&used_bases).unwrap()
+            complement.to_range(&spanning_set).unwrap()
         );
 
         Ok(())

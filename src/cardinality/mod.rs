@@ -1,14 +1,13 @@
 use serde_derive::{Deserialize, Serialize};
 
-pub trait IntegerTrait {}
-
-impl IntegerTrait for u128 {}
-impl IntegerTrait for u32 {}
-
+/// Represent a number.
 #[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value")]
-pub enum Cardinality<U: IntegerTrait> {
+pub enum Cardinality<U> {
+    /// An infinite number.
     Infinite,
+    /// A finite number.
     Integer(U),
+    /// A finite number too big to be represented.
     BigInteger,
 }

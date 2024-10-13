@@ -11,7 +11,7 @@ impl FastAutomaton {
         } else if other.is_total() {
             return Ok(self.clone());
         }
-        let newly_used_bases = self.used_bases.merge(&other.used_bases);
+        let new_spanning_set = self.spanning_set.merge(&other.spanning_set);
 
         let mut new_automaton = FastAutomaton::new_empty();
         let mut worklist =
@@ -33,8 +33,8 @@ impl FastAutomaton {
                 new_automaton.accept(p.0);
             }
 
-            let transitions_1 = self.get_projected_transitions(p.1, &newly_used_bases)?;
-            let transitions_2 = other.get_projected_transitions(p.2, &newly_used_bases)?;
+            let transitions_1 = self.get_projected_transitions(p.1, &new_spanning_set)?;
+            let transitions_2 = other.get_projected_transitions(p.2, &new_spanning_set)?;
 
             for (n1, condition_1) in transitions_1 {
                 for (n2, condition_2) in &transitions_2 {
@@ -56,7 +56,7 @@ impl FastAutomaton {
                 }
             }
         }
-        new_automaton.used_bases = newly_used_bases;
+        new_automaton.spanning_set = new_spanning_set;
         new_automaton.remove_dead_transitions();
         Ok(new_automaton)
     }
@@ -67,7 +67,7 @@ impl FastAutomaton {
         } else if self.is_total() || other.is_total() {
             return Ok(true);
         }
-        let newly_used_bases = self.used_bases.merge(&other.used_bases);
+        let new_spanning_set = self.spanning_set.merge(&other.spanning_set);
 
         let mut new_automaton = FastAutomaton::new_empty();
         let mut worklist =
@@ -89,8 +89,8 @@ impl FastAutomaton {
                 return Ok(true);
             }
 
-            let transitions_1 = self.get_projected_transitions(p.1, &newly_used_bases)?;
-            let transitions_2 = other.get_projected_transitions(p.2, &newly_used_bases)?;
+            let transitions_1 = self.get_projected_transitions(p.1, &new_spanning_set)?;
+            let transitions_2 = other.get_projected_transitions(p.2, &new_spanning_set)?;
 
             for (n1, condition_1) in transitions_1 {
                 for (n2, condition_2) in &transitions_2 {
@@ -118,12 +118,12 @@ impl FastAutomaton {
     fn get_projected_transitions(
         &self,
         state: State,
-        newly_used_bases: &UsedBases,
+        new_spanning_set: &SpanningSet,
     ) -> Result<Vec<(State, Condition)>, EngineError> {
         let transitions_1: Result<Vec<_>, EngineError> = self
             .transitions_from_state_enumerate_iter(&state)
             .map(
-                |(&s, c)| match c.project_to(&self.used_bases, newly_used_bases) {
+                |(&s, c)| match c.project_to(&self.spanning_set, new_spanning_set) {
                     Ok(condition) => Ok((s, condition)),
                     Err(err) => Err(err),
                 },

@@ -11,7 +11,7 @@ impl FastAutomaton {
             start_state: 0,
             accept_states: IntSet::default(),
             removed_states: IntSet::default(),
-            used_bases: UsedBases::new_empty(),
+            spanning_set: SpanningSet::new_empty(),
             deterministic: true,
             cyclic: false,
         }
@@ -27,12 +27,12 @@ impl FastAutomaton {
     #[inline]
     pub fn new_total() -> Self {
         let mut automaton: FastAutomaton = Self::new_empty();
-        automaton.used_bases = UsedBases::new_total();
+        automaton.spanning_set = SpanningSet::new_total();
         automaton.accept(automaton.start_state);
         automaton.add_transition_to(
             0,
             0,
-            &Condition::total(&automaton.used_bases),
+            &Condition::total(&automaton.spanning_set),
         );
         automaton
     }
@@ -54,19 +54,19 @@ impl FastAutomaton {
         }
         let new_state = automaton.new_state();
 
-        let used_bases = UsedBases::compute_used_bases(&[range.clone()]);
-        let condition = Condition::from_range(range, &used_bases)?;
-        automaton.used_bases = used_bases;
+        let spanning_set = SpanningSet::compute_spanning_set(&[range.clone()]);
+        let condition = Condition::from_range(range, &spanning_set)?;
+        automaton.spanning_set = spanning_set;
         automaton.add_transition_to(0, new_state, &condition);
         automaton.accept(new_state);
         Ok(automaton)
     }
 
-    pub fn apply_newly_used_bases(
+    pub fn apply_new_spanning_set(
         &mut self,
-        newly_used_bases: &UsedBases,
+        new_spanning_set: &SpanningSet,
     ) -> Result<(), EngineError> {
-        if newly_used_bases == &self.used_bases {
+        if new_spanning_set == &self.spanning_set {
             return Ok(());
         }
         for from_state in &self.transitions_vec() {
@@ -75,14 +75,14 @@ impl FastAutomaton {
                     Entry::Occupied(mut o) => {
                         o.insert(
                             o.get()
-                                .project_to(&self.used_bases, newly_used_bases)?,
+                                .project_to(&self.spanning_set, new_spanning_set)?,
                         );
                     }
                     Entry::Vacant(_) => {}
                 };
             }
         }
-        self.used_bases = newly_used_bases.clone();
+        self.spanning_set = new_spanning_set.clone();
         Ok(())
     }
 
@@ -92,7 +92,7 @@ impl FastAutomaton {
         self.start_state = model.start_state;
         self.accept_states = model.accept_states.clone();
         self.removed_states = model.removed_states.clone();
-        self.used_bases = model.used_bases.clone();
+        self.spanning_set = model.spanning_set.clone();
         self.deterministic = model.deterministic;
         self.cyclic = model.cyclic;
     }

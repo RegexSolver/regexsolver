@@ -2,16 +2,26 @@ use std::fmt::{self};
 
 use crate::tokenizer::token::TokenError;
 
+/// An error thrown by the engine.
 #[derive(Debug, PartialEq, Eq)]
 pub enum EngineError {
+    /// Invalid character used in regex.
     InvalidCharacterInRegex,
+    /// The operation took too much time.
     OperationTimeOutError,
+    /// The given automaton should be deterministic.
     AutomatonShouldBeDeterministic,
+    /// The automaton has too many states.
     AutomatonHasTooManyStates,
+    /// The regular expression can not be parsed.
     RegexSyntaxError(String),
+    /// Too many terms are used in the operation.
     TooMuchTerms(usize, usize),
+    /// The provided range can not be built from the spanning set.
     ConditionInvalidRange,
+    /// The provided index is out of bound of the condition.
     ConditionIndexOutOfBound,
+    /// There is an error with one of the token.
     TokenError(TokenError),
 }
 
@@ -25,7 +35,7 @@ impl fmt::Display for EngineError {
             EngineError::RegexSyntaxError(err) => write!(f, "{err}."),
             EngineError::TooMuchTerms(max, got) => write!(f, "Too many terms are used in this operation, the maximum allowed for your plan is {max} and you used {got}."),
             EngineError::TokenError(err) =>  write!(f, "{err}."),
-            EngineError::ConditionInvalidRange => write!(f, "The provided range can not be built from bases."),
+            EngineError::ConditionInvalidRange => write!(f, "The provided range can not be built from the spanning set."),
             EngineError::ConditionIndexOutOfBound => write!(f, "The provided index is out of bound of the condition."),
         }
     }

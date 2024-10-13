@@ -1,25 +1,28 @@
-use ahash::{AHashMap, HashSetExt};
-use regex_charclass::CharacterClass;
 use crate::Range;
+use ahash::{AHashMap, HashSetExt};
+use condition::Condition;
+use regex_charclass::CharacterClass;
+use spanning_set::SpanningSet;
 use std::collections::hash_map::Entry;
 use std::collections::VecDeque;
 use std::fmt::Display;
 
-use crate::condition::Condition;
 use crate::tokenizer::Tokenizer;
-use crate::used_bases::UsedBases;
 use crate::{IntMap, IntSet};
 
-pub type State = usize;
-pub type Transitions = IntMap<State, Condition>;
+pub(crate) type State = usize;
+pub(crate) type Transitions = IntMap<State, Condition>;
 
 mod analyze;
 mod builder;
+pub mod condition;
 mod convert;
 mod generate;
 mod operation;
 mod serializer;
+pub mod spanning_set;
 
+/// Represent a finite state automaton.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FastAutomaton {
     transitions: Vec<Transitions>,
@@ -27,7 +30,7 @@ pub struct FastAutomaton {
     start_state: State,
     accept_states: IntSet<State>,
     removed_states: IntSet<State>,
-    used_bases: UsedBases,
+    spanning_set: SpanningSet,
     deterministic: bool,
     cyclic: bool,
 }
@@ -54,7 +57,7 @@ impl Display for FastAutomaton {
                     "\t{} -> {} [label=\"{}\"]",
                     from_state,
                     to_state,
-                    cond.to_range(&self.used_bases)
+                    cond.to_range(&self.spanning_set)
                         .expect("Cannot convert condition to range.")
                         .to_regex()
                         .replace('\\', "\\\\")
@@ -234,8 +237,8 @@ impl FastAutomaton {
     }
 
     #[inline]
-    pub fn get_used_bases(&self) -> &UsedBases {
-        &self.used_bases
+    pub fn get_spanning_set(&self) -> &SpanningSet {
+        &self.spanning_set
     }
 
     #[inline]
@@ -271,7 +274,7 @@ impl FastAutomaton {
             }
             let curr_char = input.chars().nth(position).unwrap() as u32;
             for (to_state, cond) in self.transitions_from_state_enumerate_iter(current_state) {
-                if cond.has_character(&curr_char, &self.used_bases).unwrap() {
+                if cond.has_character(&curr_char, &self.spanning_set).unwrap() {
                     if position + 1 == input.len() {
                         if self.accept_states.contains(to_state) {
                             return true;

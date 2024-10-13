@@ -1,6 +1,6 @@
 use token::TokenError;
 
-use crate::error::EngineError;
+use crate::{error::EngineError, fast_automaton::condition::Condition};
 
 use self::token::range_token::RangeToken;
 
@@ -47,7 +47,7 @@ impl Tokenizer<'_> {
                     vec.push(AutomatonToken::Range(RangeToken::Total));
                 } else {
                     let range = condition
-                        .to_range(self.automaton.get_used_bases())
+                        .to_range(self.automaton.get_spanning_set())
                         .expect("It should be possible to convert the condition to range.");
                     self.range_tokenizer
                         .range_to_embedding(&range)
@@ -69,7 +69,7 @@ impl Tokenizer<'_> {
 
     pub fn from_embedding(&self, vec: &Vec<AutomatonToken>) -> Result<FastAutomaton, EngineError> {
         let mut automaton = FastAutomaton::new_empty();
-        automaton.apply_newly_used_bases(self.automaton.get_used_bases())?;
+        automaton.apply_new_spanning_set(self.automaton.get_spanning_set())?;
 
         let mut from_state = None;
         let mut to_state = None;
@@ -124,7 +124,7 @@ impl Tokenizer<'_> {
         to_state: State,
         range: &Range,
     ) -> Result<(), EngineError> {
-        let condition = Condition::from_range(range, automaton.get_used_bases())?;
+        let condition = Condition::from_range(range, automaton.get_spanning_set())?;
         automaton.add_transition_to(from_state, to_state, &condition);
         Ok(())
     }

@@ -1,23 +1,24 @@
-use crate::used_bases::UsedBases;
-
 use self::token::range_token::RangeToken;
 
 use super::*;
 
 #[derive(Debug)]
 pub struct RangeTokenizer<'a> {
-    used_bases: &'a UsedBases,
+    spanning_set: &'a SpanningSet,
     total: Range,
 }
 
 impl RangeTokenizer<'_> {
-    pub fn get_used_bases(&self) -> &UsedBases {
-        self.used_bases
+    pub fn get_spanning_set(&self) -> &SpanningSet {
+        self.spanning_set
     }
 
-    pub fn new(used_bases: &UsedBases) -> RangeTokenizer<'_> {
-        let total = used_bases.get_rest().complement();
-        RangeTokenizer { used_bases, total }
+    pub fn new(spanning_set: &SpanningSet) -> RangeTokenizer<'_> {
+        let total = spanning_set.get_rest().complement();
+        RangeTokenizer {
+            spanning_set,
+            total,
+        }
     }
 
     pub fn range_to_embedding(&self, range: &Range) -> Option<Vec<RangeToken>> {
@@ -28,7 +29,7 @@ impl RangeTokenizer<'_> {
         }
 
         let mut vec = vec![];
-        for (token, base) in self.used_bases.get_bases().enumerate() {
+        for (token, base) in self.spanning_set.get_spanning_ranges().enumerate() {
             if range.contains_all(base) {
                 vec.push(RangeToken::Base(token));
             }
@@ -62,12 +63,12 @@ impl RangeTokenizer<'_> {
     pub fn token_to_range(&self, token: &RangeToken) -> Option<&Range> {
         match token {
             RangeToken::Total => Some(&self.total),
-            RangeToken::Base(b) => self.used_bases.get_base(*b),
+            RangeToken::Base(b) => self.spanning_set.get_spanning_range(*b),
             RangeToken::Error => panic!("error token"),
         }
     }
 
-    pub fn get_number_of_bases(&self) -> usize {
-        self.used_bases.get_number_of_bases()
+    pub fn get_number_of_spanning_ranges(&self) -> usize {
+        self.spanning_set.get_number_of_spanning_ranges()
     }
 }

@@ -29,7 +29,7 @@ impl FastAutomaton {
                 for (to_state, condition) in to_states {
                     if let Some(distance) = current_distance.checked_mul(
                         condition
-                            .get_cardinality(&self.used_bases)
+                            .get_cardinality(&self.spanning_set)
                             .expect("It should be possible to get the cardinality of a condition."),
                     ) {
                         if let Some(new_distance) =

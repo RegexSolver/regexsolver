@@ -22,7 +22,7 @@ struct GraphWrapper {
     graph: StableGraph<u32, RegularExpression>,
     start_state: NodeIndex,
     accept_state: NodeIndex,
-    used_bases: UsedBases,
+    spanning_set: SpanningSet,
     node_index_count: u32,
 }
 
@@ -57,7 +57,7 @@ impl GraphWrapper {
                     from_node,
                     to_node,
                     RegularExpression::Character(
-                        condition.to_range(&automaton.used_bases).expect(
+                        condition.to_range(&automaton.spanning_set).expect(
                             "The condition should have been able to be converted to range.",
                         ),
                     ),
@@ -79,7 +79,7 @@ impl GraphWrapper {
             graph,
             start_state: *added_nodes.get(&automaton.start_state).unwrap(),
             accept_state: new_accept_state,
-            used_bases: automaton.used_bases.clone(),
+            spanning_set: automaton.spanning_set.clone(),
             node_index_count: count,
         }
     }
@@ -136,7 +136,7 @@ impl GraphWrapper {
         let groups = Self::get_strongly_connected_components(&self.graph);
 
         for group in groups {
-            execution_profile.is_timed_out()?;
+            execution_profile.assert_not_timed_out()?;
 
             let mut group_start_states = AHashSet::new();
             let mut group_accept_states = AHashSet::new();
@@ -196,7 +196,7 @@ impl GraphWrapper {
                         graph: subgraph.clone(),
                         start_state: subgraph_start_state,
                         accept_state: subgraph_accept_state,
-                        used_bases: self.used_bases.clone(),
+                        spanning_set: self.spanning_set.clone(),
                         node_index_count: self.node_index_count,
                     };
 

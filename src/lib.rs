@@ -14,21 +14,19 @@ use regex_charclass::{char::Char, irange::RangeSet};
 use serde::{Deserialize, Serialize};
 
 pub mod cardinality;
-pub mod condition;
 pub mod error;
 pub mod execution_profile;
 pub mod fast_automaton;
 pub mod regex;
 pub mod tokenizer;
-pub mod used_bases;
 
-pub type IntMap<Key, Value> = HashMap<Key, Value, BuildHasherDefault<NoHashHasher<Key>>>;
-pub type IntSet<Key> = HashSet<Key, BuildHasherDefault<NoHashHasher<Key>>>;
-pub type Range = RangeSet<Char>;
+type IntMap<Key, Value> = HashMap<Key, Value, BuildHasherDefault<NoHashHasher<Key>>>;
+type IntSet<Key> = HashSet<Key, BuildHasherDefault<NoHashHasher<Key>>>;
+type Range = RangeSet<Char>;
 
-/// A term is either:
-/// - a regular expression
-/// - an automaton
+/// Represents a term that can be either a regular expression or a finite automaton. This term can be manipulated with a wide range of operations.
+/// 
+/// To put constraint and limitation on the execution of operations please refer to [`execution_profile::ExecutionProfile`].
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value")]
 pub enum Term {
@@ -38,11 +36,289 @@ pub enum Term {
     Automaton(FastAutomaton),
 }
 
-/// A details contains the following information about a term:
-/// - cardinality: the number of unique strings matched
-/// - length: the minimum and the maximum length of matched strings
-/// - empty: if it does not match any string
-/// - total: if it match all possible strings
+impl Term {
+    /// Create a term based on the given pattern.
+    ///
+    /// # Example:
+    ///
+    /// ```
+    /// use regexsolver::Term;
+    ///
+    /// let term = Term::from_regex(".*abc.*").unwrap();
+    /// ```
+    pub fn from_regex(regex: &str) -> Result<Self, EngineError> {
+        Ok(Term::RegularExpression(RegularExpression::new(regex)?))
+    }
+
+    /// Compute the union of the given collection of terms.
+    /// Returns the resulting term.
+    ///
+    /// # Example:
+    ///
+    /// ```
+    /// use regexsolver::Term;
+    ///
+    /// let term1 = Term::from_regex("abc").unwrap();
+    /// let term2 = Term::from_regex("de").unwrap();
+    /// let term3 = Term::from_regex("fghi").unwrap();
+    ///
+    /// let union = term1.union(&[term2, term3]).unwrap();
+    ///
+    /// if let Term::RegularExpression(regex) = union {
+    ///     assert_eq!("(abc|de|fghi)", regex.to_string());
+    /// }
+    /// ```
+    pub fn union(&self, terms: &[Term]) -> Result<Term, EngineError> {
+        Self::check_number_of_terms(terms)?;
+
+        let mut return_regex = RegularExpression::new_empty();
+        let mut return_automaton = FastAutomaton::new_empty();
+        match self {
+            Term::RegularExpression(regular_expression) => {
+                return_regex = regular_expression.clone();
+            }
+            Term::Automaton(fast_automaton) => {
+                return_automaton = fast_automaton.clone();
+            }
+        }
+        for operand in terms {
+            match operand {
+                Term::RegularExpression(regex) => {
+                    return_regex = return_regex.union(regex);
+                    if return_regex.is_total() {
+                        return Ok(Term::RegularExpression(RegularExpression::new_total()));
+                    }
+                }
+                Term::Automaton(automaton) => {
+                    return_automaton = return_automaton.union(automaton)?;
+                    if return_automaton.is_total() {
+                        return Ok(Term::RegularExpression(RegularExpression::new_total()));
+                    }
+                }
+            }
+        }
+
+        if return_automaton.is_empty() {
+            Ok(Term::RegularExpression(return_regex))
+        } else {
+            if !return_regex.is_empty() {
+                return_automaton = return_automaton.union(&return_regex.to_automaton()?)?;
+            }
+
+            if let Some(regex) = return_automaton.to_regex() {
+                Ok(Term::RegularExpression(regex))
+            } else {
+                Ok(Term::Automaton(return_automaton))
+            }
+        }
+    }
+
+    /// Compute the intersection of the given collection of terms.
+    /// Returns the resulting term.
+    ///
+    /// # Example:
+    ///
+    /// ```
+    /// use regexsolver::Term;
+    ///
+    /// let term1 = Term::from_regex("(abc|de){2}").unwrap();
+    /// let term2 = Term::from_regex("de.*").unwrap();
+    /// let term3 = Term::from_regex(".*abc").unwrap();
+    ///
+    /// let intersection = term1.intersection(&[term2, term3]).unwrap();
+    ///
+    /// if let Term::RegularExpression(regex) = intersection {
+    ///     assert_eq!("deabc", regex.to_string());
+    /// }
+    /// ```
+    pub fn intersection(&self, terms: &[Term]) -> Result<Term, EngineError> {
+        Self::check_number_of_terms(terms)?;
+        let mut return_automaton = self.get_automaton()?;
+        for term in terms {
+            let automaton = term.get_automaton()?;
+            return_automaton = Cow::Owned(return_automaton.intersection(&automaton)?);
+            if return_automaton.is_empty() {
+                return Ok(Term::RegularExpression(RegularExpression::new_empty()));
+            }
+        }
+
+        if let Some(regex) = return_automaton.to_regex() {
+            Ok(Term::RegularExpression(regex))
+        } else {
+            Ok(Term::Automaton(return_automaton.into_owned()))
+        }
+    }
+
+    /// Compute the subtraction/difference of the two given terms.
+    /// Returns the resulting term.
+    ///
+    /// # Example:
+    ///
+    /// ```
+    /// use regexsolver::Term;
+    ///
+    /// let term1 = Term::from_regex("(abc|de)").unwrap();
+    /// let term2 = Term::from_regex("de").unwrap();
+    ///
+    /// let subtraction = term1.subtraction(&term2).unwrap();
+    ///
+    /// if let Term::RegularExpression(regex) = subtraction {
+    ///     assert_eq!("abc", regex.to_string());
+    /// }
+    /// ```
+    pub fn subtraction(&self, subtrahend: &Term) -> Result<Term, EngineError> {
+        let minuend_automaton = self.get_automaton()?;
+        let subtrahend_automaton = subtrahend.get_automaton()?;
+        let subtrahend_automaton =
+            Self::determinize_subtrahend(&minuend_automaton, &subtrahend_automaton)?;
+        let return_automaton = minuend_automaton.subtraction(&subtrahend_automaton)?;
+
+        if let Some(regex) = return_automaton.to_regex() {
+            Ok(Term::RegularExpression(regex))
+        } else {
+            Ok(Term::Automaton(return_automaton))
+        }
+    }
+
+    /// See [`Self::subtraction`].
+    #[inline]
+    pub fn difference(&self, subtrahend: &Term) -> Result<Term, EngineError> {
+        self.subtraction(subtrahend)
+    }
+
+    /// Returns the Details of the given term.
+    ///
+    /// # Example:
+    ///
+    /// ```
+    /// use regexsolver::{Term, cardinality::Cardinality};
+    ///
+    /// let term = Term::from_regex("(abc|de)").unwrap();
+    ///
+    /// let details = term.get_details().unwrap();
+    ///
+    /// assert_eq!(Some(Cardinality::Integer(2)), *details.get_cardinality());
+    /// assert_eq!((Some(2), Some(3)), *details.get_length());
+    /// assert!(!details.is_empty());
+    /// assert!(!details.is_total());
+    /// ```
+    pub fn get_details(&self) -> Result<Details, EngineError> {
+        match self {
+            Term::RegularExpression(regex) => Ok(Details {
+                cardinality: Some(regex.get_cardinality()),
+                length: regex.get_length(),
+                empty: regex.is_empty(),
+                total: regex.is_total(),
+            }),
+            Term::Automaton(automaton) => Ok(Details {
+                cardinality: automaton.get_cardinality(),
+                length: automaton.get_length(),
+                empty: automaton.is_empty(),
+                total: automaton.is_total(),
+            }),
+        }
+    }
+
+    /// Generate strings matched by the given term.
+    ///
+    /// # Example:
+    ///
+    /// ```
+    /// use regexsolver::Term;
+    ///
+    /// let term = Term::from_regex("(abc|de){2}").unwrap();
+    ///
+    /// let strings = term.generate_strings(3).unwrap();
+    ///
+    /// assert_eq!(3, strings.len()); // ex: ["deabc", "dede", "abcde"]
+    /// ```
+    pub fn generate_strings(&self, count: usize) -> Result<Vec<String>, EngineError> {
+        Ok(self
+            .get_automaton()?
+            .generate_strings(count)?
+            .into_iter()
+            .collect())
+    }
+
+    /// Compute if the two given terms are equivalent.
+    ///
+    /// # Example:
+    ///
+    /// ```
+    /// use regexsolver::Term;
+    ///
+    /// let term1 = Term::from_regex("(abc|de)").unwrap();
+    /// let term2 = Term::from_regex("(abc|de)*").unwrap();
+    ///
+    /// assert!(!term1.are_equivalent(&term2).unwrap());
+    /// ```
+    pub fn are_equivalent(&self, that: &Term) -> Result<bool, EngineError> {
+        if self == that {
+            return Ok(true);
+        }
+
+        let automaton_1 = self.get_automaton()?;
+        let automaton_2 = that.get_automaton()?;
+        automaton_1.is_equivalent_of(&automaton_2)
+    }
+
+    /// Compute if the first term is a subset of the second one.
+    ///
+    /// # Example:
+    ///
+    /// ```
+    /// use regexsolver::Term;
+    ///
+    /// let term1 = Term::from_regex("de").unwrap();
+    /// let term2 = Term::from_regex("(abc|de)").unwrap();
+    ///
+    /// assert!(term1.is_subset_of(&term2).unwrap());
+    /// ```
+    pub fn is_subset_of(&self, that: &Term) -> Result<bool, EngineError> {
+        if self == that {
+            return Ok(true);
+        }
+
+        let automaton_1 = self.get_automaton()?;
+        let automaton_2 = that.get_automaton()?;
+        automaton_1.is_subset_of(&automaton_2)
+    }
+
+    fn check_number_of_terms(terms: &[Term]) -> Result<(), EngineError> {
+        let number_of_terms = terms.len() + 1;
+        let max_number_of_terms = ThreadLocalParams::get_max_number_of_terms();
+        if number_of_terms > max_number_of_terms {
+            Err(EngineError::TooMuchTerms(
+                max_number_of_terms,
+                number_of_terms,
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn determinize_subtrahend<'a>(
+        minuend: &FastAutomaton,
+        subtrahend: &'a FastAutomaton,
+    ) -> Result<Cow<'a, FastAutomaton>, EngineError> {
+        if subtrahend.is_determinitic() {
+            Ok(Cow::Borrowed(subtrahend))
+        } else if !minuend.is_cyclic() && subtrahend.is_cyclic() {
+            Ok(Cow::Owned(minuend.intersection(subtrahend)?.determinize()?))
+        } else {
+            Ok(Cow::Owned(subtrahend.determinize()?))
+        }
+    }
+
+    fn get_automaton(&self) -> Result<Cow<FastAutomaton>, EngineError> {
+        Ok(match self {
+            Term::RegularExpression(regex) => Cow::Owned(regex.to_automaton()?),
+            Term::Automaton(automaton) => Cow::Borrowed(automaton),
+        })
+    }
+}
+
+/// Represents details about a [Term].
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename = "details")]
 pub struct Details {
@@ -52,157 +328,25 @@ pub struct Details {
     total: bool,
 }
 
-/// Compute the union of the given collection of terms.
-/// Returns the resulting term.
-pub fn union(operands: &[Term]) -> Result<Term, EngineError> {
-    check_number_of_terms(operands)?;
-    let mut return_regex = RegularExpression::new_empty();
-    let mut return_automaton = FastAutomaton::new_empty();
-    for operand in operands {
-        match operand {
-            Term::RegularExpression(regex) => {
-                return_regex = return_regex.union(regex);
-                if return_regex.is_total() {
-                    return Ok(Term::RegularExpression(RegularExpression::new_total()));
-                }
-            }
-            Term::Automaton(automaton) => {
-                return_automaton = return_automaton.union(automaton)?;
-                if return_automaton.is_total() {
-                    return Ok(Term::RegularExpression(RegularExpression::new_total()));
-                }
-            }
-        }
+impl Details {
+    /// Return the number of unique strings matched.
+    pub fn get_cardinality(&self) -> &Option<Cardinality<u32>> {
+        &self.cardinality
     }
 
-    if return_automaton.is_empty() {
-        Ok(Term::RegularExpression(return_regex))
-    } else {
-        if !return_regex.is_empty() {
-            return_automaton = return_automaton.union(&return_regex.to_automaton()?)?;
-        }
-
-        if let Some(regex) = return_automaton.to_regex() {
-            Ok(Term::RegularExpression(regex))
-        } else {
-            Ok(Term::Automaton(return_automaton))
-        }
-    }
-}
-
-/// Compute the intersection of the given collection of terms.
-/// Returns the resulting term.
-pub fn intersection(terms: &[Term]) -> Result<Term, EngineError> {
-    check_number_of_terms(terms)?;
-    let mut return_automaton = FastAutomaton::new_total();
-    for term in terms {
-        let automaton = get_automaton_from_term(term)?;
-        return_automaton = return_automaton.intersection(&automaton)?;
-        if return_automaton.is_empty() {
-            return Ok(Term::RegularExpression(RegularExpression::new_empty()));
-        }
+    /// Return the minimum and the maximum length of matched strings.
+    pub fn get_length(&self) -> &(Option<u32>, Option<u32>) {
+        &self.length
     }
 
-    if let Some(regex) = return_automaton.to_regex() {
-        Ok(Term::RegularExpression(regex))
-    } else {
-        Ok(Term::Automaton(return_automaton))
-    }
-}
-
-/// Compute the subtraction/difference of the two given terms.
-/// Returns the resulting term.
-pub fn subtraction(minuend: &Term, subtrahend: &Term) -> Result<Term, EngineError> {
-    let minuend_automaton = get_automaton_from_term(minuend)?;
-    let subtrahend_automaton = get_automaton_from_term(subtrahend)?;
-    let subtrahend_automaton = determinize_subtrahend(&minuend_automaton, &subtrahend_automaton)?;
-    let return_automaton = minuend_automaton.subtraction(&subtrahend_automaton)?;
-
-    if let Some(regex) = return_automaton.to_regex() {
-        Ok(Term::RegularExpression(regex))
-    } else {
-        Ok(Term::Automaton(return_automaton))
-    }
-}
-
-/// Returns the Details of the given term.
-pub fn get_details(term: &Term) -> Result<Details, EngineError> {
-    match term {
-        Term::RegularExpression(regex) => Ok(Details {
-            cardinality: Some(regex.get_cardinality()),
-            length: regex.get_length(),
-            empty: regex.is_empty(),
-            total: regex.is_total(),
-        }),
-        Term::Automaton(automaton) => Ok(Details {
-            cardinality: automaton.get_cardinality(),
-            length: automaton.get_length(),
-            empty: automaton.is_empty(),
-            total: automaton.is_total(),
-        }),
-    }
-}
-
-/// Generate strings matched by the given term.
-pub fn generate_strings(term: &Term, count: usize) -> Result<Vec<String>, EngineError> {
-    Ok(get_automaton_from_term(term)?
-        .generate_strings(count)?
-        .into_iter()
-        .collect())
-}
-
-/// Compute if the two given terms are equivalent.
-pub fn are_equivalent(this: &Term, that: &Term) -> Result<bool, EngineError> {
-    if this == that {
-        return Ok(true);
+    /// Return `true` if it does not match any string.
+    pub fn is_empty(&self) -> bool {
+        self.empty
     }
 
-    let automaton_1 = get_automaton_from_term(this)?;
-    let automaton_2 = get_automaton_from_term(that)?;
-    automaton_1.is_equivalent_of(&automaton_2)
-}
-
-/// Compute if the first term is a subset of the second one.
-pub fn is_subset_of(this: &Term, that: &Term) -> Result<bool, EngineError> {
-    if this == that {
-        return Ok(true);
-    }
-
-    let automaton_1 = get_automaton_from_term(this)?;
-    let automaton_2 = get_automaton_from_term(that)?;
-    automaton_1.is_subset_of(&automaton_2)
-}
-
-fn check_number_of_terms(terms: &[Term]) -> Result<(), EngineError> {
-    let number_of_terms = terms.len();
-    let max_number_of_terms = ThreadLocalParams::get_max_number_of_terms();
-    if number_of_terms > max_number_of_terms {
-        Err(EngineError::TooMuchTerms(
-            max_number_of_terms,
-            number_of_terms,
-        ))
-    } else {
-        Ok(())
-    }
-}
-
-fn get_automaton_from_term(term: &Term) -> Result<Cow<FastAutomaton>, EngineError> {
-    Ok(match term {
-        Term::RegularExpression(regex) => Cow::Owned(regex.to_automaton()?),
-        Term::Automaton(automaton) => Cow::Borrowed(automaton),
-    })
-}
-
-fn determinize_subtrahend<'a>(
-    minuend: &FastAutomaton,
-    subtrahend: &'a FastAutomaton,
-) -> Result<Cow<'a, FastAutomaton>, EngineError> {
-    if subtrahend.is_determinitic() {
-        Ok(Cow::Borrowed(subtrahend))
-    } else if !minuend.is_cyclic() && subtrahend.is_cyclic() {
-        Ok(Cow::Owned(minuend.intersection(subtrahend)?.determinize()?))
-    } else {
-        Ok(Cow::Owned(subtrahend.determinize()?))
+    /// Return `true` if it match all possible strings.
+    pub fn is_total(&self) -> bool {
+        self.total
     }
 }
 
@@ -214,13 +358,10 @@ mod tests {
 
     #[test]
     fn test_details() -> Result<(), String> {
-        let regex1 = RegularExpression::new("a").unwrap();
-        let regex2 = RegularExpression::new("b").unwrap();
+        let regex1 = Term::from_regex("a").unwrap();
+        let regex2 = Term::from_regex("b").unwrap();
 
-        let details = intersection(&vec![
-            Term::RegularExpression(regex1),
-            Term::RegularExpression(regex2),
-        ]);
+        let details = regex1.intersection(&vec![regex2]);
         assert!(details.is_ok());
 
         Ok(())
@@ -228,13 +369,10 @@ mod tests {
 
     #[test]
     fn test_subtraction_1() -> Result<(), String> {
-        let regex1 = RegularExpression::new("a*").unwrap();
-        let regex2 = RegularExpression::new("").unwrap();
+        let regex1 = Term::from_regex("a*").unwrap();
+        let regex2 = Term::from_regex("").unwrap();
 
-        let result = subtraction(
-            &Term::RegularExpression(regex1),
-            &Term::RegularExpression(regex2),
-        );
+        let result = regex1.subtraction(&regex2);
         assert!(result.is_ok());
         let result = result.unwrap();
         assert_eq!(
@@ -266,17 +404,27 @@ mod tests {
 
     #[test]
     fn test_intersection_1() -> Result<(), String> {
-        let regex1 = RegularExpression::new("a*").unwrap();
-        let regex2 = RegularExpression::new("b*").unwrap();
+        let regex1 = Term::from_regex("a*").unwrap();
+        let regex2 = Term::from_regex("b*").unwrap();
 
-        let result = intersection(&vec![
-            Term::RegularExpression(regex1),
-            Term::RegularExpression(regex2),
-        ]);
+        let result = regex1.intersection(&vec![regex2]);
+        assert!(result.is_ok());
+        let result = result.unwrap();
+        assert_eq!(Term::from_regex("").unwrap(), result);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_intersection_2() -> Result<(), String> {
+        let regex1 = Term::from_regex("x*").unwrap();
+        let regex2 = Term::from_regex("(xxx)*").unwrap();
+
+        let result = regex1.intersection(&vec![regex2]);
         assert!(result.is_ok());
         let result = result.unwrap();
         assert_eq!(
-            Term::RegularExpression(RegularExpression::new("").unwrap()),
+            Term::RegularExpression(RegularExpression::new("(x{3})*").unwrap()),
             result
         );
 
@@ -284,20 +432,12 @@ mod tests {
     }
 
     #[test]
-    fn test_intersection_2() -> Result<(), String> {
-        let regex1 = RegularExpression::new("x*").unwrap();
-        let regex2 = RegularExpression::new("(xxx)*").unwrap();
+    fn test__() -> Result<(), String> {
+        let term = Term::from_regex("(abc|de){2}").unwrap();
 
-        let result = intersection(&vec![
-            Term::RegularExpression(regex1),
-            Term::RegularExpression(regex2),
-        ]);
-        assert!(result.is_ok());
-        let result = result.unwrap();
-        assert_eq!(
-            Term::RegularExpression(RegularExpression::new("(x{3})*").unwrap()),
-            result
-        );
+        let strings = term.generate_strings(3).unwrap();
+
+        println!("strings={:?}", strings);
 
         Ok(())
     }

@@ -48,7 +48,7 @@ fn get_fast_automaton_reader() -> &'static FastAutomatonReader {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct SerializedAutomaton(Vec<u16>, UsedBases);
+struct SerializedAutomaton(Vec<u16>, SpanningSet);
 
 impl serde::Serialize for FastAutomaton {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -59,7 +59,7 @@ impl serde::Serialize for FastAutomaton {
         match AutomatonToken::to_fair_tokens(&tokenizer.to_embedding()) {
             Ok(tokens) => {
                 let serialized_automaton =
-                    SerializedAutomaton(tokens, self.get_used_bases().clone());
+                    SerializedAutomaton(tokens, self.get_spanning_set().clone());
 
                 let mut serialized = Vec::with_capacity(self.get_number_of_states() * 8);
                 if let Err(err) = ciborium::into_writer(&serialized_automaton, &mut serialized) {
@@ -113,7 +113,7 @@ impl<'de> serde::Deserialize<'de> for FastAutomaton {
                             match automaton {
                                 Ok(automaton) => {
                                     let mut temp_automaton = FastAutomaton::new_empty();
-                                    temp_automaton.used_bases = automaton.1;
+                                    temp_automaton.spanning_set = automaton.1;
                                     let tokenizer = Tokenizer::new(&temp_automaton);
 
                                     match tokenizer.from_embedding(
