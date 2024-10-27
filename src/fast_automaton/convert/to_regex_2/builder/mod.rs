@@ -8,8 +8,6 @@ impl StateEliminationAutomaton<RegularExpression> {
             return Ok(None);
         }
 
-        automaton.to_dot();
-
         let mut state_elimination_automaton = StateEliminationAutomaton {
             start_state: 0,  // start_state is not set yet
             accept_state: 0, // accept_state is not set yet
@@ -21,14 +19,12 @@ impl StateEliminationAutomaton<RegularExpression> {
         let mut states_map = IntMap::with_capacity(automaton.get_number_of_states());
 
         for from_state in automaton.transitions_iter() {
-            println!("from_state = {}", from_state);
             let new_from_state = *states_map
                 .entry(from_state)
                 .or_insert_with(|| state_elimination_automaton.new_state());
             for (to_state, condition) in
                 automaton.transitions_from_state_enumerate_into_iter(&from_state)
             {
-                println!("to_state = {}", to_state);
                 let new_to_state = *states_map
                     .entry(to_state)
                     .or_insert_with(|| state_elimination_automaton.new_state());
@@ -62,8 +58,6 @@ impl StateEliminationAutomaton<RegularExpression> {
                 );
             }
         }
-        println!("=====");
-        state_elimination_automaton.to_dot();
         state_elimination_automaton.identify_and_apply_components()?;
         Ok(Some(state_elimination_automaton))
     }

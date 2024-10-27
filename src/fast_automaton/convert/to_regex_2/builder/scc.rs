@@ -103,8 +103,6 @@ impl StateEliminationAutomaton<RegularExpression> {
             removed_states: IntSet::new(),
         };
 
-        self.to_dot();
-
         let mut states_map = IntMap::with_capacity(states.len());
         for from_state in states {
             if *from_state == self.accept_state {
@@ -163,9 +161,6 @@ impl StateEliminationAutomaton<RegularExpression> {
         for state in states {
             self.remove_state(*state);
         }
-
-        println!("start_states={:?}", start_states);
-        println!("accept_states={:?}", accept_states);
 
         for (start_state, parent_states) in &start_states {
             for (parent_state, transition) in parent_states {
