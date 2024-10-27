@@ -93,8 +93,10 @@ impl FastAutomaton {
     pub fn in_transitions(&self, state: State) -> Vec<(usize, Condition)> {
         let mut in_transitions = vec![];
         for from_state in self.transitions_in.get(&state).unwrap_or(&IntSet::new()) {
-            for (_, condition) in self.transitions_from_state_enumerate_vec(from_state) {
-                in_transitions.push((*from_state, condition));
+            for (to_state, condition) in self.transitions_from_state_enumerate_vec(from_state) {
+                if to_state == state {
+                    in_transitions.push((*from_state, condition));
+                }
             }
         }
         in_transitions
