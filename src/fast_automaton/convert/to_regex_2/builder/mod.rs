@@ -2,7 +2,7 @@ use super::*;
 
 mod scc;
 
-impl StateEliminationAutomaton<RegularExpression> {
+impl StateEliminationAutomaton<Range> {
     pub fn new(automaton: &FastAutomaton) -> Result<Option<Self>, EngineError> {
         if automaton.is_empty() {
             return Ok(None);
@@ -14,6 +14,7 @@ impl StateEliminationAutomaton<RegularExpression> {
             transitions: Vec::with_capacity(automaton.get_number_of_states()),
             transitions_in: IntMap::with_capacity(automaton.get_number_of_states()),
             removed_states: IntSet::new(),
+            cyclic: false,
         };
 
         let mut states_map = IntMap::with_capacity(automaton.get_number_of_states());
@@ -32,7 +33,7 @@ impl StateEliminationAutomaton<RegularExpression> {
                 state_elimination_automaton.add_transition_to(
                     new_from_state,
                     new_to_state,
-                    GraphTransition::Weight(RegularExpression::Character(condition.to_range(automaton.get_spanning_set())?)),
+                    GraphTransition::Weight(condition.to_range(automaton.get_spanning_set())?),
                 );
             }
         }
@@ -54,7 +55,7 @@ impl StateEliminationAutomaton<RegularExpression> {
                 state_elimination_automaton.add_transition_to(
                     accept_state,
                     state_elimination_automaton.accept_state,
-                    GraphTransition::Weight(RegularExpression::new_empty_string()),
+                    GraphTransition::Epsilon,
                 );
             }
         }
@@ -62,12 +63,15 @@ impl StateEliminationAutomaton<RegularExpression> {
         Ok(Some(state_elimination_automaton))
     }
 
-    fn new_state(&mut self) -> usize {
+    pub fn new_state(&mut self) -> usize {
         if let Some(new_state) = self.removed_states.clone().iter().next() {
             self.removed_states.remove(new_state);
+            self.transitions_in.insert(*new_state, IntSet::new());
             *new_state
         } else {
             self.transitions.push(IntMap::default());
+            self.transitions_in
+                .insert(self.transitions.len() - 1, IntSet::new());
             self.transitions.len() - 1
         }
     }
@@ -84,11 +88,11 @@ impl StateEliminationAutomaton<RegularExpression> {
         }
     }
 
-    fn add_transition_to(
+    pub fn add_transition_to(
         &mut self,
         from_state: State,
         to_state: State,
-        transition: GraphTransition<RegularExpression>,
+        transition: GraphTransition<Range>,
     ) {
         self.assert_state_exists(from_state);
         if from_state != to_state {
@@ -144,5 +148,22 @@ impl StateEliminationAutomaton<RegularExpression> {
         for (_, transitions) in self.transitions_in.iter_mut() {
             transitions.remove(&state);
         }
+    }
+
+    pub fn remove_transition(&mut self, from_state: State, to_state: State) {
+        self.assert_state_exists(from_state);
+        if from_state != to_state {
+            self.assert_state_exists(to_state);
+        }
+
+        if let Some(from_states) = self.transitions_in.get_mut(&to_state) {
+            from_states.remove(&from_state);
+        }
+
+        self.transitions[from_state].remove(&to_state);
+    }
+
+    pub fn get_transition(&self, from_state: State, to_state: State) -> Option<&GraphTransition<Range>> {
+        self.transitions.get(from_state)?.get(&to_state)
     }
 }

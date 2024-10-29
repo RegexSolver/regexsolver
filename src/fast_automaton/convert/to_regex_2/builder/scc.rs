@@ -1,6 +1,6 @@
 use super::*;
 
-impl StateEliminationAutomaton<RegularExpression> {
+impl StateEliminationAutomaton<Range> {
     pub fn identify_and_apply_components(&mut self) -> Result<(), EngineError> {
         let mut index = 0;
         let mut stack = Vec::new();
@@ -9,7 +9,7 @@ impl StateEliminationAutomaton<RegularExpression> {
         let mut on_stack = vec![false; self.transitions.len()];
         let mut scc = Vec::new();
 
-        for state in self.transitions_iter() {
+        for state in self.states_iter() {
             if self.removed_states.contains(&state) {
                 continue;
             }
@@ -46,6 +46,8 @@ impl StateEliminationAutomaton<RegularExpression> {
         for component in scc {
             self.build_component(&component)?;
         }
+
+        self.cyclic = false;
 
         Ok(())
     }
@@ -101,25 +103,18 @@ impl StateEliminationAutomaton<RegularExpression> {
             transitions: Vec::with_capacity(states.len()),
             transitions_in: IntMap::with_capacity(states.len()),
             removed_states: IntSet::new(),
+            cyclic: true,
         };
 
         let mut states_map = IntMap::with_capacity(states.len());
         for from_state in states {
             if *from_state == self.accept_state {
                 self.accept_state = self.new_state();
-                self.add_transition_to(
-                    *from_state,
-                    self.accept_state,
-                    GraphTransition::Weight(RegularExpression::new_empty_string()),
-                );
+                self.add_transition_to(*from_state, self.accept_state, GraphTransition::Epsilon);
             }
             if *from_state == self.start_state {
                 self.start_state = self.new_state();
-                self.add_transition_to(
-                    self.start_state,
-                    *from_state,
-                    GraphTransition::Weight(RegularExpression::new_empty_string()),
-                );
+                self.add_transition_to(self.start_state, *from_state, GraphTransition::Epsilon);
             }
             let from_state_new = *states_map
                 .entry(*from_state)
@@ -137,15 +132,11 @@ impl StateEliminationAutomaton<RegularExpression> {
                     .entry(*to_state)
                     .or_insert_with(|| state_elimination_automaton.new_state());
 
-                match transition {
-                    GraphTransition::Graph(_state_elimination_automaton) => todo!(),
-                    GraphTransition::Weight(regex) => state_elimination_automaton
-                        .add_transition_to(
-                            from_state_new,
-                            to_state_new,
-                            GraphTransition::Weight(regex.clone()),
-                        ),
-                };
+                state_elimination_automaton.add_transition_to(
+                    from_state_new,
+                    to_state_new,
+                    transition.clone(),
+                );
             }
 
             for (parent_state, transition) in self.in_transitions_vec(*from_state) {
@@ -174,7 +165,7 @@ impl StateEliminationAutomaton<RegularExpression> {
                 };
                 for (target_state, accept_states_transition) in &accept_states {
                     let mut new_automaton = state_elimination_automaton.clone();
-                    
+
                     let target_state = if accept_states_transition.len() > 1 {
                         new_automaton.accept_state = new_automaton.new_state();
                         for (accept_state, transition) in accept_states_transition {
@@ -188,7 +179,7 @@ impl StateEliminationAutomaton<RegularExpression> {
                     } else {
                         let (accept_state, transition) =
                             accept_states_transition.iter().next().unwrap();
-                        
+
                         new_automaton.accept_state = *accept_state;
                         if !transition.is_empty_string() {
                             let new_target_state = self.new_state();

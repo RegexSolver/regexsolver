@@ -1,25 +1,37 @@
-use std::{collections::hash_map::Entry, fmt::Display};
+use std::{
+    collections::{hash_map::Entry, VecDeque},
+    fmt::Display,
+};
 
 use ahash::{HashMapExt, HashSetExt};
+use log::error;
 use nohash_hasher::IntMap;
+use petgraph::graph;
 
-use crate::{error::EngineError, regex::RegularExpression};
+use crate::{error::EngineError, execution_profile::ThreadLocalParams, regex::RegularExpression};
 
-use super::{FastAutomaton, IntSet, State};
+use super::{FastAutomaton, IntSet, Range, State};
 
 mod builder;
+mod transform;
 
 #[derive(Clone, Debug)]
 enum GraphTransition<T> {
     Graph(StateEliminationAutomaton<T>),
     Weight(T),
+    Epsilon,
 }
 
-impl GraphTransition<RegularExpression> {
+impl<T> GraphTransition<T> {
     pub fn is_empty_string(&self) -> bool {
-        match self {
-            GraphTransition::Graph(_) => false,
-            GraphTransition::Weight(regex) => regex.is_empty_string(),
+        matches!(self, GraphTransition::Epsilon)
+    }
+
+    pub fn get_weight(&self) -> Option<&T> {
+        if let GraphTransition::Weight(weight) = self {
+            Some(weight)
+        } else {
+            None
         }
     }
 }
@@ -31,15 +43,16 @@ struct StateEliminationAutomaton<T> {
     transitions: Vec<IntMap<State, GraphTransition<T>>>,
     transitions_in: IntMap<usize, IntSet<usize>>,
     removed_states: IntSet<State>,
+    cyclic: bool,
 }
 
-impl Display for StateEliminationAutomaton<RegularExpression> {
+impl Display for StateEliminationAutomaton<Range> {
     fn fmt(&self, sb: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.to_graph_dot(sb, None)
     }
 }
 
-impl StateEliminationAutomaton<RegularExpression> {
+impl StateEliminationAutomaton<Range> {
     #[inline]
     pub fn to_dot(&self) {
         println!("{}", self);
@@ -55,19 +68,20 @@ impl StateEliminationAutomaton<RegularExpression> {
         let indent;
         let prefix = if let Some(prefix) = prefix {
             writeln!(sb, "\tsubgraph cluster_{} {{", prefix)?;
-            writeln!(sb, "\t\tlabel = \"{}\";", prefix)?;
+            writeln!(sb, "\t\tlabel = \"{} - cyclic={}\";", prefix, self.cyclic)?;
             indent = "\t";
             is_subgraph = true;
             prefix
         } else {
             writeln!(sb, "digraph Automaton {{")?;
             writeln!(sb, "\trankdir = LR;")?;
+            writeln!(sb, "\tlabel = \"cyclic={}\";", self.cyclic)?;
             indent = "";
             is_subgraph = false;
             ""
         };
 
-        for from_state in self.transitions_iter() {
+        for from_state in self.states_iter() {
             let from_state_with_prefix = if is_subgraph {
                 format!("S{prefix}_{from_state}")
             } else {
@@ -76,17 +90,9 @@ impl StateEliminationAutomaton<RegularExpression> {
 
             write!(sb, "{indent}\t{}", from_state_with_prefix)?;
             if !is_subgraph && self.accept_state == from_state {
-                writeln!(
-                    sb,
-                    "\t[shape=doublecircle,label=\"{}\"];",
-                    from_state
-                )?;
+                writeln!(sb, "\t[shape=doublecircle,label=\"{}\"];", from_state)?;
             } else {
-                writeln!(
-                    sb,
-                    "{indent}\t[shape=circle,label=\"{}\"];",
-                    from_state
-                )?;
+                writeln!(sb, "{indent}\t[shape=circle,label=\"{}\"];", from_state)?;
             }
 
             if !is_subgraph && self.start_state == from_state {
@@ -129,15 +135,23 @@ impl StateEliminationAutomaton<RegularExpression> {
                             subgraph_accept_state, to_state_with_prefix
                         )
                     }
-                    GraphTransition::Weight(regex) => {
+                    GraphTransition::Weight(range) => {
                         writeln!(
                             sb,
                             "{indent}\t{} -> {} [label=\"{}\"]",
                             from_state_with_prefix,
                             to_state_with_prefix,
-                            regex.to_string().replace('\\', "\\\\").replace('"', "\\\"")
+                            RegularExpression::Character(range.clone())
+                                .to_string()
+                                .replace('\\', "\\\\")
+                                .replace('"', "\\\"")
                         )
                     }
+                    GraphTransition::Epsilon => writeln!(
+                        sb,
+                        "{indent}\t{} -> {} [label=\"ε\"]",
+                        from_state_with_prefix, to_state_with_prefix
+                    ),
                 }?;
             }
         }
@@ -145,7 +159,7 @@ impl StateEliminationAutomaton<RegularExpression> {
     }
 
     #[inline]
-    pub fn transitions_iter(&self) -> impl Iterator<Item = State> + '_ {
+    pub fn states_iter(&self) -> impl Iterator<Item = State> + '_ {
         (0..self.transitions.len()).filter(|s| !self.removed_states.contains(s))
     }
 
@@ -153,16 +167,22 @@ impl StateEliminationAutomaton<RegularExpression> {
     pub fn transitions_from_state_enumerate_iter(
         &self,
         from_state: &State,
-    ) -> impl Iterator<Item = (&State, &GraphTransition<RegularExpression>)> {
+    ) -> impl Iterator<Item = (&State, &GraphTransition<Range>)> {
         self.transitions[*from_state]
             .iter()
             .filter(|s| !self.removed_states.contains(s.0))
     }
 
-    pub fn in_transitions_vec(
-        &self,
-        to_state: State,
-    ) -> Vec<(State, GraphTransition<RegularExpression>)> {
+    #[inline]
+    pub fn transitions_from_state_vec(&self, from_state: &State) -> Vec<State> {
+        self.transitions[*from_state]
+            .keys()
+            .filter(|s| !self.removed_states.contains(s))
+            .copied()
+            .collect()
+    }
+
+    pub fn in_transitions_vec(&self, to_state: State) -> Vec<(State, GraphTransition<Range>)> {
         let mut in_transitions = vec![];
         for from_state in self.transitions_in.get(&to_state).unwrap_or(&IntSet::new()) {
             for (state, transition) in self.transitions_from_state_enumerate_iter(from_state) {
@@ -173,6 +193,152 @@ impl StateEliminationAutomaton<RegularExpression> {
         }
         in_transitions
     }
+
+    pub fn states_bfs_vec(&self) -> Vec<State> {
+        let mut states = Vec::with_capacity(self.get_number_of_states());
+        let mut worklist = VecDeque::new();
+        let mut seen = IntSet::with_capacity(self.get_number_of_states());
+
+        worklist.push_back(self.start_state);
+        seen.insert(self.start_state);
+
+        while let Some(state) = worklist.pop_front() {
+            for (to_state, _) in self.transitions_from_state_enumerate_iter(&state) {
+                if seen.contains(to_state) {
+                    continue;
+                }
+                seen.insert(*to_state);
+                worklist.push_back(*to_state);
+                states.push(*to_state);
+            }
+        }
+
+        states
+    }
+
+    pub fn states_topo_vec(&self) -> Vec<State> {
+        if self.cyclic {
+            panic!("The graph has a cycle");
+        }
+
+        let mut in_degree: IntMap<State, usize> = self
+            .transitions_in
+            .iter()
+            .map(|(state, parents)| (*state, parents.len()))
+            .collect();
+
+        let mut worklist: VecDeque<State> = VecDeque::new();
+        for (&state, &degree) in &in_degree {
+            if degree == 0 {
+                worklist.push_back(state);
+            }
+        }
+
+        let mut sorted_order = Vec::with_capacity(self.get_number_of_states());
+        while let Some(state) = worklist.pop_front() {
+            sorted_order.push(state);
+
+            if let Some(neighbors) = self.transitions.get(state) {
+                let neighbors = neighbors.keys();
+                for &neighbor in neighbors {
+                    if let Some(degree) = in_degree.get_mut(&neighbor) {
+                        *degree -= 1;
+                        if *degree == 0 {
+                            worklist.push_back(neighbor);
+                        }
+                    }
+                }
+            }
+        }
+
+        if sorted_order.len() == self.get_number_of_states() {
+            sorted_order
+        } else {
+            panic!("The graph has a cycle");
+        }
+    }
+
+    #[inline]
+    pub fn get_number_of_states(&self) -> usize {
+        self.transitions.len() - self.removed_states.len()
+    }
+
+    pub fn is_accepted_state(&self, state: State) -> bool {
+        if self.accept_state == state {
+            return true;
+        }
+        if let Some(transitions) = self.transitions.get(state) {
+            if let Some(transition) = transitions.get(&self.accept_state) {
+                return transition.is_empty_string();
+            }
+        }
+
+        false
+    }
+
+    pub fn get_accepted_states(&self) -> Vec<State> {
+        let mut accepted_states = vec![self.accept_state];
+        for (from_state, transition) in self.in_transitions_vec(self.accept_state) {
+            if transition.is_empty_string() {
+                accepted_states.push(from_state);
+            }
+        }
+
+        accepted_states
+    }
+}
+
+impl FastAutomaton {
+    /// Try to convert the current FastAutomaton to a RegularExpression.
+    /// If it cannot find an equivalent regex it returns None.
+    /// This method is still a work in progress.
+    pub fn to_regex_2(&self) -> Option<RegularExpression> {
+        if self.is_empty() {
+            return Some(RegularExpression::new_empty());
+        }
+        //let execution_profile = ThreadLocalParams::get_execution_profile();
+        if let Ok(graph) = StateEliminationAutomaton::new(self) {
+            if let Ok(regex) = graph?.convert() {
+                let regex = regex?;
+                match regex.to_automaton() {
+                    Ok(automaton) => match self.is_equivalent_of(&automaton) {
+                        Ok(result) => {
+                            if !result {
+                                println!("Not equivalent with:");
+                                automaton.to_dot();
+                                error!(
+                                "The automaton is not equivalent to the generated regex; automaton={} regex={}",
+                                serde_json::to_string(self).unwrap(),
+                                regex
+                            );
+                                None
+                            } else {
+                                Some(regex)
+                            }
+                        }
+                        Err(err) => {
+                            println!("{err}");
+                            None
+                        }
+                    },
+                    Err(err) => {
+                        if let crate::error::EngineError::RegexSyntaxError(_) = err {
+                            error!(
+                            "The generated regex can not be converted to automaton to be checked for equivalence (Syntax Error); automaton={} regex={}",
+                            serde_json::to_string(self).unwrap(),
+                            regex
+                        );
+                        }
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
 }
 
 #[cfg(test)]
@@ -182,8 +348,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_convert() -> Result<(), String> {
-        let automaton = RegularExpression::new("(ab?)*")
+    fn test_convert_() -> Result<(), String> {
+        let automaton = RegularExpression::new("a+(ba+)*")
             .unwrap()
             .to_automaton()
             .unwrap()
@@ -195,5 +361,57 @@ mod tests {
         automaton.to_dot();
 
         Ok(())
+    }
+
+    #[test]
+    fn test_convert() -> Result<(), String> {
+        assert_convert("(abc|fg){2}");
+        assert_convert("a{2,3}");
+        assert_convert("a(bcfe|bcdg|mkv){1,2}");
+        assert_convert("a(bcfe|bcdg|mkv){5,6}");
+        assert_convert("a(bcfe|bcdg|mkv){0,8}");
+        assert_convert("a(bcfe|bcdg|mkv){3,20}");
+
+        assert_convert("a+");
+
+        assert_convert("a*bc*");
+        assert_convert("(abc)*(a|ab)");
+        assert_convert("a(bcfe|bcdg)*");
+        assert_convert(".*abc");
+        assert_convert(".*abc.*def");
+        assert_convert("a(bcfe|bcdg|mkv)*");
+
+        assert_convert("(bc|a)*");
+
+        assert_convert(".*a(bc|d)");
+        assert_convert("abc.*def.*uif(ab|de)");
+
+        assert_convert("(b+a+)*");
+        assert_convert("a+(ba+)*");
+        Ok(())
+    }
+
+    fn assert_convert(regex: &str) {
+        let input_regex = RegularExpression::new(regex).unwrap();
+        println!("IN                     : {}", input_regex);
+        let input_automaton = input_regex.to_automaton().unwrap();
+
+        //input_automaton.to_dot();
+
+        let output_regex = input_automaton.to_regex_2().unwrap();
+        println!("OUT (non deterministic): {}", output_regex);
+        let output_automaton = output_regex.to_automaton().unwrap();
+
+        assert!(input_automaton.is_equivalent_of(&output_automaton).unwrap());
+
+        let input_automaton = input_automaton.determinize().unwrap();
+
+        //input_automaton.to_dot();
+
+        let output_regex = input_automaton.to_regex_2().unwrap();
+        println!("OUT (deterministic)    : {}", output_regex);
+        let output_automaton = output_regex.to_automaton().unwrap();
+
+        assert!(input_automaton.is_equivalent_of(&output_automaton).unwrap());
     }
 }
