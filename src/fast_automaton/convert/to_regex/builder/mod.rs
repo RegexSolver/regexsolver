@@ -60,6 +60,7 @@ impl StateEliminationAutomaton<Range> {
             }
         }
         state_elimination_automaton.identify_and_apply_components()?;
+        //state_elimination_automaton.to_dot();
         Ok(Some(state_elimination_automaton))
     }
 
@@ -101,7 +102,7 @@ impl StateEliminationAutomaton<Range> {
 
         self.transitions_in
             .entry(to_state)
-            .or_insert(IntSet::new())
+            .or_default()
             .insert(from_state);
         match self.transitions[from_state].entry(to_state) {
             Entry::Occupied(mut o) => {

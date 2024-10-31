@@ -25,7 +25,7 @@ type IntSet<Key> = HashSet<Key, BuildHasherDefault<NoHashHasher<Key>>>;
 type Range = RangeSet<Char>;
 
 /// Represents a term that can be either a regular expression or a finite automaton. This term can be manipulated with a wide range of operations.
-/// 
+///
 /// To put constraint and limitation on the execution of operations please refer to [`execution_profile::ExecutionProfile`].
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value")]
@@ -383,15 +383,12 @@ mod tests {
         Ok(())
     }
 
-    /*#[test]
+    #[test]
     fn test_subtraction_2() -> Result<(), String> {
-        let regex1 = RegularExpression::new("x*").unwrap();
-        let regex2 = RegularExpression::new("(xxx)*").unwrap();
+        let regex1 = Term::from_regex("x*").unwrap();
+        let regex2 = Term::from_regex("(xxx)*").unwrap();
 
-        let result = subtraction(
-            &Term::RegularExpression(regex1),
-            &Term::RegularExpression(regex2),
-        );
+        let result = regex1.subtraction(&regex2);
         assert!(result.is_ok());
         let result = result.unwrap();
         assert_eq!(
@@ -400,7 +397,7 @@ mod tests {
         );
 
         Ok(())
-    }*/
+    }
 
     #[test]
     fn test_intersection_1() -> Result<(), String> {

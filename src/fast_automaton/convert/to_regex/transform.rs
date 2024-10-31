@@ -1,11 +1,16 @@
 use std::hash::BuildHasherDefault;
 
+use crate::execution_profile::ExecutionProfile;
+
 use super::*;
 
 impl StateEliminationAutomaton<Range> {
-    pub fn convert(&self) -> Result<Option<RegularExpression>, EngineError> {
+    pub fn convert_to_regex(
+        &self,
+        execution_profile: &ExecutionProfile,
+    ) -> Result<Option<RegularExpression>, EngineError> {
         if self.cyclic {
-            return self.convert_graph_to_regex();
+            return self.convert_graph_to_regex(execution_profile);
         }
 
         let mut regex_map: IntMap<usize, RegularExpression> = IntMap::with_capacity_and_hasher(
@@ -23,7 +28,7 @@ impl StateEliminationAutomaton<Range> {
                 for (to_state, transition) in transitions {
                     let transition_regex = match transition {
                         GraphTransition::Graph(graph) => {
-                            if let Some(regex) = graph.convert_graph_to_regex()? {
+                            if let Some(regex) = graph.convert_graph_to_regex(execution_profile)? {
                                 regex
                             } else {
                                 return Ok(None);
@@ -50,18 +55,28 @@ impl StateEliminationAutomaton<Range> {
         Ok(regex_map.get(&self.accept_state).cloned())
     }
 
-    fn convert_graph_to_regex(&self) -> Result<Option<RegularExpression>, EngineError> {
-        if let Some(regex) = self.convert_shape_dot_star()? {
+    fn convert_graph_to_regex(
+        &self,
+        execution_profile: &ExecutionProfile,
+    ) -> Result<Option<RegularExpression>, EngineError> {
+        execution_profile.assert_not_timed_out()?;
+        if let Some(regex) = self.convert_shape_dot_star(execution_profile)? {
             return Ok(Some(regex));
-        } else if let Some(regex) = self.convert_shape_self_loop()? {
+        } else if let Some(regex) = self.convert_shape_self_loop(execution_profile)? {
             return Ok(Some(regex));
         }
-        todo!()
+        Ok(None)
     }
 
     /// We try to idenfify the regex following the shape:
     /// A*B
-    fn convert_shape_dot_star(&self) -> Result<Option<RegularExpression>, EngineError> {
+    fn convert_shape_dot_star(
+        &self,
+        execution_profile: &ExecutionProfile,
+    ) -> Result<Option<RegularExpression>, EngineError> {
+        if self.get_number_of_states() < 2 {
+            return Ok(None);
+        }
         let mut dot_value =
             if let Some(dot_value) = self.get_transition(self.start_state, self.start_state) {
                 if let Some(dot_value) = dot_value.get_weight() {
@@ -84,7 +99,7 @@ impl StateEliminationAutomaton<Range> {
                     return Ok(None);
                 }
             } else {
-                return Ok(None);
+                continue;
             };
 
             if !dot_value.contains_all(weight) {
@@ -121,7 +136,7 @@ impl StateEliminationAutomaton<Range> {
                 let weight = if let Some(weight) = transition.get_weight() {
                     weight
                 } else {
-                    return Ok(None);
+                    continue;
                 };
                 dot_value = dot_value.union(weight);
                 if seen.contains(&to_state) {
@@ -141,17 +156,16 @@ impl StateEliminationAutomaton<Range> {
             GraphTransition::Weight(dot_value),
         );
 
-        //graph.to_dot();
         graph.identify_and_apply_components()?;
-        //graph.to_dot();
-        return Ok(None);
-        //graph.to_dot();
-        //graph.convert()
+        graph.convert_to_regex(execution_profile)
     }
 
     /// We try to identify the regex following the shape:
     /// A*B
-    fn convert_shape_self_loop(&self) -> Result<Option<RegularExpression>, EngineError> {
+    fn convert_shape_self_loop(
+        &self,
+        execution_profile: &ExecutionProfile,
+    ) -> Result<Option<RegularExpression>, EngineError> {
         let mut graph = self.clone();
 
         graph.accept_state = graph.new_state();
@@ -164,7 +178,7 @@ impl StateEliminationAutomaton<Range> {
 
         graph.identify_and_apply_components()?;
 
-        let a_part = if let Some(a_part) = graph.convert()? {
+        let a_part = if let Some(a_part) = graph.convert_to_regex(execution_profile)? {
             a_part
         } else {
             return Ok(None);
@@ -177,7 +191,7 @@ impl StateEliminationAutomaton<Range> {
         }
 
         graph.identify_and_apply_components()?;
-        let b_part = if let Some(b_part) = graph.convert()? {
+        let b_part = if let Some(b_part) = graph.convert_to_regex(execution_profile)? {
             b_part
         } else {
             return Ok(None);

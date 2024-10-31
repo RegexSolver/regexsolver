@@ -35,11 +35,7 @@ impl StateEliminationAutomaton<Range> {
                 } else {
                     false
                 };
-                if states.len() == 1 && !self_loop {
-                    false
-                } else {
-                    true
-                }
+                states.len() != 1 || self_loop
             })
             .collect::<Vec<_>>();
 
@@ -52,6 +48,7 @@ impl StateEliminationAutomaton<Range> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn strongconnect(
         &self,
         v: usize,
@@ -123,7 +120,7 @@ impl StateEliminationAutomaton<Range> {
                 if !state_set.contains(to_state) {
                     accept_states
                         .entry(*to_state)
-                        .or_insert_with(|| Vec::new())
+                        .or_insert_with(Vec::new)
                         .push((from_state_new, transition.clone()));
                     continue;
                 }
@@ -143,7 +140,7 @@ impl StateEliminationAutomaton<Range> {
                 if !state_set.contains(&parent_state) {
                     start_states
                         .entry(from_state_new)
-                        .or_insert_with(|| Vec::new())
+                        .or_insert_with(Vec::new)
                         .push((parent_state, transition.clone()));
                 }
             }
