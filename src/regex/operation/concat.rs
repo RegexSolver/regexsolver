@@ -166,22 +166,38 @@ impl RegularExpression {
         that: &RegularExpression,
     ) -> Option<RegularExpression> {
         if let (
-            RegularExpression::Repetition(this_regex, _, this_max_opt),
-            RegularExpression::Repetition(that_regex, that_min, _),
+            RegularExpression::Repetition(this_regex, this_min, this_max_opt),
+            RegularExpression::Repetition(that_regex, that_min, that_max_opt),
         ) = (this, that)
         {
-            if let (
+            if this_regex == that_regex {
+                let new_min = this_min + that_min;
+                let new_max_opt =
+                    if let (Some(this_max), Some(that_max)) = (this_max_opt, that_max_opt) {
+                        Some(this_max + that_max)
+                    } else {
+                        None
+                    };
+                Some(RegularExpression::Repetition(
+                    this_regex.clone(),
+                    new_min,
+                    new_max_opt,
+                ))
+            } else if let (
                 RegularExpression::Character(this_range),
                 RegularExpression::Character(that_range),
             ) = (*this_regex.clone(), *that_regex.clone())
             {
-                if this_range.contains_all(&that_range) && that_min == &0 && this_max_opt.is_none() {
+                if this_range.contains_all(&that_range) && that_min == &0 && this_max_opt.is_none()
+                {
                     return Some(this.clone());
+                } else {
+                    return None;
                 }
+            } else {
+                return None;
             }
-        }
-
-        if this == that {
+        } else if this == that {
             if let (
                 RegularExpression::Repetition(this_regex, this_min, this_max_opt),
                 RegularExpression::Repetition(_, that_min, that_max_opt),
@@ -207,18 +223,11 @@ impl RegularExpression {
                 ))
             }
         } else if let RegularExpression::Repetition(this_regex, this_min, this_max_opt) = this {
-            if let Some(RegularExpression::Repetition(merged_regex, merged_min, merged_max_opt)) =
-                Self::opconcat_can_be_merged(this_regex, that)
-            {
-                let new_min = this_min + merged_min - 1;
-                let new_max_opt =
-                    if let (Some(this_max), Some(merged_max)) = (this_max_opt, merged_max_opt) {
-                        Some(this_max + merged_max - 1)
-                    } else {
-                        None
-                    };
+            if **this_regex == *that {
+                let new_min = this_min + 1;
+                let new_max_opt = this_max_opt.as_ref().map(|this_max| this_max + 1);
                 Some(RegularExpression::Repetition(
-                    merged_regex,
+                    this_regex.clone(),
                     new_min,
                     new_max_opt,
                 ))
@@ -226,18 +235,11 @@ impl RegularExpression {
                 None
             }
         } else if let RegularExpression::Repetition(that_regex, that_min, that_max_opt) = that {
-            if let Some(RegularExpression::Repetition(merged_regex, merged_min, merged_max_opt)) =
-                Self::opconcat_can_be_merged(this, that_regex)
-            {
-                let new_min = merged_min + that_min - 1;
-                let new_max_opt =
-                    if let (Some(merged_max), Some(that_max)) = (merged_max_opt, that_max_opt) {
-                        Some(merged_max + that_max - 1)
-                    } else {
-                        None
-                    };
+            if **that_regex == *this {
+                let new_min = that_min + 1;
+                let new_max_opt = that_max_opt.as_ref().map(|this_max| this_max + 1);
                 Some(RegularExpression::Repetition(
-                    merged_regex,
+                    that_regex.clone(),
                     new_min,
                     new_max_opt,
                 ))
@@ -256,6 +258,10 @@ mod tests {
 
     #[test]
     fn test_concat() -> Result<(), String> {
+        assert_concat("xxx", "x{3}");
+
+        assert_concat("[a-z]+a?", "[a-z]+");
+        assert_concat("(x{3})*x{1,2}", "(x{3})*x{1,2}");
         assert_concat(".*a?", ".*");
         assert_concat(".{2,3}.{4,9}", ".{6,12}");
 

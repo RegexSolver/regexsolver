@@ -1,293 +1,244 @@
-use crate::{
-    error::EngineError,
-    execution_profile::{ExecutionProfile, ThreadLocalParams},
+use std::{
+    collections::{hash_map::Entry, VecDeque},
+    fmt::Display,
 };
 
-use super::*;
-use ahash::AHashSet;
+use ahash::{HashMapExt, HashSetExt};
 use log::error;
-use petgraph::{
-    algo::tarjan_scc,
-    graph::NodeIndex,
-    stable_graph::StableGraph,
-    visit::{EdgeRef, Topo},
-    Direction,
-};
-use std::hash::BuildHasherDefault;
+use nohash_hasher::IntMap;
 
-mod shapes;
+use crate::{error::EngineError, execution_profile::ThreadLocalParams, regex::RegularExpression};
+
+use super::{FastAutomaton, IntSet, Range, State};
+
+mod builder;
+mod transform;
 
 #[derive(Clone, Debug)]
-struct GraphWrapper {
-    graph: StableGraph<u32, RegularExpression>,
-    start_state: NodeIndex,
-    accept_state: NodeIndex,
-    spanning_set: SpanningSet,
-    node_index_count: u32,
+enum GraphTransition<T> {
+    Graph(StateEliminationAutomaton<T>),
+    Weight(T),
+    Epsilon,
 }
 
-impl GraphWrapper {
-    pub fn new(automaton: &FastAutomaton) -> GraphWrapper {
-        let mut graph = StableGraph::<u32, RegularExpression>::new();
-        let mut added_nodes = IntMap::default();
-        let mut count = 0;
+impl<T> GraphTransition<T> {
+    pub fn is_empty_string(&self) -> bool {
+        matches!(self, GraphTransition::Epsilon)
+    }
 
-        for from_state in automaton.transitions_iter() {
-            let from_node = match added_nodes.entry(from_state) {
-                Entry::Occupied(o) => *o.get(),
-                Entry::Vacant(v) => {
-                    let i = count;
-                    count += 1;
-                    *v.insert(graph.add_node(i))
-                }
+    pub fn get_weight(&self) -> Option<&T> {
+        if let GraphTransition::Weight(weight) = self {
+            Some(weight)
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct StateEliminationAutomaton<T> {
+    start_state: usize,
+    accept_state: usize,
+    transitions: Vec<IntMap<State, GraphTransition<T>>>,
+    transitions_in: IntMap<usize, IntSet<usize>>,
+    removed_states: IntSet<State>,
+    cyclic: bool,
+}
+
+impl Display for StateEliminationAutomaton<Range> {
+    fn fmt(&self, sb: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.to_graph_dot(sb, None)
+    }
+}
+
+impl StateEliminationAutomaton<Range> {
+    //#[cfg(test)]
+    #[inline]
+    pub fn to_dot(&self) {
+        println!("{}", self);
+    }
+
+    #[inline]
+    fn to_graph_dot(
+        &self,
+        sb: &mut std::fmt::Formatter<'_>,
+        prefix: Option<&str>,
+    ) -> std::fmt::Result {
+        let is_subgraph;
+        let indent;
+        let prefix = if let Some(prefix) = prefix {
+            writeln!(sb, "\tsubgraph cluster_{} {{", prefix)?;
+            writeln!(sb, "\t\tlabel = \"{} - cyclic={}\";", prefix, self.cyclic)?;
+            indent = "\t";
+            is_subgraph = true;
+            prefix
+        } else {
+            writeln!(sb, "digraph Automaton {{")?;
+            writeln!(sb, "\trankdir = LR;")?;
+            writeln!(sb, "\tlabel = \"cyclic={}\";", self.cyclic)?;
+            indent = "";
+            is_subgraph = false;
+            ""
+        };
+
+        for from_state in self.states_iter() {
+            let from_state_with_prefix = if is_subgraph {
+                format!("S{prefix}_{from_state}")
+            } else {
+                format!("S{from_state}")
             };
 
-            for (&to_state, condition) in
-                automaton.transitions_from_state_enumerate_iter(&from_state)
-            {
-                let to_node = match added_nodes.entry(to_state) {
-                    Entry::Occupied(o) => *o.get(),
-                    Entry::Vacant(v) => {
-                        let i = count;
-                        count += 1;
-                        *v.insert(graph.add_node(i))
-                    }
+            write!(sb, "{indent}\t{}", from_state_with_prefix)?;
+            if !is_subgraph && self.accept_state == from_state {
+                writeln!(sb, "\t[shape=doublecircle,label=\"{}\"];", from_state)?;
+            } else {
+                writeln!(sb, "{indent}\t[shape=circle,label=\"{}\"];", from_state)?;
+            }
+
+            if !is_subgraph && self.start_state == from_state {
+                writeln!(sb, "\tinitial [shape=plaintext,label=\"\"];")?;
+                writeln!(sb, "\tinitial -> {}", from_state_with_prefix)?;
+            }
+            for (to_state, weight) in self.transitions_from_state_enumerate_iter(&from_state) {
+                let to_state_with_prefix = if is_subgraph {
+                    format!("S{prefix}_{to_state}")
+                } else {
+                    format!("S{to_state}")
                 };
-                graph.add_edge(
-                    from_node,
-                    to_node,
-                    RegularExpression::Character(
-                        condition.to_range(&automaton.spanning_set).expect(
-                            "The condition should have been able to be converted to range.",
-                        ),
+
+                match weight {
+                    GraphTransition::Graph(state_elimination_automaton) => {
+                        let subgraph_prefix = if is_subgraph {
+                            format!("{prefix}_{from_state}_{to_state}")
+                        } else {
+                            format!("{from_state}_{to_state}")
+                        };
+                        state_elimination_automaton.to_graph_dot(sb, Some(&subgraph_prefix))?;
+                        writeln!(sb)?;
+                        let subgraph_start_state = format!(
+                            "S{}_{}",
+                            subgraph_prefix, state_elimination_automaton.start_state
+                        );
+                        writeln!(
+                            sb,
+                            "{indent}\t{} -> {} [label=\"ε\"]",
+                            from_state_with_prefix, subgraph_start_state
+                        )?;
+
+                        let subgraph_accept_state = format!(
+                            "S{}_{}",
+                            subgraph_prefix, state_elimination_automaton.accept_state
+                        );
+                        writeln!(
+                            sb,
+                            "{indent}\t{} -> {} [label=\"ε\"]",
+                            subgraph_accept_state, to_state_with_prefix
+                        )
+                    }
+                    GraphTransition::Weight(range) => {
+                        writeln!(
+                            sb,
+                            "{indent}\t{} -> {} [label=\"{}\"]",
+                            from_state_with_prefix,
+                            to_state_with_prefix,
+                            RegularExpression::Character(range.clone())
+                                .to_string()
+                                .replace('\\', "\\\\")
+                                .replace('"', "\\\"")
+                        )
+                    }
+                    GraphTransition::Epsilon => writeln!(
+                        sb,
+                        "{indent}\t{} -> {} [label=\"ε\"]",
+                        from_state_with_prefix, to_state_with_prefix
                     ),
-                );
+                }?;
             }
         }
-        let i = count;
-        count += 1;
-        let new_accept_state = graph.add_node(i);
-        for accept_state in &automaton.accept_states {
-            graph.add_edge(
-                *added_nodes.get(accept_state).unwrap(),
-                new_accept_state,
-                RegularExpression::new_empty_string(),
-            );
-        }
-
-        GraphWrapper {
-            graph,
-            start_state: *added_nodes.get(&automaton.start_state).unwrap(),
-            accept_state: new_accept_state,
-            spanning_set: automaton.spanning_set.clone(),
-            node_index_count: count,
-        }
+        write!(sb, "{indent}}}")
     }
 
-    pub fn add_node(&mut self) -> NodeIndex<u32> {
-        let i = self.node_index_count;
-        self.node_index_count += 1;
-
-        self.graph.add_node(i)
+    #[inline]
+    pub fn states_iter(&self) -> impl Iterator<Item = State> + '_ {
+        (0..self.transitions.len()).filter(|s| !self.removed_states.contains(s))
     }
 
-    fn get_strongly_connected_components(
-        graph: &StableGraph<u32, RegularExpression>,
-    ) -> Vec<Vec<NodeIndex>> {
-        tarjan_scc(&graph)
-            .into_iter()
-            .filter(|group| group.len() != 1 || graph.contains_edge(group[0], group[0]))
+    #[inline]
+    pub fn transitions_from_state_enumerate_iter(
+        &self,
+        from_state: &State,
+    ) -> impl Iterator<Item = (&State, &GraphTransition<Range>)> {
+        self.transitions[*from_state]
+            .iter()
+            .filter(|s| !self.removed_states.contains(s.0))
+    }
+
+    #[inline]
+    pub fn transitions_from_state_vec(&self, from_state: &State) -> Vec<State> {
+        self.transitions[*from_state]
+            .keys()
+            .filter(|s| !self.removed_states.contains(s))
+            .copied()
             .collect()
     }
 
-    fn subgraph_from_group(
-        &self,
-        states: &AHashSet<NodeIndex>,
-    ) -> (
-        StableGraph<u32, RegularExpression>,
-        IntMap<usize, NodeIndex>,
-    ) {
-        let mut new_graph = StableGraph::new();
-        let mut index_map = IntMap::default();
-
-        for &node in states {
-            let new_index = new_graph.add_node(*self.graph.node_weight(node).unwrap());
-            index_map.insert(node.index(), new_index);
-        }
-
-        for &node in states {
-            for edge in self.graph.edges(node) {
-                let (source, target) = (edge.source(), edge.target());
-                if states.contains(&source) && states.contains(&target) {
-                    let new_source = *index_map.get(&source.index()).unwrap();
-                    let new_target = *index_map.get(&target.index()).unwrap();
-                    new_graph.add_edge(new_source, new_target, edge.weight().clone());
+    pub fn in_transitions_vec(&self, to_state: State) -> Vec<(State, GraphTransition<Range>)> {
+        let mut in_transitions = vec![];
+        for from_state in self.transitions_in.get(&to_state).unwrap_or(&IntSet::new()) {
+            for (state, transition) in self.transitions_from_state_enumerate_iter(from_state) {
+                if to_state == *state {
+                    in_transitions.push((*from_state, transition.clone()));
                 }
             }
         }
-
-        (new_graph, index_map)
+        in_transitions
     }
 
-    pub fn convert_to_regex(
-        &mut self,
-        execution_profile: &ExecutionProfile,
-    ) -> Result<Option<RegularExpression>, EngineError> {
-        let groups = Self::get_strongly_connected_components(&self.graph);
+    pub fn states_topo_vec(&self) -> Vec<State> {
+        if self.cyclic {
+            panic!("The graph has a cycle");
+        }
 
-        for group in groups {
-            execution_profile.assert_not_timed_out()?;
+        let mut in_degree: IntMap<State, usize> = self
+            .transitions_in
+            .iter()
+            .map(|(state, parents)| (*state, parents.len()))
+            .collect();
 
-            let mut group_start_states = AHashSet::new();
-            let mut group_accept_states = AHashSet::new();
-            for state in &group {
-                if state == &self.start_state {
-                    group_start_states.insert(*state);
-                }
-                for edge in self.graph.edges_directed(*state, Direction::Incoming) {
-                    if !group.contains(&edge.source()) {
-                        group_start_states.insert(*state);
-                        break;
-                    }
-                }
-
-                if state == &self.accept_state {
-                    group_accept_states.insert(*state);
-                }
-                for edge in self.graph.edges_directed(*state, Direction::Outgoing) {
-                    if !group.contains(&edge.target()) {
-                        group_accept_states.insert(*state);
-                        break;
-                    }
-                }
+        let mut worklist: VecDeque<State> = VecDeque::new();
+        for (&state, &degree) in &in_degree {
+            if degree == 0 {
+                worklist.push_back(state);
             }
+        }
 
-            let group: AHashSet<_> = group.iter().cloned().collect();
+        let mut sorted_order = Vec::with_capacity(self.get_number_of_states());
+        while let Some(state) = worklist.pop_front() {
+            sorted_order.push(state);
 
-            let (subgraph, group_map) = self.subgraph_from_group(&group);
-
-            for state in &group {
-                let mut edges_to_remove = vec![];
-                let mut remove_node = true;
-                for edge in self.graph.edges(*state) {
-                    if group.contains(&edge.source()) && group.contains(&edge.target()) {
-                        edges_to_remove.push(edge.id());
-                    } else {
-                        remove_node = false;
-                    }
-                }
-                edges_to_remove.iter().for_each(|edge_index| {
-                    self.graph.remove_edge(*edge_index);
-                });
-                if remove_node
-                    && !group_start_states.contains(state)
-                    && !group_accept_states.contains(state)
-                {
-                    self.graph.remove_node(*state);
-                }
-            }
-
-            for &group_start_state in &group_start_states {
-                let subgraph_start_state = *group_map.get(&group_start_state.index()).unwrap();
-                for &group_accept_state in &group_accept_states {
-                    let subgraph_accept_state =
-                        *group_map.get(&group_accept_state.index()).unwrap();
-                    let mut wrapped_graph = GraphWrapper {
-                        graph: subgraph.clone(),
-                        start_state: subgraph_start_state,
-                        accept_state: subgraph_accept_state,
-                        spanning_set: self.spanning_set.clone(),
-                        node_index_count: self.node_index_count,
-                    };
-
-                    let regex;
-                    if let Some(v) = wrapped_graph.convert_group(execution_profile) {
-                        regex = v;
-                    } else {
-                        return Ok(None);
-                    }
-
-                    if group_start_state == group_accept_state {
-                        let new_accept_state = self.add_node();
-                        if group_accept_state == self.accept_state {
-                            self.accept_state = new_accept_state;
+            if let Some(neighbors) = self.transitions.get(state) {
+                let neighbors = neighbors.keys();
+                for &neighbor in neighbors {
+                    if let Some(degree) = in_degree.get_mut(&neighbor) {
+                        *degree -= 1;
+                        if *degree == 0 {
+                            worklist.push_back(neighbor);
                         }
-                        let mut edge_to_add = vec![];
-                        for edge in self
-                            .graph
-                            .edges_directed(group_accept_state, Direction::Outgoing)
-                        {
-                            edge_to_add.push((edge.target(), edge.weight().clone(), edge.id()));
-                        }
-
-                        for edge in edge_to_add {
-                            self.graph.add_edge(new_accept_state, edge.0, edge.1);
-                            self.graph.remove_edge(edge.2);
-                        }
-                        self.graph
-                            .add_edge(group_start_state, new_accept_state, regex);
-                    } else {
-                        self.graph
-                            .add_edge(group_start_state, group_accept_state, regex);
                     }
                 }
             }
         }
 
-        let mut regex_map: IntMap<usize, RegularExpression> = IntMap::with_capacity_and_hasher(
-            self.graph.node_count(),
-            BuildHasherDefault::default(),
-        );
-        let mut topo = Topo::new(&self.graph);
-        while let Some(node) = topo.next(&self.graph) {
-            let current_regex = if let Some(current_regex) = regex_map.get(&node.index()) {
-                current_regex.clone()
-            } else {
-                RegularExpression::new_empty_string()
-            };
-            for edge in self.graph.edges_directed(node, Direction::Outgoing) {
-                let new_regex =
-                    current_regex.concat(self.graph.edge_weight(edge.id()).unwrap(), true);
-                match regex_map.entry(edge.target().index()) {
-                    Entry::Occupied(mut o) => {
-                        o.insert(new_regex.union(o.get()).simplify());
-                    }
-                    Entry::Vacant(v) => {
-                        v.insert(new_regex);
-                    }
-                };
-            }
+        if sorted_order.len() == self.get_number_of_states() {
+            sorted_order
+        } else {
+            panic!("The graph has a cycle");
         }
-
-        let result = regex_map.get(&self.accept_state.index()).cloned();
-
-        Ok(result)
     }
 
-    fn convert_group(&mut self, execution_profile: &ExecutionProfile) -> Option<RegularExpression> {
-        if self.start_state == self.accept_state {
-            let new_accept_state = self.add_node();
-
-            let edges: Vec<_> = self
-                .graph
-                .edges_directed(self.start_state, Direction::Incoming)
-                .map(|e| (e.id(), e.source(), e.weight().clone()))
-                .collect();
-
-            for edge in edges {
-                self.graph.remove_edge(edge.0);
-                self.graph.add_edge(edge.1, new_accept_state, edge.2);
-            }
-            self.accept_state = new_accept_state;
-
-            if let Ok(regex) = self.convert_to_regex(execution_profile) {
-                return Some(regex?.repeat(0, None));
-            } else {
-                return None;
-            }
-        }
-
-        self.identify_and_convert_shape(execution_profile)
+    #[inline]
+    pub fn get_number_of_states(&self) -> usize {
+        self.transitions.len() - self.removed_states.len()
     }
 }
 
@@ -300,40 +251,41 @@ impl FastAutomaton {
             return Some(RegularExpression::new_empty());
         }
         let execution_profile = ThreadLocalParams::get_execution_profile();
-        if let Ok(regex) = GraphWrapper::new(self).convert_to_regex(&execution_profile) {
-            let regex = regex?;
-            // Checking if correct
-            match regex.to_automaton() {
-                Ok(automaton) => match self.is_equivalent_of(&automaton) {
-                    Ok(result) => {
-                        if !result {
-                            println!("Not equivalent with:");
-                            automaton.to_dot();
-                            error!(
-                            "The automaton is not equivalent to the generated regex; automaton={} regex={}",
-                            serde_json::to_string(self).unwrap(),
-                            regex
-                        );
-                            None
-                        } else {
-                            Some(regex)
+        if let Ok(graph) = StateEliminationAutomaton::new(self) {
+            if let Ok(regex) = graph?.convert_to_regex(&execution_profile) {
+                let regex = regex?;
+                match regex.to_automaton() {
+                    Ok(automaton) => match self.is_equivalent_of(&automaton) {
+                        Ok(result) => {
+                            if !result {
+                                println!(
+                                    "The automaton is not equivalent to the generated regex; automaton={} regex={}",
+                                    serde_json::to_string(self).unwrap(),
+                                    regex
+                                );
+                                None
+                            } else {
+                                Some(regex)
+                            }
                         }
-                    }
+                        Err(err) => {
+                            println!("{err}");
+                            None
+                        }
+                    },
                     Err(err) => {
-                        println!("{err}");
+                        if let crate::error::EngineError::RegexSyntaxError(_) = err {
+                            error!(
+                                "The generated regex can not be converted to automaton to be checked for equivalence (Syntax Error); automaton={} regex={}",
+                                serde_json::to_string(self).unwrap(),
+                                regex
+                            );
+                        }
                         None
                     }
-                },
-                Err(err) => {
-                    if let crate::error::EngineError::RegexSyntaxError(_) = err {
-                        error!(
-                            "The generated regex can not be converted to automaton to be checked for equivalence (Syntax Error); automaton={} regex={}",
-                            serde_json::to_string(self).unwrap(),
-                            regex
-                        );
-                    }
-                    None
                 }
+            } else {
+                None
             }
         } else {
             None
@@ -343,25 +295,32 @@ impl FastAutomaton {
 
 #[cfg(test)]
 mod tests {
-    use crate::EngineError;
-
     use super::*;
 
     #[test]
     fn test_convert() -> Result<(), String> {
-        assert_convert("a+");
-        assert_convert("a{2,3}");
+        assert_convert("(ac|ads|a)*");
+        assert_convert(".*sf");
+        assert_convert(".*sf.*uif(ab|de)");
+
+        assert_convert(".*ab");
+
         assert_convert("(abc|fg){2}");
         assert_convert("a{2,3}");
-        assert_convert("a*bc*");
-        assert_convert("a(bcfe|bcdg)*");
-        assert_convert(".*abc");
-        assert_convert(".*abc.*def");
-        assert_convert("a(bcfe|bcdg|mkv)*");
         assert_convert("a(bcfe|bcdg|mkv){1,2}");
         assert_convert("a(bcfe|bcdg|mkv){5,6}");
         assert_convert("a(bcfe|bcdg|mkv){0,8}");
         assert_convert("a(bcfe|bcdg|mkv){3,20}");
+
+        assert_convert("a+");
+
+        assert_convert("a*bc*");
+        assert_convert("(abc)*(a|ab)");
+        assert_convert("a(bcfe|bcdg)*");
+        assert_convert(".*abc");
+        assert_convert(".*abc.*def");
+        assert_convert("a(bcfe|bcdg|mkv)*");
+
         assert_convert("(bc|a)*");
 
         assert_convert(".*a(bc|d)");
@@ -441,13 +400,25 @@ mod tests {
     }
 
     #[test]
-    fn test_dot() -> Result<(), EngineError> {
-        let automaton = RegularExpression::new("(ba+)*")?
-            .to_automaton()?
+    fn test_convert_after_operation_3() -> Result<(), String> {
+        let automaton1 = RegularExpression::new("x*")
+            .unwrap()
+            .to_automaton()
+            .unwrap();
+        let automaton2 = RegularExpression::new("(xxx)*")
+            .unwrap()
+            .to_automaton()
+            .unwrap()
             .determinize()
             .unwrap();
 
-        automaton.to_dot();
+        let result = automaton1.subtraction(&automaton2).unwrap();
+        result.to_dot();
+
+        let result = result.to_regex().unwrap();
+
+        assert_eq!("(x{3})*x{1,2}", result.to_string());
+
         Ok(())
     }
 }
