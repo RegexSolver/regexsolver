@@ -98,8 +98,10 @@ impl StateEliminationAutomaton<Range> {
                 } else {
                     return Ok(None);
                 }
-            } else {
+            } else if state == self.accept_state {
                 continue;
+            } else {
+                return Ok(None);
             };
 
             if !dot_value.contains_all(weight) {

@@ -52,7 +52,7 @@ impl Display for StateEliminationAutomaton<Range> {
 }
 
 impl StateEliminationAutomaton<Range> {
-    #[cfg(test)]
+    //#[cfg(test)]
     #[inline]
     pub fn to_dot(&self) {
         println!("{}", self);
@@ -258,13 +258,11 @@ impl FastAutomaton {
                     Ok(automaton) => match self.is_equivalent_of(&automaton) {
                         Ok(result) => {
                             if !result {
-                                println!("Not equivalent with:");
-                                //automaton.to_dot();
                                 println!(
-                                "The automaton is not equivalent to the generated regex; automaton={} regex={}",
-                                serde_json::to_string(self).unwrap(),
-                                regex
-                            );
+                                    "The automaton is not equivalent to the generated regex; automaton={} regex={}",
+                                    serde_json::to_string(self).unwrap(),
+                                    regex
+                                );
                                 None
                             } else {
                                 Some(regex)
@@ -278,10 +276,10 @@ impl FastAutomaton {
                     Err(err) => {
                         if let crate::error::EngineError::RegexSyntaxError(_) = err {
                             error!(
-                            "The generated regex can not be converted to automaton to be checked for equivalence (Syntax Error); automaton={} regex={}",
-                            serde_json::to_string(self).unwrap(),
-                            regex
-                        );
+                                "The generated regex can not be converted to automaton to be checked for equivalence (Syntax Error); automaton={} regex={}",
+                                serde_json::to_string(self).unwrap(),
+                                regex
+                            );
                         }
                         None
                     }
@@ -300,23 +298,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_convert_() -> Result<(), String> {
-        let automaton = RegularExpression::new("a+(ba+)*")
-            .unwrap()
-            .to_automaton()
-            .unwrap()
-            .determinize()
-            .unwrap();
-
-        let automaton = StateEliminationAutomaton::new(&automaton).unwrap().unwrap();
-
-        automaton.to_dot();
-
-        Ok(())
-    }
-
-    #[test]
     fn test_convert() -> Result<(), String> {
+        assert_convert("(ac|ads|a)*");
         assert_convert(".*sf");
         assert_convert(".*sf.*uif(ab|de)");
 
