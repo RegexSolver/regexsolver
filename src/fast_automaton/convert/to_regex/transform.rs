@@ -77,6 +77,7 @@ impl StateEliminationAutomaton<Range> {
         if self.get_number_of_states() < 2 {
             return Ok(None);
         }
+        //self.to_dot();
         let mut dot_value =
             if let Some(dot_value) = self.get_transition(self.start_state, self.start_state) {
                 if let Some(dot_value) = dot_value.get_weight() {

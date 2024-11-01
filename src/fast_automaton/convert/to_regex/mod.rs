@@ -4,7 +4,6 @@ use std::{
 };
 
 use ahash::{HashMapExt, HashSetExt};
-use log::error;
 use nohash_hasher::IntMap;
 
 use crate::{error::EngineError, execution_profile::ThreadLocalParams, regex::RegularExpression};
@@ -53,6 +52,7 @@ impl Display for StateEliminationAutomaton<Range> {
 
 impl StateEliminationAutomaton<Range> {
     //#[cfg(test)]
+    #[allow(dead_code)]
     #[inline]
     pub fn to_dot(&self) {
         println!("{}", self);
@@ -258,28 +258,28 @@ impl FastAutomaton {
                     Ok(automaton) => match self.is_equivalent_of(&automaton) {
                         Ok(result) => {
                             if !result {
-                                println!(
+                                /*println!(
                                     "The automaton is not equivalent to the generated regex; automaton={} regex={}",
                                     serde_json::to_string(self).unwrap(),
                                     regex
-                                );
+                                );*/
                                 None
                             } else {
                                 Some(regex)
                             }
                         }
-                        Err(err) => {
-                            println!("{err}");
+                        Err(_) => {
+                            //println!("{err}");
                             None
                         }
                     },
                     Err(err) => {
                         if let crate::error::EngineError::RegexSyntaxError(_) = err {
-                            error!(
+                            /*error!(
                                 "The generated regex can not be converted to automaton to be checked for equivalence (Syntax Error); automaton={} regex={}",
                                 serde_json::to_string(self).unwrap(),
                                 regex
-                            );
+                            );*/
                         }
                         None
                     }
@@ -421,4 +421,27 @@ mod tests {
 
         Ok(())
     }
+
+    /*#[test]
+    fn test_convert_after_operation_4() -> Result<(), String> {
+        let automaton1 = RegularExpression::new(".*abc.*")
+            .unwrap()
+            .to_automaton()
+            .unwrap();
+        let automaton2 = RegularExpression::new(".*def.*")
+            .unwrap()
+            .to_automaton()
+            .unwrap()
+            .determinize()
+            .unwrap();
+
+        let result = automaton1.subtraction(&automaton2).unwrap();
+        result.to_dot();
+
+        let result = result.to_regex().unwrap();
+
+        assert_eq!("(x{3})*x{1,2}", result.to_string());
+
+        Ok(())
+    }*/
 }

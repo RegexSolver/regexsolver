@@ -154,6 +154,10 @@ impl Condition {
     pub fn get_cardinality(&self, spanning_set: &SpanningSet) -> Result<u32, EngineError> {
         Ok(self.to_range(spanning_set)?.get_cardinality())
     }
+
+    pub fn get_hot_bits(&self) -> Vec<bool> {
+        self.0.get_hot_bits()
+    }
 }
 
 #[cfg(test)]
@@ -190,10 +194,19 @@ mod tests {
     fn test_empty_total() -> Result<(), String> {
         let spanning_set = get_spanning_set();
         let empty = Condition::empty(&spanning_set);
+        //println!("{empty}");
         assert!(empty.is_empty());
+        assert_eq!(
+            vec![false, false, false, false],
+            empty.get_hot_bits()
+        );
         let total = Condition::total(&spanning_set);
-        println!("{total}");
+        //println!("{total}");
         assert!(total.is_total());
+        assert_eq!(
+            vec![true, true, true, true],
+            total.get_hot_bits()
+        );
 
         assert_eq!(Range::empty(), empty.to_range(&spanning_set).unwrap());
         assert_eq!(Range::total(), total.to_range(&spanning_set).unwrap());
@@ -222,8 +235,17 @@ mod tests {
             Condition::from_range(&Range::empty(), &spanning_set).unwrap()
         );
         assert_eq!(
+            vec![false],
+            empty.get_hot_bits()
+        );
+
+        assert_eq!(
             total,
             Condition::from_range(&Range::total(), &spanning_set).unwrap()
+        );
+        assert_eq!(
+            vec![true],
+            total.get_hot_bits()
         );
 
         assert_eq!(empty, total.complement());
