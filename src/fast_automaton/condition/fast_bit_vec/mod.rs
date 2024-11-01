@@ -6,8 +6,9 @@ pub struct FastBitVec {
 
 impl std::fmt::Display for FastBitVec {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        for a in &self.bits {
-            write!(f, "{:b}", a)?;
+        for i in 0..self.n {
+            let bit = if self.get(i).unwrap() { 1 } else { 0 };
+            write!(f, "{}", bit)?;
         }
         Ok(())
     }
@@ -120,5 +121,13 @@ impl FastBitVec {
 
     fn mask_for_bits(bits: usize) -> u64 {
         (!0) >> ((64 - bits % 64) % 64)
+    }
+
+    pub fn get_hot_bits(&self) -> Vec<bool> {
+        let mut hot_bits = Vec::with_capacity(self.n);
+        for i in 0..self.n {
+            hot_bits.push(self.get(i).unwrap());
+        }
+        hot_bits
     }
 }
