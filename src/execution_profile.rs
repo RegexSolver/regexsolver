@@ -14,7 +14,7 @@ use crate::error::EngineError;
 ///     execution_timeout: 1000,
 ///     max_number_of_terms: 10,
 /// };
-/// 
+///
 /// // Store the settings on the current thread.
 /// ThreadLocalParams::init_profile(&execution_profile);
 /// ```
@@ -90,7 +90,7 @@ impl ExecutionProfile {
     /// Assert that `execution_timeout` is not exceeded.
     ///
     /// Return empty if `execution_timeout` is not exceeded or if `start_execution_time` is not set.
-    /// 
+    ///
     /// Return [`EngineError::OperationTimeOutError`] otherwise.
     pub fn assert_not_timed_out(&self) -> Result<(), EngineError> {
         if let Some(start) = self.start_execution_time {
@@ -110,13 +110,12 @@ impl ExecutionProfile {
     }
 }
 
-
 /// Hold [`ExecutionProfile`] on the current thread.
-/// 
+///
 /// The default [`ExecutionProfile`] is the following:
 /// ```
 /// use regexsolver::execution_profile::ExecutionProfile;
-/// 
+///
 /// ExecutionProfile {
 ///     max_number_of_states: 8192,
 ///     start_execution_time: None,
@@ -181,7 +180,7 @@ impl ThreadLocalParams {
 
 #[cfg(test)]
 mod tests {
-    use crate::regex::RegularExpression;
+    use crate::{regex::RegularExpression, Term};
 
     use super::*;
 
@@ -203,6 +202,57 @@ mod tests {
             regex.to_automaton().unwrap_err()
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_execution_timeout_generate_strings() -> Result<(), String> {
+        let term = Term::from_regex(".*abc.*def.*qdsqd.*sqdsqd.*qsdsqdsqdz").unwrap();
+
+        let start_time = SystemTime::now();
+        let execution_profile = ExecutionProfile {
+            max_number_of_states: 8192,
+            start_execution_time: Some(start_time),
+            execution_timeout: 100,
+            max_number_of_terms: 50,
+        };
+        ThreadLocalParams::init_profile(&execution_profile);
+
+        assert_eq!(EngineError::OperationTimeOutError, term.generate_strings(100).unwrap_err());
+
+        let run_duration = SystemTime::now()
+            .duration_since(start_time)
+            .expect("Time went backwards")
+            .as_millis();
+
+        println!("{run_duration}");
+        assert!(run_duration <= execution_profile.execution_timeout + 50);
+        Ok(())
+    }
+
+    #[test]
+    fn test_execution_timeout_difference() -> Result<(), String> {
+        let term1 = Term::from_regex(".*abc.*def.*qdqd.*qsdsqdsqdz").unwrap();
+        let term2 = Term::from_regex(".*abc.*def.*qdsqd.*sqdsqd.*qsdsqdsqdz.*abc.*def.*qdsqd.*sqdsqd.*qsdsqdsqdz.*abc.*def.*qdsqd.*sqdsqd.*qsdsqdsqdz").unwrap();
+
+        let start_time = SystemTime::now();
+        let execution_profile = ExecutionProfile {
+            max_number_of_states: 8192,
+            start_execution_time: Some(start_time),
+            execution_timeout: 100,
+            max_number_of_terms: 50,
+        };
+        ThreadLocalParams::init_profile(&execution_profile);
+
+        assert_eq!(EngineError::OperationTimeOutError, term1.difference(&term2).unwrap_err());
+
+        let run_duration = SystemTime::now()
+            .duration_since(start_time)
+            .expect("Time went backwards")
+            .as_millis();
+
+        println!("{run_duration}");
+        assert!(run_duration <= execution_profile.execution_timeout + 50);
         Ok(())
     }
 }

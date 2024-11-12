@@ -12,6 +12,7 @@ impl StateEliminationAutomaton<Range> {
         if self.cyclic {
             return self.convert_graph_to_regex(execution_profile);
         }
+        execution_profile.assert_not_timed_out()?;
 
         let mut regex_map: IntMap<usize, RegularExpression> = IntMap::with_capacity_and_hasher(
             self.get_number_of_states(),

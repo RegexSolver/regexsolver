@@ -1,4 +1,4 @@
-use crate::error::EngineError;
+use crate::{error::EngineError, execution_profile::ThreadLocalParams};
 
 use super::*;
 
@@ -11,6 +11,8 @@ impl FastAutomaton {
         } else if other.is_total() {
             return Ok(self.clone());
         }
+        let execution_profile = ThreadLocalParams::get_execution_profile();
+        
         let new_spanning_set = self.spanning_set.merge(&other.spanning_set);
 
         let mut new_automaton = FastAutomaton::new_empty();
@@ -29,6 +31,7 @@ impl FastAutomaton {
         new_states.insert((self.start_state, other.start_state), initial_pair);
 
         while let Some(p) = worklist.pop_front() {
+            execution_profile.assert_not_timed_out()?;
             if self.accept_states.contains(&p.1) && other.accept_states.contains(&p.2) {
                 new_automaton.accept(p.0);
             }
@@ -67,6 +70,8 @@ impl FastAutomaton {
         } else if self.is_total() || other.is_total() {
             return Ok(true);
         }
+        let execution_profile = ThreadLocalParams::get_execution_profile();
+
         let new_spanning_set = self.spanning_set.merge(&other.spanning_set);
 
         let mut new_automaton = FastAutomaton::new_empty();
@@ -85,6 +90,7 @@ impl FastAutomaton {
         new_states.insert((self.start_state, other.start_state), initial_pair);
 
         while let Some(p) = worklist.pop_front() {
+            execution_profile.assert_not_timed_out()?;
             if self.accept_states.contains(&p.1) && other.accept_states.contains(&p.2) {
                 return Ok(true);
             }
