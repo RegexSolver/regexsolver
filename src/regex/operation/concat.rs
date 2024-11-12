@@ -165,7 +165,32 @@ impl RegularExpression {
         this: &RegularExpression,
         that: &RegularExpression,
     ) -> Option<RegularExpression> {
-        if let (
+        if this == that {
+            if let (
+                RegularExpression::Repetition(this_regex, this_min, this_max_opt),
+                RegularExpression::Repetition(_, that_min, that_max_opt),
+            ) = (this, that)
+            {
+                let new_min = this_min + that_min;
+                let new_max_opt =
+                    if let (Some(this_max), Some(that_max)) = (this_max_opt, that_max_opt) {
+                        Some(this_max + that_max)
+                    } else {
+                        None
+                    };
+                Some(RegularExpression::Repetition(
+                    this_regex.clone(),
+                    new_min,
+                    new_max_opt,
+                ))
+            } else {
+                Some(RegularExpression::Repetition(
+                    Box::new(this.clone()),
+                    2,
+                    Some(2),
+                ))
+            }
+        } else if let (
             RegularExpression::Repetition(this_regex, this_min, this_max_opt),
             RegularExpression::Repetition(that_regex, that_min, that_max_opt),
         ) = (this, that)
@@ -196,31 +221,6 @@ impl RegularExpression {
                 }
             } else {
                 return None;
-            }
-        } else if this == that {
-            if let (
-                RegularExpression::Repetition(this_regex, this_min, this_max_opt),
-                RegularExpression::Repetition(_, that_min, that_max_opt),
-            ) = (this, that)
-            {
-                let new_min = this_min + that_min;
-                let new_max_opt =
-                    if let (Some(this_max), Some(that_max)) = (this_max_opt, that_max_opt) {
-                        Some(this_max + that_max)
-                    } else {
-                        None
-                    };
-                Some(RegularExpression::Repetition(
-                    this_regex.clone(),
-                    new_min,
-                    new_max_opt,
-                ))
-            } else {
-                Some(RegularExpression::Repetition(
-                    Box::new(this.clone()),
-                    2,
-                    Some(2),
-                ))
             }
         } else if let RegularExpression::Repetition(this_regex, this_min, this_max_opt) = this {
             if **this_regex == *that {
