@@ -20,7 +20,7 @@ Add the following line in your `Cargo.toml`:
 
 ```toml
 [dependencies]
-regexsolver = "0.2"
+regexsolver = "0.3"
 ```
 
 ## Examples
