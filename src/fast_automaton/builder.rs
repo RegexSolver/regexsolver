@@ -1,3 +1,5 @@
+use condition::converter::ConditionConverter;
+
 use crate::error::EngineError;
 
 use super::*;
@@ -29,11 +31,7 @@ impl FastAutomaton {
         let mut automaton: FastAutomaton = Self::new_empty();
         automaton.spanning_set = SpanningSet::new_total();
         automaton.accept(automaton.start_state);
-        automaton.add_transition_to(
-            0,
-            0,
-            &Condition::total(&automaton.spanning_set),
-        );
+        automaton.add_transition_to(0, 0, &Condition::total(&automaton.spanning_set));
         automaton
     }
 
@@ -69,14 +67,12 @@ impl FastAutomaton {
         if new_spanning_set == &self.spanning_set {
             return Ok(());
         }
+        let condition_converter = ConditionConverter::new(&self.spanning_set, new_spanning_set)?;
         for from_state in &self.transitions_vec() {
             for to_state in self.transitions_from_state(from_state) {
                 match self.transitions[*from_state].entry(to_state) {
                     Entry::Occupied(mut o) => {
-                        o.insert(
-                            o.get()
-                                .project_to(&self.spanning_set, new_spanning_set)?,
-                        );
+                        o.insert(condition_converter.convert(o.get())?);
                     }
                     Entry::Vacant(_) => {}
                 };

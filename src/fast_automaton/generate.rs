@@ -6,82 +6,6 @@ use ahash::AHashSet;
 use super::*;
 
 impl FastAutomaton {
-    /*pub fn generate_strings(&self, number: usize) -> Result<AHashSet<String>, EngineError> {
-        if self.is_empty() {
-            return Ok(AHashSet::new());
-        }
-
-        let bases = self
-            .get_bases()?
-            .into_iter()
-            .map(|c| {
-                let range = c.to_range(self.get_spanning_set()).unwrap();
-                (c, range)
-            })
-            .collect::<Vec<_>>();
-
-        let capacity = cmp::min(number, 1000);
-        let mut strings = AHashSet::with_capacity(capacity);
-        let mut pq = BinaryHeap::with_capacity(capacity);
-        let mut visited = AHashSet::with_capacity(capacity);
-
-        pq.push(Reverse((String::new(), vec![self.start_state])));
-        if self.is_accepted(&self.start_state) {
-            strings.insert("".to_string());
-            if strings.len() >= number {
-                return Ok(strings);
-            }
-        }
-
-        while let Some(Reverse((string, states))) = pq.pop() {
-            if !visited.insert((states.clone(), string.clone())) {
-                continue;
-            }
-
-            for (base, range) in &bases {
-                for from_state in &states {
-                    let mut accepted = false;
-                    let mut next_states = Vec::with_capacity(self.get_number_of_states());
-                    for (to_state, condition) in
-                        self.transitions_from_state_enumerate_iter(&from_state)
-                    {
-                        if condition.has_intersection(base) {
-                            next_states.push(*to_state);
-                            if self.is_accepted(to_state) {
-                                accepted = true;
-                            }
-                        }
-                    }
-                    if !next_states.is_empty() {
-                        next_states.shrink_to_fit();
-                        next_states.sort_unstable();
-
-                        let mut c = 0;
-                        for char in range.iter() {
-                            let mut new_string = String::with_capacity(string.capacity() + 1);
-                            new_string.push_str(&string);
-                            new_string.push(char.to_char());
-                            //println!("char {char}, new_string {new_string}");
-                            if accepted {
-                                strings.insert(new_string.clone());
-                                if strings.len() >= number {
-                                    return Ok(strings);
-                                }
-                            }
-                            pq.push(Reverse((new_string, next_states.clone())));
-                            c += 1;
-                            if c >= number {
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(strings)
-    }*/
-
     pub fn generate_strings(&self, number: usize) -> Result<AHashSet<String>, EngineError> {
         if self.is_empty() {
             return Ok(AHashSet::new());
@@ -100,7 +24,6 @@ impl FastAutomaton {
 
         worklist.push_back((vec![], self.start_state));
         while let Some((ranges, state)) = worklist.pop_front() {
-            execution_profile.assert_not_timed_out()?;
             if self.accept_states.contains(&state) {
                 if ranges.is_empty() {
                     strings.insert(String::new());
@@ -108,6 +31,7 @@ impl FastAutomaton {
                     let mut end = false;
                     let mut ranges_iter: Vec<_> = ranges.iter().map(|range| range.iter()).collect();
                     while strings.len() < number {
+                        execution_profile.assert_not_timed_out()?;
                         let mut string = vec![];
                         for i in 0..ranges.len() {
                             if let Some(character) = ranges_iter[i].next() {
@@ -134,6 +58,7 @@ impl FastAutomaton {
                 }
             }
             for (to_state, cond) in self.transitions_from_state_enumerate_iter(&state) {
+                execution_profile.assert_not_timed_out()?;
                 let range = match ranges_cache.entry(cond) {
                     Entry::Occupied(o) => o.get().clone(),
                     Entry::Vacant(v) => {
