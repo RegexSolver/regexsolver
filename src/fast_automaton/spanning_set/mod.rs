@@ -1,10 +1,10 @@
 use std::slice::Iter;
 
 use ahash::AHashSet;
-use serde::{Deserialize, Serialize};
 use regex_charclass::{char::Char, irange::RangeSet};
+use serde::{Deserialize, Serialize};
 
-/// Contains a set of [`RangeSet<Char>`] that span all the transition of a [`crate::FastAutomaton`]. 
+/// Contains a set of [`RangeSet<Char>`] that span all the transition of a [`crate::FastAutomaton`].
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct SpanningSet(Vec<RangeSet<Char>>, RangeSet<Char>);
 
@@ -15,6 +15,14 @@ impl SpanningSet {
 
     pub fn new_total() -> Self {
         SpanningSet(vec![RangeSet::total()], RangeSet::empty())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty() && self.1.is_total()
+    }
+
+    pub fn is_total(&self) -> bool {
+        self.0.len() == 1 && self.0[0].is_total() && self.1.is_empty()
     }
 
     pub(crate) fn spanning_ranges_with_rest_len(&self) -> usize {

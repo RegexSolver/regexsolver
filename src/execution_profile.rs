@@ -218,7 +218,10 @@ mod tests {
         };
         ThreadLocalParams::init_profile(&execution_profile);
 
-        assert_eq!(EngineError::OperationTimeOutError, term.generate_strings(100).unwrap_err());
+        assert_eq!(
+            EngineError::OperationTimeOutError,
+            term.generate_strings(100).unwrap_err()
+        );
 
         let run_duration = SystemTime::now()
             .duration_since(start_time)
@@ -244,7 +247,39 @@ mod tests {
         };
         ThreadLocalParams::init_profile(&execution_profile);
 
-        assert_eq!(EngineError::OperationTimeOutError, term1.difference(&term2).unwrap_err());
+        assert_eq!(
+            EngineError::OperationTimeOutError,
+            term1.difference(&term2).unwrap_err()
+        );
+
+        let run_duration = SystemTime::now()
+            .duration_since(start_time)
+            .expect("Time went backwards")
+            .as_millis();
+
+        println!("{run_duration}");
+        assert!(run_duration <= execution_profile.execution_timeout + 50);
+        Ok(())
+    }
+
+    #[test]
+    fn test_execution_timeout_intersection() -> Result<(), String> {
+        let term1 = Term::from_regex(".*abc.*def.*qdqd.*qsdsqdsqdz.*abc.*def.*qdqd.*qsdsqdsqdz.*abc.*def.*qdqd.*qsdsqdsqdz.*abc.*def.*qdqd.*qsdsqdsqdz.*abc.*def.*qdqd.*qsdsqdsqdz.*abc.*def.*qdqd.*qsdsqdsqdz.*abc.*def.*qdqd.*qsdsqdsqdz").unwrap();
+        let term2 = Term::from_regex(".*abc.*def.*qdsqd.*sqdsqd.*qsdsqdsqdz.*abc.*def.*qdqd.*qsdsqdsqdz.*abc.*def.*qdqd.*qsdsqdsqdz.*abc.*def.*qdsqd.*sqdsqd.*qsdsqdsqdz.*abc.*def.*qdsqd.*sqdsqd.*qsdsqdsqdz.*abc.*def.*qdqd.*qsdsqdsqdz.*abc.*def.*qdqd.*qsdsqdsqdz.*abc.*def.*qdqd.*qsdsqdsqdz.*abc.*def.*qdqd.*qsdsqdsqdz.*abc.*def.*qdqd.*qsdsqdsqdz.*abc.*def.*qdqd.*qsdsqdsqdz.*abc.*def.*qdqd.*qsdsqdsqdz").unwrap();
+
+        let start_time = SystemTime::now();
+        let execution_profile = ExecutionProfile {
+            max_number_of_states: 8192,
+            start_execution_time: Some(start_time),
+            execution_timeout: 100,
+            max_number_of_terms: 50,
+        };
+        ThreadLocalParams::init_profile(&execution_profile);
+
+        assert_eq!(
+            EngineError::OperationTimeOutError,
+            term1.intersection(&[term2]).unwrap_err()
+        );
 
         let run_duration = SystemTime::now()
             .duration_since(start_time)

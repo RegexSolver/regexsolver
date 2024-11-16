@@ -1,3 +1,5 @@
+use condition::converter::ConditionConverter;
+
 use crate::{error::EngineError, execution_profile::ThreadLocalParams};
 
 use super::*;
@@ -12,8 +14,13 @@ impl FastAutomaton {
             return Ok(self.clone());
         }
         let execution_profile = ThreadLocalParams::get_execution_profile();
-        
+
         let new_spanning_set = self.spanning_set.merge(&other.spanning_set);
+
+        let condition_converter_self_to_new =
+            ConditionConverter::new(&self.spanning_set, &new_spanning_set)?;
+        let condition_converter_other_to_new =
+            ConditionConverter::new(&other.spanning_set, &new_spanning_set)?;
 
         let mut new_automaton = FastAutomaton::new_empty();
         let mut worklist =
@@ -36,8 +43,10 @@ impl FastAutomaton {
                 new_automaton.accept(p.0);
             }
 
-            let transitions_1 = self.get_projected_transitions(p.1, &new_spanning_set)?;
-            let transitions_2 = other.get_projected_transitions(p.2, &new_spanning_set)?;
+            let transitions_1 =
+                self.get_projected_transitions(p.1, &condition_converter_self_to_new)?;
+            let transitions_2 =
+                other.get_projected_transitions(p.2, &condition_converter_other_to_new)?;
 
             for (n1, condition_1) in transitions_1 {
                 for (n2, condition_2) in &transitions_2 {
@@ -74,6 +83,11 @@ impl FastAutomaton {
 
         let new_spanning_set = self.spanning_set.merge(&other.spanning_set);
 
+        let condition_converter_self_to_new =
+            ConditionConverter::new(&self.spanning_set, &new_spanning_set)?;
+        let condition_converter_other_to_new =
+            ConditionConverter::new(&other.spanning_set, &new_spanning_set)?;
+
         let mut new_automaton = FastAutomaton::new_empty();
         let mut worklist =
             VecDeque::with_capacity(self.get_number_of_states() + other.get_number_of_states());
@@ -95,8 +109,10 @@ impl FastAutomaton {
                 return Ok(true);
             }
 
-            let transitions_1 = self.get_projected_transitions(p.1, &new_spanning_set)?;
-            let transitions_2 = other.get_projected_transitions(p.2, &new_spanning_set)?;
+            let transitions_1 =
+                self.get_projected_transitions(p.1, &condition_converter_self_to_new)?;
+            let transitions_2 =
+                other.get_projected_transitions(p.2, &condition_converter_other_to_new)?;
 
             for (n1, condition_1) in transitions_1 {
                 for (n2, condition_2) in &transitions_2 {
@@ -124,16 +140,14 @@ impl FastAutomaton {
     fn get_projected_transitions(
         &self,
         state: State,
-        new_spanning_set: &SpanningSet,
+        condition_converter: &ConditionConverter,
     ) -> Result<Vec<(State, Condition)>, EngineError> {
         let transitions_1: Result<Vec<_>, EngineError> = self
             .transitions_from_state_enumerate_iter(&state)
-            .map(
-                |(&s, c)| match c.project_to(&self.spanning_set, new_spanning_set) {
-                    Ok(condition) => Ok((s, condition)),
-                    Err(err) => Err(err),
-                },
-            )
+            .map(|(&s, c)| match condition_converter.convert(c) {
+                Ok(condition) => Ok((s, condition)),
+                Err(err) => Err(err),
+            })
             .collect();
 
         transitions_1

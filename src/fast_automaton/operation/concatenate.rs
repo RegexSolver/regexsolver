@@ -1,5 +1,7 @@
 use std::hash::BuildHasherDefault;
 
+use condition::converter::ConditionConverter;
+
 use crate::error::EngineError;
 
 use super::*;
@@ -126,6 +128,7 @@ impl FastAutomaton {
 
         let new_spanning_set = &self.spanning_set.merge(&other.spanning_set);
         self.apply_new_spanning_set(new_spanning_set)?;
+        let condition_converter = ConditionConverter::new(&other.spanning_set, new_spanning_set)?;
 
         let mut new_states: IntMap<usize, usize> = IntMap::with_capacity_and_hasher(
             other.get_number_of_states(),
@@ -195,8 +198,7 @@ impl FastAutomaton {
                         }
                     }
                 };
-                let projected_condition =
-                    condition.project_to(&other.spanning_set, new_spanning_set)?;
+                let projected_condition = condition_converter.convert(condition)?;
                 for new_from_state in new_from_states.iter() {
                     for new_to_state in new_to_states.iter() {
                         self.add_transition_to(

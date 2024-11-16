@@ -7,6 +7,7 @@ use regex_charclass::{char::Char, CharacterClass};
 use crate::error::EngineError;
 
 use super::spanning_set::SpanningSet;
+pub mod converter;
 mod fast_bit_vec;
 
 /// Contains the condition of a transition in a [`crate::FastAutomaton`]
@@ -51,7 +52,11 @@ impl Condition {
 
         let mut cond = Self::empty(spanning_set);
 
-        for (i, base) in spanning_set.get_spanning_ranges_with_rest().iter().enumerate() {
+        for (i, base) in spanning_set
+            .get_spanning_ranges_with_rest()
+            .iter()
+            .enumerate()
+        {
             if range.contains_all(base) {
                 cond.0.set(i, true);
             }
@@ -67,7 +72,11 @@ impl Condition {
     pub fn to_range(&self, spanning_set: &SpanningSet) -> Result<Range, EngineError> {
         let mut range = Range::empty();
 
-        for (i, base) in spanning_set.get_spanning_ranges_with_rest().iter().enumerate() {
+        for (i, base) in spanning_set
+            .get_spanning_ranges_with_rest()
+            .iter()
+            .enumerate()
+        {
             if let Some(has) = self.0.get(i) {
                 if has {
                     range = range.union(base);
@@ -78,19 +87,6 @@ impl Condition {
         }
 
         Ok(range)
-    }
-
-    pub fn project_to(
-        &self,
-        current_spanning_set: &SpanningSet,
-        new_spanning_set: &SpanningSet,
-    ) -> Result<Self, EngineError> {
-        if current_spanning_set == new_spanning_set {
-            Ok(self.clone())
-        } else {
-            let range = self.to_range(current_spanning_set)?;
-            Self::from_range(&range, new_spanning_set)
-        }
     }
 
     #[inline]
@@ -155,20 +151,21 @@ impl Condition {
         Ok(self.to_range(spanning_set)?.get_cardinality())
     }
 
-    pub fn get_hot_bits(&self) -> Vec<bool> {
-        self.0.get_hot_bits()
+    pub fn get_bits(&self) -> Vec<bool> {
+        self.0.get_bits()
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use converter::ConditionConverter;
     use regex_charclass::irange::range::AnyRange;
 
     use super::*;
 
     fn get_spanning_set() -> SpanningSet {
         let ranges = vec![
-            Range::new_from_range(Char::new('\0')..=Char::new('\u{2}')),
+            Range::new_from_range(Char::new('\u{0}')..=Char::new('\u{2}')),
             Range::new_from_range(Char::new('\u{4}')..=Char::new('\u{6}')),
             Range::new_from_range(Char::new('\u{9}')..=Char::new('\u{9}')),
         ];
@@ -196,17 +193,11 @@ mod tests {
         let empty = Condition::empty(&spanning_set);
         //println!("{empty}");
         assert!(empty.is_empty());
-        assert_eq!(
-            vec![false, false, false, false],
-            empty.get_hot_bits()
-        );
+        assert_eq!(vec![false, false, false, false], empty.get_bits());
         let total = Condition::total(&spanning_set);
         //println!("{total}");
         assert!(total.is_total());
-        assert_eq!(
-            vec![true, true, true, true],
-            total.get_hot_bits()
-        );
+        assert_eq!(vec![true, true, true, true], total.get_bits());
 
         assert_eq!(Range::empty(), empty.to_range(&spanning_set).unwrap());
         assert_eq!(Range::total(), total.to_range(&spanning_set).unwrap());
@@ -234,19 +225,13 @@ mod tests {
             empty,
             Condition::from_range(&Range::empty(), &spanning_set).unwrap()
         );
-        assert_eq!(
-            vec![false],
-            empty.get_hot_bits()
-        );
+        assert_eq!(vec![false], empty.get_bits());
 
         assert_eq!(
             total,
             Condition::from_range(&Range::total(), &spanning_set).unwrap()
         );
-        assert_eq!(
-            vec![true],
-            total.get_hot_bits()
-        );
+        assert_eq!(vec![true], total.get_bits());
 
         assert_eq!(empty, total.complement());
         assert_eq!(total, empty.complement());
@@ -282,19 +267,27 @@ mod tests {
 
         let ranges = vec![
             Range::new_from_range(Char::new('\u{0}')..=Char::new('\u{1}')),
-            Range::new_from_range(Char::new('\u{2}')..=Char::new('\u{3}')),
-            Range::new_from_range(Char::new('\u{4}')..=Char::new('\u{5}')),
-            Range::new_from_range(Char::new('\u{6}')..=Char::new('\u{7}')),
+            Range::new_from_range(Char::new('\u{2}')..=Char::new('\u{2}')),
+            Range::new_from_range(Char::new('\u{4}')..=Char::new('\u{6}')),
+            Range::new_from_range(Char::new('\u{5}')..=Char::new('\u{6}')),
             Range::new_from_range(Char::new('\u{9}')..=Char::new('\u{9}')),
         ];
         let new_spanning_set = SpanningSet::compute_spanning_set(&ranges);
+        let condition_converter =
+            ConditionConverter::new(&current_spanning_set, &new_spanning_set).unwrap();
 
         for range in get_test_cases_range() {
-            assert_project_to(&range, &current_spanning_set, &new_spanning_set);
+            assert_project_to(
+                &range,
+                &current_spanning_set,
+                &new_spanning_set,
+                &condition_converter,
+            );
             assert_project_to(
                 &range.complement(),
                 &current_spanning_set,
                 &new_spanning_set,
+                &condition_converter,
             );
         }
 
@@ -303,15 +296,25 @@ mod tests {
 
     fn assert_project_to(
         range: &Range,
-        currently_used_characters: &SpanningSet,
-        newly_used_characters: &SpanningSet,
+        currently_used_spanning_set: &SpanningSet,
+        newly_used_spanning_set: &SpanningSet,
+        condition_converter: &ConditionConverter,
     ) {
-        let condition = Condition::from_range(range, currently_used_characters).unwrap();
-        let projected_condition = condition
-            .project_to(currently_used_characters, newly_used_characters)
-            .unwrap();
+        let condition = Condition::from_range(range, currently_used_spanning_set).unwrap();
+        let projected_condition = condition_converter.convert(&condition).unwrap();
 
-        let expected_condition = Condition::from_range(range, newly_used_characters).unwrap();
+        assert_eq!(
+            range,
+            &condition.to_range(currently_used_spanning_set).unwrap()
+        );
+        assert_eq!(
+            range,
+            &projected_condition
+                .to_range(newly_used_spanning_set)
+                .unwrap()
+        );
+
+        let expected_condition = Condition::from_range(range, newly_used_spanning_set).unwrap();
         assert_eq!(expected_condition, projected_condition);
     }
 
