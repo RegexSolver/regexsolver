@@ -11,6 +11,7 @@ use fast_automaton::FastAutomaton;
 use nohash_hasher::NoHashHasher;
 use regex::RegularExpression;
 use regex_charclass::{char::Char, irange::RangeSet};
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 pub mod cardinality;
@@ -27,12 +28,13 @@ type Range = RangeSet<Char>;
 /// Represents a term that can be either a regular expression or a finite automaton. This term can be manipulated with a wide range of operations.
 ///
 /// To put constraint and limitation on the execution of operations please refer to [`execution_profile::ExecutionProfile`].
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-#[serde(tag = "type", content = "value")]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Clone, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "serde", serde(tag = "type", content = "value"))]
 pub enum Term {
-    #[serde(rename = "regex")]
+    #[cfg_attr(feature = "serde", serde(rename = "regex"))]
     RegularExpression(RegularExpression),
-    #[serde(rename = "fair")]
+    #[cfg_attr(feature = "serde", serde(rename = "fair"))]
     Automaton(FastAutomaton),
 }
 
@@ -319,8 +321,9 @@ impl Term {
 }
 
 /// Represents details about a [Term].
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename = "details")]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Clone, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "serde", serde(tag = "type", rename = "details"))]
 pub struct Details {
     cardinality: Option<Cardinality<u32>>,
     length: (Option<u32>, Option<u32>),

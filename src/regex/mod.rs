@@ -12,6 +12,7 @@ use super::*;
 mod analyze;
 mod builder;
 mod operation;
+#[cfg(feature = "serde")]
 mod serializer;
 
 /// Represent a regular expression.
