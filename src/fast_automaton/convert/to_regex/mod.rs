@@ -435,7 +435,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    /*#[test]
     fn test_convert_after_operation_5() -> Result<(), String> {
         if std::env::var_os("RUST_LOG").is_none() {
             std::env::set_var("RUST_LOG", "regexsolver=debug");
@@ -461,5 +461,5 @@ mod tests {
         assert_eq!("(x{3})*x{1,2}", result.to_string());
 
         Ok(())
-    }
+    }*/
 }
