@@ -2,9 +2,10 @@ use super::*;
 use lazy_static::lazy_static;
 use rand::Rng;
 use serde::{de, ser, Deserializer, Serializer};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::env;
 use z85::{decode, encode};
+use crate::tokenizer::Tokenizer;
 
 use sha2::{Digest, Sha256};
 

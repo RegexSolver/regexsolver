@@ -17,8 +17,8 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Build
-      run: cargo build --verbose
+      run: cargo build --all-features --verbose
     - name: Test & Lint
       run: |
-        cargo test
-        cargo clippy
+        cargo test --all-features
+        cargo clippy --all-features

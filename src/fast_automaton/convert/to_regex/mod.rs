@@ -4,6 +4,7 @@ use std::{
 };
 
 use ahash::{HashMapExt, HashSetExt};
+use log::warn;
 use nohash_hasher::IntMap;
 
 use crate::{error::EngineError, execution_profile::ThreadLocalParams, regex::RegularExpression};
@@ -258,28 +259,20 @@ impl FastAutomaton {
                     Ok(automaton) => match self.is_equivalent_of(&automaton) {
                         Ok(result) => {
                             if !result {
-                                /*println!(
-                                    "The automaton is not equivalent to the generated regex; automaton={} regex={}",
-                                    serde_json::to_string(self).unwrap(),
-                                    regex
-                                );*/
+                                warn!("The automaton is not equivalent to the generated regex; automaton={}, regex={}", self, regex);
                                 None
                             } else {
                                 Some(regex)
                             }
                         }
-                        Err(_) => {
-                            //println!("{err}");
+                        Err(err) => {
+                            warn!("Engine error while checking for equivalence ({}); automaton={}, regex={}", err, self, regex);
                             None
                         }
                     },
                     Err(err) => {
-                        if let crate::error::EngineError::RegexSyntaxError(_) = err {
-                            /*error!(
-                                "The generated regex can not be converted to automaton to be checked for equivalence (Syntax Error); automaton={} regex={}",
-                                serde_json::to_string(self).unwrap(),
-                                regex
-                            );*/
+                        if let crate::error::EngineError::RegexSyntaxError(err) = err {
+                            warn!("The generated regex cannot be converted to automaton to be checked for equivalence ({}); automaton={}, regex={}", err, self, regex);
                         }
                         None
                     }
@@ -422,8 +415,33 @@ mod tests {
         Ok(())
     }
 
-    /*#[test]
+    #[test]
     fn test_convert_after_operation_4() -> Result<(), String> {
+        let automaton1 = RegularExpression::new(".*abc.*")
+            .unwrap()
+            .to_automaton()
+            .unwrap();
+        let automaton2 = RegularExpression::new(".*def.*")
+            .unwrap()
+            .to_automaton()
+            .unwrap();
+
+        let result = automaton1.intersection(&automaton2).unwrap();
+
+        let result = result.to_regex().unwrap();
+
+        assert_eq!(".*(abc.*def|def.*abc).*", result.to_string());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_convert_after_operation_5() -> Result<(), String> {
+        if std::env::var_os("RUST_LOG").is_none() {
+            std::env::set_var("RUST_LOG", "regexsolver=debug");
+        }
+        env_logger::init();
+
         let automaton1 = RegularExpression::new(".*abc.*")
             .unwrap()
             .to_automaton()
@@ -443,5 +461,5 @@ mod tests {
         assert_eq!("(x{3})*x{1,2}", result.to_string());
 
         Ok(())
-    }*/
+    }
 }

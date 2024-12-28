@@ -2,10 +2,12 @@ use std::slice::Iter;
 
 use ahash::AHashSet;
 use regex_charclass::{char::Char, irange::RangeSet};
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 /// Contains a set of [`RangeSet<Char>`] that span all the transition of a [`crate::FastAutomaton`].
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SpanningSet(Vec<RangeSet<Char>>, RangeSet<Char>);
 
 impl SpanningSet {

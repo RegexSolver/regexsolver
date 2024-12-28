@@ -7,7 +7,6 @@ use std::collections::hash_map::Entry;
 use std::collections::VecDeque;
 use std::fmt::Display;
 
-use crate::tokenizer::Tokenizer;
 use crate::{IntMap, IntSet};
 
 pub(crate) type State = usize;
@@ -19,6 +18,7 @@ pub mod condition;
 mod convert;
 mod generate;
 mod operation;
+#[cfg(feature = "serde")]
 mod serializer;
 pub mod spanning_set;
 
