@@ -20,6 +20,7 @@ pub mod execution_profile;
 pub mod fast_automaton;
 pub mod regex;
 pub mod tokenizer;
+pub(crate) mod traits;
 
 type IntMap<Key, Value> = HashMap<Key, Value, BuildHasherDefault<NoHashHasher<Key>>>;
 type IntSet<Key> = HashSet<Key, BuildHasherDefault<NoHashHasher<Key>>>;
@@ -73,30 +74,33 @@ impl Term {
     pub fn union(&self, terms: &[Term]) -> Result<Term, EngineError> {
         Self::check_number_of_terms(terms)?;
 
+        let mut regex_list = Vec::with_capacity(terms.len());
+        let mut automaton_list = Vec::with_capacity(terms.len());
+        for operand in terms {
+            match operand {
+                Term::RegularExpression(regex) => {
+                    if regex.is_total() {
+                        return Ok(Term::RegularExpression(RegularExpression::new_total()));
+                    }
+                    regex_list.push(regex);
+                }
+                Term::Automaton(automaton) => {
+                    if automaton.is_total() {
+                        return Ok(Term::RegularExpression(RegularExpression::new_total()));
+                    }
+                    automaton_list.push(automaton);
+                }
+            }
+        }
+
         let mut return_regex = RegularExpression::new_empty();
         let mut return_automaton = FastAutomaton::new_empty();
         match self {
             Term::RegularExpression(regular_expression) => {
-                return_regex = regular_expression.clone();
+                return_regex = regular_expression.union(&regex_list);
             }
             Term::Automaton(fast_automaton) => {
-                return_automaton = fast_automaton.clone();
-            }
-        }
-        for operand in terms {
-            match operand {
-                Term::RegularExpression(regex) => {
-                    return_regex = return_regex.union(regex);
-                    if return_regex.is_total() {
-                        return Ok(Term::RegularExpression(RegularExpression::new_total()));
-                    }
-                }
-                Term::Automaton(automaton) => {
-                    return_automaton = return_automaton.union(automaton)?;
-                    if return_automaton.is_total() {
-                        return Ok(Term::RegularExpression(RegularExpression::new_total()));
-                    }
-                }
+                return_automaton = fast_automaton.union(&automaton_list)?;
             }
         }
 
@@ -138,7 +142,7 @@ impl Term {
         let mut return_automaton = self.get_automaton()?;
         for term in terms {
             let automaton = term.get_automaton()?;
-            return_automaton = Cow::Owned(return_automaton.intersection(&automaton)?);
+            return_automaton = Cow::Owned(return_automaton.intersection(automaton.as_ref())?);
             if return_automaton.is_empty() {
                 return Ok(Term::RegularExpression(RegularExpression::new_empty()));
             }

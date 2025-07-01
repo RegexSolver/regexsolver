@@ -1,21 +1,40 @@
 use std::collections::BTreeSet;
 
+use crate::traits::MethodParameters;
+
 use super::*;
 
 impl RegularExpression {
-    pub fn union(&self, other: &RegularExpression) -> RegularExpression {
-        if self.is_total() || other.is_total() {
-            return RegularExpression::new_total();
-        } else if self.is_empty() {
-            return other.clone();
-        } else if other.is_empty() || self == other {
-            return self.clone();
-        } else if other.is_empty_string() {
-            return self.clone().repeat(0, Some(1));
-        } else if self.is_empty_string() {
-            return other.clone().repeat(0, Some(1));
+    pub fn union<'o, S>(&self, others: S) -> RegularExpression
+    where
+        S: MethodParameters<'o, RegularExpression>,
+    {
+        let mut result = Cow::Borrowed(self);
+
+        for other in others.parameters() {
+            result = result.union_(other);
+
+            if result.is_total() {
+                break;
+            }
         }
-        match (self, other) {
+
+        result.into_owned()
+    }
+
+    fn union_<'a>(&self, other: &'a RegularExpression) -> Cow<'a, RegularExpression> {
+        if self.is_total() || other.is_total() {
+            return Cow::Owned(RegularExpression::new_total());
+        } else if self.is_empty() {
+            return Cow::Borrowed(other);
+        } else if other.is_empty() || self == other {
+            return Cow::Owned(self.clone());
+        } else if other.is_empty_string() {
+            return Cow::Owned(self.repeat(0, Some(1)));
+        } else if self.is_empty_string() {
+            return Cow::Owned(other.repeat(0, Some(1)));
+        }
+        Cow::Owned(match (self, other) {
             (
                 RegularExpression::Character(self_range),
                 RegularExpression::Character(other_range),
@@ -63,14 +82,14 @@ impl RegularExpression {
                 Self::opunion_concat_and_alternation(other, self)
             }
             (RegularExpression::Alternation(self_elements), RegularExpression::Alternation(_)) => {
-                let mut new_alternation = other.clone();
+                let mut new_alternation = Cow::Borrowed(other);
                 for self_element in self_elements {
-                    new_alternation = new_alternation.union(self_element);
+                    new_alternation = new_alternation.union_(self_element);
                 }
 
-                new_alternation
+                new_alternation.into_owned()
             }
-        }
+        })
     }
 
     fn opunion_character_and_repetition(
@@ -116,17 +135,25 @@ impl RegularExpression {
                 if prefix.is_none() && suffix.is_none() {
                     let mut alternate_elements = vec![self_regex, other_regex];
                     alternate_elements.sort_unstable();
-                    RegularExpression::Alternation(alternate_elements)
+                    Cow::Owned(RegularExpression::Alternation(alternate_elements))
                 } else {
-                    self_regex.union(&other_regex)
+                    self_regex.union_(&other_regex)
                 }
             } else {
-                RegularExpression::Repetition(Box::new(self_regex), 0, Some(1))
+                Cow::Owned(RegularExpression::Repetition(
+                    Box::new(self_regex),
+                    0,
+                    Some(1),
+                ))
             }
         } else if !other_regex.is_empty_string() {
-            RegularExpression::Repetition(Box::new(other_regex), 0, Some(1))
+            Cow::Owned(RegularExpression::Repetition(
+                Box::new(other_regex),
+                0,
+                Some(1),
+            ))
         } else {
-            RegularExpression::new_empty_string()
+            Cow::Owned(RegularExpression::new_empty_string())
         };
 
         regex = regex.concat(&regex_from_alternate, true);
@@ -354,6 +381,11 @@ mod tests {
     #[test]
     fn test_union() -> Result<(), String> {
         assert_union("(a+|a+b)", "a+b?");
+        assert_union("(a+|a*)", "a*");
+        assert_union("(a?|a{0,2})", "a{0,2}");
+        assert_union("(a{2,4}|a{1,3})", "a{1,4}");
+        assert_union("(a{1,2}|a{3,4})", "a{1,4}");
+        assert_union("(a{3,4}|a{1,2})", "a{1,4}");
 
         Ok(())
     }

@@ -1,17 +1,39 @@
+use std::borrow::Cow;
+
 use condition::converter::ConditionConverter;
 
-use crate::{error::EngineError, execution_profile::ThreadLocalParams};
+use crate::{error::EngineError, execution_profile::ThreadLocalParams, traits::MethodParameters};
 
 use super::*;
 
 impl FastAutomaton {
-    pub fn intersection(&self, other: &FastAutomaton) -> Result<FastAutomaton, EngineError> {
+    pub fn intersection<'o, S>(&self, others: S) -> Result<FastAutomaton, EngineError>
+    where
+        S: MethodParameters<'o, FastAutomaton>,
+    {
+        let mut result = Cow::Borrowed(self);
+
+        for other in others.parameters() {
+            result = result.intersection_(other)?;
+
+            if result.is_empty() {
+                break;
+            }
+        }
+
+        Ok(result.into_owned())
+    }
+
+    fn intersection_<'a>(
+        &self,
+        other: &'a FastAutomaton,
+    ) -> Result<Cow<'a, FastAutomaton>, EngineError> {
         if self.is_empty() || other.is_empty() {
-            return Ok(Self::new_empty());
+            return Ok(Cow::Owned(Self::new_empty()));
         } else if self.is_total() {
-            return Ok(other.clone());
+            return Ok(Cow::Borrowed(other));
         } else if other.is_total() {
-            return Ok(self.clone());
+            return Ok(Cow::Owned(self.clone()));
         }
         let execution_profile = ThreadLocalParams::get_execution_profile();
 
@@ -70,7 +92,7 @@ impl FastAutomaton {
         }
         new_automaton.spanning_set = new_spanning_set;
         new_automaton.remove_dead_transitions();
-        Ok(new_automaton)
+        Ok(Cow::Owned(new_automaton))
     }
 
     pub fn has_intersection(&self, other: &FastAutomaton) -> Result<bool, EngineError> {

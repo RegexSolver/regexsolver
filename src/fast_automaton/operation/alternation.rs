@@ -2,18 +2,29 @@ use std::hash::BuildHasherDefault;
 
 use condition::converter::ConditionConverter;
 
-use crate::error::EngineError;
+use crate::{error::EngineError, traits::MethodParameters};
 
 use super::*;
 
 impl FastAutomaton {
-    pub fn union(&self, that: &FastAutomaton) -> Result<FastAutomaton, EngineError> {
-        let mut union = self.clone();
-        union.alternate(that)?;
-        Ok(union)
+    pub fn union<'o, S>(&self, others: S) -> Result<FastAutomaton, EngineError>
+    where
+        S: MethodParameters<'o, FastAutomaton>,
+    {
+        let mut result = self.clone();
+
+        for other in others.parameters() {
+            result.alternate(other)?;
+
+            if result.is_total() {
+                break;
+            }
+        }
+
+        Ok(result)
     }
 
-    pub fn alternation(automatons: Vec<FastAutomaton>) -> Result<FastAutomaton, EngineError> {
+    pub fn alternation(automatons: &Vec<FastAutomaton>) -> Result<FastAutomaton, EngineError> {
         if automatons.len() == 1 {
             return Ok(automatons[0].clone());
         }
