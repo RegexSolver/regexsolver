@@ -138,14 +138,15 @@ impl RegularExpression {
                 for c in concat.iter() {
                     concats.push(c.to_automaton()?);
                 }
-                FastAutomaton::concatenate(&concats)
+                println!("{:?}", concats);
+                FastAutomaton::build_concat(&concats)
             }
             RegularExpression::Alternation(alternation) => {
                 let mut alternates = Vec::with_capacity(alternation.len());
                 for c in alternation.iter() {
                     alternates.push(c.to_automaton()?);
                 }
-                FastAutomaton::alternation(&alternates)
+                FastAutomaton::build_union(&alternates)
             }
         }
     }

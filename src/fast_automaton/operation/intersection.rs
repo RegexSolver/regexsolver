@@ -2,18 +2,22 @@ use std::borrow::Cow;
 
 use condition::converter::ConditionConverter;
 
-use crate::{error::EngineError, execution_profile::ThreadLocalParams, traits::MethodParameters};
+use crate::{error::EngineError, execution_profile::ThreadLocalParams};
 
 use super::*;
 
 impl FastAutomaton {
-    pub fn intersection<'o, S>(&self, others: S) -> Result<FastAutomaton, EngineError>
+    pub fn intersection(&self, other: &FastAutomaton) -> Result<Self, EngineError> {
+        self.intersection_all([other])
+    }
+
+    pub fn intersection_all<'a, I>(&'a self, others: I) -> Result<Self, EngineError>
     where
-        S: MethodParameters<'o, FastAutomaton>,
+        I: IntoIterator<Item = &'a FastAutomaton>,
     {
         let mut result = Cow::Borrowed(self);
 
-        for other in others.parameters() {
+        for other in others {
             result = result.intersection_(other)?;
 
             if result.is_empty() {

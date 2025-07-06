@@ -20,7 +20,6 @@ pub mod execution_profile;
 pub mod fast_automaton;
 pub mod regex;
 pub mod tokenizer;
-pub(crate) mod traits;
 
 type IntMap<Key, Value> = HashMap<Key, Value, BuildHasherDefault<NoHashHasher<Key>>>;
 type IntSet<Key> = HashSet<Key, BuildHasherDefault<NoHashHasher<Key>>>;
@@ -80,13 +79,13 @@ impl Term {
             match operand {
                 Term::RegularExpression(regex) => {
                     if regex.is_total() {
-                        return Ok(Term::RegularExpression(RegularExpression::new_total()));
+                        return Ok(Term::new_total());
                     }
                     regex_list.push(regex);
                 }
                 Term::Automaton(automaton) => {
                     if automaton.is_total() {
-                        return Ok(Term::RegularExpression(RegularExpression::new_total()));
+                        return Ok(Term::new_total());
                     }
                     automaton_list.push(automaton);
                 }
@@ -97,10 +96,10 @@ impl Term {
         let mut return_automaton = FastAutomaton::new_empty();
         match self {
             Term::RegularExpression(regular_expression) => {
-                return_regex = regular_expression.union(&regex_list);
+                return_regex = regular_expression.union_all(regex_list);
             }
             Term::Automaton(fast_automaton) => {
-                return_automaton = fast_automaton.union(&automaton_list)?;
+                return_automaton = fast_automaton.union_all(automaton_list)?;
             }
         }
 
@@ -139,19 +138,24 @@ impl Term {
     /// ```
     pub fn intersection(&self, terms: &[Term]) -> Result<Term, EngineError> {
         Self::check_number_of_terms(terms)?;
-        let mut return_automaton = self.get_automaton()?;
-        for term in terms {
-            let automaton = term.get_automaton()?;
-            return_automaton = Cow::Owned(return_automaton.intersection(automaton.as_ref())?);
-            if return_automaton.is_empty() {
-                return Ok(Term::RegularExpression(RegularExpression::new_empty()));
+
+        let mut automaton_list = Vec::with_capacity(terms.len());
+        for operand in terms {
+            let automaton = operand.get_automaton()?;
+            if automaton.is_empty() {
+                return Ok(Term::new_empty());
             }
+            automaton_list.push(automaton);
         }
+
+        let return_automaton = self
+            .get_automaton()?
+            .intersection_all(automaton_list.iter().map(Cow::as_ref))?;
 
         if let Some(regex) = return_automaton.to_regex() {
             Ok(Term::RegularExpression(regex))
         } else {
-            Ok(Term::Automaton(return_automaton.into_owned()))
+            Ok(Term::Automaton(return_automaton))
         }
     }
 
@@ -321,6 +325,14 @@ impl Term {
             Term::RegularExpression(regex) => Cow::Owned(regex.to_automaton()?),
             Term::Automaton(automaton) => Cow::Borrowed(automaton),
         })
+    }
+
+    fn new_empty() -> Self {
+        Term::RegularExpression(RegularExpression::new_empty())
+    }
+
+    fn new_total() -> Self {
+        Term::RegularExpression(RegularExpression::new_total())
     }
 }
 

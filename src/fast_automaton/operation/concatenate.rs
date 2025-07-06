@@ -2,38 +2,29 @@ use std::hash::BuildHasherDefault;
 
 use condition::converter::ConditionConverter;
 
-use crate::{error::EngineError, traits::MethodParameters};
+use crate::error::EngineError;
 
 use super::*;
 
 impl FastAutomaton {
-    pub fn concatenation<'o, S>(&self, others: S) -> Result<FastAutomaton, EngineError>
-    where
-        S: MethodParameters<'o, FastAutomaton>,
-    {
-        let mut result = self.clone();
-
-        for other in others.parameters() {
-            result.concat(other)?;
-
-            if result.is_total() {
-                break;
-            }
-        }
-
-        Ok(result)
+    pub fn concat(&self, other: &FastAutomaton) -> Result<Self, EngineError> {
+        Self::build_concat([self, other])
     }
 
-    pub fn concatenate(automatons: &Vec<FastAutomaton>) -> Result<FastAutomaton, EngineError> {
-        if automatons.len() == 1 {
-            return Ok(automatons[0].clone());
-        }
+    pub fn concat_all<'a, I>(&'a self, others: I) -> Result<Self, EngineError>
+    where
+        I: IntoIterator<Item = &'a FastAutomaton>,
+    {
+        Self::build_concat(std::iter::once(self).chain(others.into_iter()))
+    }
+
+    pub(crate) fn build_concat<'a, I>(automatons: I) -> Result<FastAutomaton, EngineError>
+    where
+        I: IntoIterator<Item = &'a FastAutomaton>,
+    {
         let mut new_automaton = FastAutomaton::new_empty_string();
-        if automatons.is_empty() {
-            return Ok(new_automaton);
-        }
         for automaton in automatons {
-            new_automaton.concat(&automaton)?;
+            new_automaton.concat_(&automaton)?;
         }
 
         Ok(new_automaton)
@@ -80,7 +71,7 @@ impl FastAutomaton {
 
         let iter = if min == 0 { 0..0 } else { 0..min - 1 };
         for _ in iter {
-            self.concat(&automaton_to_repeat)?;
+            self.concat_(&automaton_to_repeat)?;
         }
 
         if max_opt.is_none() {
@@ -116,7 +107,7 @@ impl FastAutomaton {
             if min == 0 {
                 self.apply_model(&automaton_to_repeat);
             } else {
-                self.concat(&automaton_to_repeat)?;
+                self.concat_(&automaton_to_repeat)?;
             }
 
             return Ok(());
@@ -124,7 +115,7 @@ impl FastAutomaton {
 
         let mut end_states = self.accept_states.iter().cloned().collect::<Vec<_>>();
         for _ in cmp::max(min, 1)..max_opt.unwrap() {
-            self.concat(&automaton_to_repeat)?;
+            self.concat_(&automaton_to_repeat)?;
             end_states.extend(self.accept_states.iter());
         }
         self.accept_states.extend(end_states);
@@ -134,7 +125,7 @@ impl FastAutomaton {
         Ok(())
     }
 
-    fn concat(&mut self, other: &FastAutomaton) -> Result<(), EngineError> {
+    fn concat_(&mut self, other: &FastAutomaton) -> Result<(), EngineError> {
         if other.is_empty() {
             return Ok(());
         }

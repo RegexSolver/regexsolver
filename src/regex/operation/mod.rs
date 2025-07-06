@@ -103,6 +103,8 @@ mod tests {
         assert_parse_and_simplify("(cd|ab)*(ab|cd)*", "(ab|cd)*");
         assert_parse_and_simplify(".*q(ab|ab|abc|ca)x", ".*q(abc?|ca)x");
         assert_parse_and_simplify("((aad|ads|a)*abc.*def.*uif(aad|ads|x)*abc.*oxs.*def(aad|ads|ax)*abc.*def.*ksd|q){1,100}", "(q|(a|ads|a{2}d)*abc.*def.*uif(x|ads|a{2}d)*abc.*oxs.*def(ads|ax|a{2}d)*abc.*def.*ksd){1,100}");
+        
+        assert_parse_and_simplify("(a{2,4}){2,4}", "a{4,16}");
         Ok(())
     }
 
@@ -199,6 +201,14 @@ mod tests {
             Some(1),
             1,
             None,
+        );
+
+        assert_repeat_simplify(
+            &RangeSet::new_from_range(Char::new('a')..=Char::new('a')),
+            2,
+            Some(4),
+            2,
+            Some(4),
         );
 
         Ok(())

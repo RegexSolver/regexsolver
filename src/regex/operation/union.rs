@@ -1,17 +1,19 @@
 use std::collections::BTreeSet;
 
-use crate::traits::MethodParameters;
-
 use super::*;
 
 impl RegularExpression {
-    pub fn union<'o, S>(&self, others: S) -> RegularExpression
+    pub fn union(&self, other: &RegularExpression) -> RegularExpression {
+        self.union_all([other])
+    }
+
+    pub fn union_all<'a, I>(&'a self, others: I) -> RegularExpression
     where
-        S: MethodParameters<'o, RegularExpression>,
+        I: IntoIterator<Item = &'a RegularExpression>,
     {
         let mut result = Cow::Borrowed(self);
 
-        for other in others.parameters() {
+        for other in others {
             result = result.union_(other);
 
             if result.is_total() {

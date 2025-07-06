@@ -2,36 +2,27 @@ use std::hash::BuildHasherDefault;
 
 use condition::converter::ConditionConverter;
 
-use crate::{error::EngineError, traits::MethodParameters};
+use crate::error::EngineError;
 
 use super::*;
 
 impl FastAutomaton {
-    pub fn union<'o, S>(&self, others: S) -> Result<FastAutomaton, EngineError>
-    where
-        S: MethodParameters<'o, FastAutomaton>,
-    {
-        let mut result = self.clone();
-
-        for other in others.parameters() {
-            result.alternate(other)?;
-
-            if result.is_total() {
-                break;
-            }
-        }
-
-        Ok(result)
+    pub fn union(&self, other: &FastAutomaton) -> Result<Self, EngineError> {
+        Self::build_union([self, other])
     }
 
-    pub fn alternation(automatons: &Vec<FastAutomaton>) -> Result<FastAutomaton, EngineError> {
-        if automatons.len() == 1 {
-            return Ok(automatons[0].clone());
-        }
+    pub fn union_all<'a, I>(&'a self, others: I) -> Result<Self, EngineError>
+    where
+        I: IntoIterator<Item = &'a FastAutomaton>,
+    {
+        Self::build_union(std::iter::once(self).chain(others.into_iter()))
+    }
+
+    pub(crate) fn build_union<'a, I>(automatons: I) -> Result<FastAutomaton, EngineError>
+    where
+        I: IntoIterator<Item = &'a FastAutomaton>,
+    {
         let mut new_automaton = FastAutomaton::new_empty();
-        if automatons.is_empty() {
-            return Ok(new_automaton);
-        }
         for automaton in automatons {
             new_automaton.alternate(&automaton)?;
         }
