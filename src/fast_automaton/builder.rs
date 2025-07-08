@@ -192,8 +192,7 @@ impl FastAutomaton {
         self.assert_state_exists(state);
         if self.start_state == state {
             panic!(
-                "Can not remove the state {}, it is still used as start state.",
-                state
+                "Can not remove the state {state}, it is still used as start state."
             );
         }
         self.accept_states.remove(&state);
@@ -228,8 +227,7 @@ impl FastAutomaton {
         for &state in states {
             if self.start_state == state {
                 panic!(
-                    "Can not remove the state {}, it is still used as start state.",
-                    state
+                    "Can not remove the state {state}, it is still used as start state."
                 );
             }
             if self.transitions.len() - 1 == state {

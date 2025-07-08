@@ -1,73 +1,67 @@
+
 # RegexSolver
-
 [![Crates.io Version](https://img.shields.io/crates/v/regexsolver)](https://crates.io/crates/regexsolver)
+ A high-performance Rust library for building, combining, and analyzing regular expressions and finite automata.
+ 
+Ideal for constraint solvers, code generators, test-case generators, and any use case requiring rich regex/automaton operations at scale.
 
-This repository contains the code of [RegexSolver](https://regexsolver.com/) engine.
-
-For more information, you can check the library's [documentation](https://docs.rs/regexsolver/latest/regexsolver/).
-
-If you want to use this library with other programming languages, we provide a wide range of wrappers:
-
-- [regexsolver-java](https://github.com/RegexSolver/regexsolver-java)
-- [regexsolver-js](https://github.com/RegexSolver/regexsolver-js)
-- [regexsolver-python](https://github.com/RegexSolver/regexsolver-python)
-
-For more information about how to use the wrappers, you can refer to our [getting started guide](https://docs.regexsolver.com/getting-started.html).
+## Key Features
+-  **Dual Representation**: Work interchangeably with regex syntax or compiled automata via the `Term` enum.
+-  **Set Operations**: Concatenate, union, intersect, subtract, and repeat regex/automaton terms.
+-  **Analysis & Properties**:
+	- Compute language **cardinality**, **length bounds**, **emptiness**, and **totality**.
+	- Check **equivalence** and **subset** relations between terms.
+-  **String Generation**: Generate example strings matching a term, for testing or sampling.
+-  **Performance & Tuning**: Pluggable `ExecutionProfile` to bound cost and resource usage.
 
 ## Installation
-
 Add the following line in your `Cargo.toml`:
-
 ```toml
 [dependencies]
-regexsolver = "0.3"
+regexsolver = "1"
 ```
-
 ## Examples
 
-### Union
-
 ```rust
-use regexsolver::Term;
+// Create terms from regex
+let t1 = Term::from_regex("abc.*")?;
+let t2 = Term::from_regex(".*xyz")?;
 
-let term1 = Term::from_regex("abc").unwrap();
-let term2 = Term::from_regex("de").unwrap();
-let term3 = Term::from_regex("fghi").unwrap();
+// Concatenate
+let concat = t1.concat(&[t2])?;
+assert_eq!(concat.to_string(), "abc.*xyz");
 
-let union = term1.union(&[term2, term3]).unwrap();
+// Union
+let union = t1.union(&[Term::from_regex("fgh")?])?; // (abc.*|fgh)
+assert_eq!(union.to_string(), "(abc.*|fgh)");
 
-if let Term::RegularExpression(regex) = union {
-    println!("{}", regex.to_string()); // (abc|de|fghi)
-}
+// Intersection
+let inter = Term::from_regex("(ab|xy){2}")?.intersection(&[Term::from_regex(".*xy")?])?; // (ab|xy)xy
+assert_eq!(inter.to_string(), "(ab|xy)xy");
+
+// Subtraction
+let diff = Term::from_regex("a*")?.subtraction(&Term::from_regex("")?)?;
+assert_eq!(diff.to_string(), "a+");
+
+// Repetition
+let rep = Term::from_regex("abc")?.repeat(2, Some(4))?; // (abc){2,4}
+assert_eq!(rep.to_string(), "(abc){2,4}");
+
+// Analyze
+let details = rep.get_details()?;
+assert_eq!(details.get_length(), &(Some(6), Some(12)));
+assert!(!details.is_empty());
+
+// Generate examples
+let samples = Term::from_regex("(x|y){1,3}")?.generate_strings(5)?;
+println!("Some matches: {:?}", samples);
+
+// Equivalence & subset
+let a = Term::from_regex("a+")?;
+let b = Term::from_regex("a*")?;
+assert!(!a.are_equivalent(&b)?);
+assert!(a.is_subset_of(&b)?);
 ```
 
-### Intersection
-
-```rust
-use regexsolver::Term;
-
-let term1 = Term::from_regex("(abc|de){2}").unwrap();
-let term2 = Term::from_regex("de.*").unwrap();
-let term3 = Term::from_regex(".*abc").unwrap();
-
-let intersection = term1.intersection(&[term2, term3]).unwrap();
-
-if let Term::RegularExpression(regex) = intersection {
-    println!("{}", regex.to_string()); // deabc
-}
-```
-
-### Difference/Subtraction
-
-```rust
-use regexsolver::Term;
-
-let term1 = Term::from_regex("(abc|de)").unwrap();
-let term2 = Term::from_regex("de").unwrap();
-
-let subtraction = term1.subtraction(&term2).unwrap();
-
-if let Term::RegularExpression(regex) = subtraction {
-    println!("{}", regex.to_string()); // abc
-}
-```
+## Execution Profiles
+By default, all operations run without limits. For heavy or untrusted patterns, use an `ExecutionProfile` to cap time, memory or term count:

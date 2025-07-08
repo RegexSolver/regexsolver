@@ -44,21 +44,21 @@ impl Display for RegularExpression {
                     multiplicator_part = String::from("?");
                 } else if let Some(max) = max_opt {
                     if max == min {
-                        multiplicator_part = format!("{{{}}}", max);
+                        multiplicator_part = format!("{{{max}}}");
                     } else {
-                        multiplicator_part = format!("{{{},{}}}", min, max);
+                        multiplicator_part = format!("{{{min},{max}}}");
                     }
                 } else {
-                    multiplicator_part = format!("{{{},}}", min);
+                    multiplicator_part = format!("{{{min},}}");
                 }
                 match **regular_expression {
                     RegularExpression::Repetition(_, _, _) => {
-                        format!("({}){}", regex_part, multiplicator_part)
+                        format!("({regex_part}){multiplicator_part}")
                     }
                     RegularExpression::Concat(_) => {
-                        format!("({}){}", regex_part, multiplicator_part)
+                        format!("({regex_part}){multiplicator_part}")
                     }
-                    _ => format!("{}{}", regex_part, multiplicator_part),
+                    _ => format!("{regex_part}{multiplicator_part}"),
                 }
             }
             RegularExpression::Concat(concat) => {
@@ -82,11 +82,11 @@ impl Display for RegularExpression {
                 if alternation.len() == 1 {
                     sb
                 } else {
-                    format!("({})", sb)
+                    format!("({sb})")
                 }
             }
         };
-        write!(f, "{}", str)
+        write!(f, "{str}")
     }
 }
 
@@ -130,7 +130,7 @@ impl RegularExpression {
             RegularExpression::Character(range) => FastAutomaton::make_from_range(range),
             RegularExpression::Repetition(regular_expression, min, max_opt) => {
                 let mut automaton = regular_expression.to_automaton()?;
-                automaton.repeat(*min, *max_opt)?;
+                automaton.repeat_mut(*min, *max_opt)?;
                 Ok(automaton)
             }
             RegularExpression::Concat(concat) => {
@@ -138,7 +138,6 @@ impl RegularExpression {
                 for c in concat.iter() {
                     concats.push(c.to_automaton()?);
                 }
-                println!("{:?}", concats);
                 FastAutomaton::build_concat(&concats)
             }
             RegularExpression::Alternation(alternation) => {

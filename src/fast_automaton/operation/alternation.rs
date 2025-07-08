@@ -15,7 +15,7 @@ impl FastAutomaton {
     where
         I: IntoIterator<Item = &'a FastAutomaton>,
     {
-        Self::build_union(std::iter::once(self).chain(others.into_iter()))
+        Self::build_union(std::iter::once(self).chain(others))
     }
 
     pub(crate) fn build_union<'a, I>(automatons: I) -> Result<FastAutomaton, EngineError>
@@ -24,7 +24,7 @@ impl FastAutomaton {
     {
         let mut new_automaton = FastAutomaton::new_empty();
         for automaton in automatons {
-            new_automaton.alternate(&automaton)?;
+            new_automaton.union_mut(automaton)?;
         }
         Ok(new_automaton)
     }
@@ -136,7 +136,7 @@ impl FastAutomaton {
      * - the start states can't be merged if they have incoming edges
      * - the accept states can't be merged if they have outgoing edges
      */
-    fn alternate(&mut self, other: &FastAutomaton) -> Result<(), EngineError> {
+    pub(crate) fn union_mut(&mut self, other: &FastAutomaton) -> Result<(), EngineError> {
         if other.is_empty() || self.is_total() {
             return Ok(());
         } else if other.is_total() {

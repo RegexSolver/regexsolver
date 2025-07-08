@@ -1,7 +1,7 @@
 [package]
 name = "regexsolver"
-version = "0.3.1"
-edition = "2021"
+version = "1.0.0"
+edition = "2024"
 authors = ["Alexandre van Beurden"]
 repository = "https://github.com/RegexSolver/regexsolver"
 license = "MIT"

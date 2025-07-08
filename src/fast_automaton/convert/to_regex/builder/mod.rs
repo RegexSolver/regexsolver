@@ -85,7 +85,7 @@ impl StateEliminationAutomaton<Range> {
     #[inline]
     fn assert_state_exists(&self, state: State) {
         if !self.has_state(state) {
-            panic!("The state {} does not exist", state);
+            panic!("The state {state} does not exist");
         }
     }
 
@@ -124,8 +124,7 @@ impl StateEliminationAutomaton<Range> {
         self.assert_state_exists(state);
         if self.start_state == state || self.accept_state == state {
             panic!(
-                "Can not remove the state {}, it is still used as start state or accept state.",
-                state
+                "Can not remove the state {state}, it is still used as start state or accept state."
             );
         }
         self.transitions_in.remove(&state);

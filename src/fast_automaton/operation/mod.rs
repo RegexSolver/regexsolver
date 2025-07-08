@@ -9,6 +9,7 @@ mod concatenate;
 mod determinize;
 mod intersection;
 mod subtraction;
+mod repeat;
 
 impl FastAutomaton {
     pub fn remove_dead_transitions(&mut self) {

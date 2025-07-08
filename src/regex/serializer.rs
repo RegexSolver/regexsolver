@@ -16,10 +16,7 @@ impl<'de> serde::Deserialize<'de> for RegularExpression {
     where
         D: Deserializer<'de>,
     {
-        let regex_string = match String::deserialize(deserializer) {
-            Ok(str) => str,
-            Err(err) => return Err(err),
-        };
+        let regex_string = String::deserialize(deserializer)?;
         match RegularExpression::new(&regex_string) {
             Ok(regex) => Ok(regex),
             Err(err) => Err(de::Error::custom(err.to_string())),

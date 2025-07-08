@@ -6,6 +6,7 @@ use spanning_set::SpanningSet;
 use std::collections::hash_map::Entry;
 use std::collections::VecDeque;
 use std::fmt::Display;
+use crate::error::EngineError;
 
 use crate::{IntMap, IntSet};
 
@@ -40,23 +41,21 @@ impl Display for FastAutomaton {
         writeln!(sb, "digraph Automaton {{")?;
         writeln!(sb, "\trankdir = LR;")?;
         for from_state in self.transitions_iter() {
-            write!(sb, "\t{}", from_state)?;
+            write!(sb, "\t{from_state}")?;
             if self.accept_states.contains(&from_state) {
-                writeln!(sb, "\t[shape=doublecircle,label=\"{}\"];", from_state)?;
+                writeln!(sb, "\t[shape=doublecircle,label=\"{from_state}\"];")?;
             } else {
-                writeln!(sb, "\t[shape=circle,label=\"{}\"];", from_state)?;
+                writeln!(sb, "\t[shape=circle,label=\"{from_state}\"];")?;
             }
 
             if self.start_state == from_state {
                 writeln!(sb, "\tinitial [shape=plaintext,label=\"\"];")?;
-                writeln!(sb, "\tinitial -> {}", from_state)?;
+                writeln!(sb, "\tinitial -> {from_state}")?;
             }
             for (to_state, cond) in self.transitions_from_state_enumerate_iter(&from_state) {
                 writeln!(
                     sb,
-                    "\t{} -> {} [label=\"{}\"]",
-                    from_state,
-                    to_state,
+                    "\t{from_state} -> {to_state} [label=\"{}\"]",
                     cond.to_range(&self.spanning_set)
                         .expect("Cannot convert condition to range.")
                         .to_regex()
@@ -73,7 +72,7 @@ impl FastAutomaton {
     #[inline]
     fn assert_state_exists(&self, state: State) {
         if !self.has_state(state) {
-            panic!("The state {} does not exist", state);
+            panic!("The state {state} does not exist");
         }
     }
 
@@ -292,7 +291,7 @@ impl FastAutomaton {
 
     #[inline]
     pub fn to_dot(&self) {
-        println!("{}", self);
+        println!("{self}");
     }
 }
 

@@ -151,7 +151,8 @@ impl Condition {
         Ok(self.to_range(spanning_set)?.get_cardinality())
     }
 
-    pub fn get_bits(&self) -> Vec<bool> {
+    #[inline]
+    pub fn get_binary_representation(&self) -> Vec<bool> {
         self.0.get_bits()
     }
 }
@@ -193,11 +194,11 @@ mod tests {
         let empty = Condition::empty(&spanning_set);
         //println!("{empty}");
         assert!(empty.is_empty());
-        assert_eq!(vec![false, false, false, false], empty.get_bits());
+        assert_eq!(vec![false, false, false, false], empty.get_binary_representation());
         let total = Condition::total(&spanning_set);
         //println!("{total}");
         assert!(total.is_total());
-        assert_eq!(vec![true, true, true, true], total.get_bits());
+        assert_eq!(vec![true, true, true, true], total.get_binary_representation());
 
         assert_eq!(Range::empty(), empty.to_range(&spanning_set).unwrap());
         assert_eq!(Range::total(), total.to_range(&spanning_set).unwrap());
@@ -225,13 +226,13 @@ mod tests {
             empty,
             Condition::from_range(&Range::empty(), &spanning_set).unwrap()
         );
-        assert_eq!(vec![false], empty.get_bits());
+        assert_eq!(vec![false], empty.get_binary_representation());
 
         assert_eq!(
             total,
             Condition::from_range(&Range::total(), &spanning_set).unwrap()
         );
-        assert_eq!(vec![true], total.get_bits());
+        assert_eq!(vec![true], total.get_binary_representation());
 
         assert_eq!(empty, total.complement());
         assert_eq!(total, empty.complement());

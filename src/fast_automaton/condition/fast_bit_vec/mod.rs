@@ -8,7 +8,7 @@ impl std::fmt::Display for FastBitVec {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         for i in 0..self.n {
             let bit = if self.get(i).unwrap() { 1 } else { 0 };
-            write!(f, "{}", bit)?;
+            write!(f, "{bit}")?;
         }
         Ok(())
     }

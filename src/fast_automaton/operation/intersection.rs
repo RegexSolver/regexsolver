@@ -18,7 +18,7 @@ impl FastAutomaton {
         let mut result = Cow::Borrowed(self);
 
         for other in others {
-            result = result.intersection_(other)?;
+            result = result.intersection_internal(other)?;
 
             if result.is_empty() {
                 break;
@@ -28,7 +28,7 @@ impl FastAutomaton {
         Ok(result.into_owned())
     }
 
-    fn intersection_<'a>(
+    fn intersection_internal<'a>(
         &self,
         other: &'a FastAutomaton,
     ) -> Result<Cow<'a, FastAutomaton>, EngineError> {

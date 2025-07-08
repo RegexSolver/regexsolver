@@ -116,8 +116,7 @@ impl RegularExpression {
             }
         } else {
             panic!(
-                "Not character and repetition {:?} {:?}",
-                this_character, that_repetition
+                "Not character and repetition {this_character:?} {that_repetition:?}"
             )
         }
     }

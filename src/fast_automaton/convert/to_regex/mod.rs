@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map::Entry, VecDeque},
+    collections::{VecDeque, hash_map::Entry},
     fmt::Display,
 };
 
@@ -56,7 +56,7 @@ impl StateEliminationAutomaton<Range> {
     #[allow(dead_code)]
     #[inline]
     pub fn to_dot(&self) {
-        println!("{}", self);
+        println!("{self}");
     }
 
     #[inline]
@@ -68,8 +68,8 @@ impl StateEliminationAutomaton<Range> {
         let is_subgraph;
         let indent;
         let prefix = if let Some(prefix) = prefix {
-            writeln!(sb, "\tsubgraph cluster_{} {{", prefix)?;
-            writeln!(sb, "\t\tlabel = \"{} - cyclic={}\";", prefix, self.cyclic)?;
+            writeln!(sb, "\tsubgraph cluster_{prefix} {{")?;
+            writeln!(sb, "\t\tlabel = \"{prefix} - cyclic={}\";", self.cyclic)?;
             indent = "\t";
             is_subgraph = true;
             prefix
@@ -89,16 +89,16 @@ impl StateEliminationAutomaton<Range> {
                 format!("S{from_state}")
             };
 
-            write!(sb, "{indent}\t{}", from_state_with_prefix)?;
+            write!(sb, "{indent}\t{from_state_with_prefix}")?;
             if !is_subgraph && self.accept_state == from_state {
-                writeln!(sb, "\t[shape=doublecircle,label=\"{}\"];", from_state)?;
+                writeln!(sb, "\t[shape=doublecircle,label=\"{from_state}\"];")?;
             } else {
-                writeln!(sb, "{indent}\t[shape=circle,label=\"{}\"];", from_state)?;
+                writeln!(sb, "{indent}\t[shape=circle,label=\"{from_state}\"];")?;
             }
 
             if !is_subgraph && self.start_state == from_state {
                 writeln!(sb, "\tinitial [shape=plaintext,label=\"\"];")?;
-                writeln!(sb, "\tinitial -> {}", from_state_with_prefix)?;
+                writeln!(sb, "\tinitial -> {from_state_with_prefix}")?;
             }
             for (to_state, weight) in self.transitions_from_state_enumerate_iter(&from_state) {
                 let to_state_with_prefix = if is_subgraph {
@@ -117,23 +117,21 @@ impl StateEliminationAutomaton<Range> {
                         state_elimination_automaton.to_graph_dot(sb, Some(&subgraph_prefix))?;
                         writeln!(sb)?;
                         let subgraph_start_state = format!(
-                            "S{}_{}",
-                            subgraph_prefix, state_elimination_automaton.start_state
+                            "S{subgraph_prefix}_{}",
+                            state_elimination_automaton.start_state
                         );
                         writeln!(
                             sb,
-                            "{indent}\t{} -> {} [label=\"ε\"]",
-                            from_state_with_prefix, subgraph_start_state
+                            "{indent}\t{from_state_with_prefix} -> {subgraph_start_state} [label=\"ε\"]"
                         )?;
 
                         let subgraph_accept_state = format!(
-                            "S{}_{}",
-                            subgraph_prefix, state_elimination_automaton.accept_state
+                            "S{subgraph_prefix}_{}",
+                            state_elimination_automaton.accept_state
                         );
                         writeln!(
                             sb,
-                            "{indent}\t{} -> {} [label=\"ε\"]",
-                            subgraph_accept_state, to_state_with_prefix
+                            "{indent}\t{subgraph_accept_state} -> {to_state_with_prefix} [label=\"ε\"]"
                         )
                     }
                     GraphTransition::Weight(range) => {
@@ -150,8 +148,7 @@ impl StateEliminationAutomaton<Range> {
                     }
                     GraphTransition::Epsilon => writeln!(
                         sb,
-                        "{indent}\t{} -> {} [label=\"ε\"]",
-                        from_state_with_prefix, to_state_with_prefix
+                        "{indent}\t{from_state_with_prefix} -> {to_state_with_prefix} [label=\"ε\"]"
                     ),
                 }?;
             }
@@ -259,20 +256,26 @@ impl FastAutomaton {
                     Ok(automaton) => match self.is_equivalent_of(&automaton) {
                         Ok(result) => {
                             if !result {
-                                warn!("The automaton is not equivalent to the generated regex; automaton={}, regex={}", self, regex);
+                                warn!(
+                                    "The automaton is not equivalent to the generated regex; automaton={self}, regex={regex}"
+                                );
                                 None
                             } else {
                                 Some(regex)
                             }
                         }
                         Err(err) => {
-                            warn!("Engine error while checking for equivalence ({}); automaton={}, regex={}", err, self, regex);
+                            warn!(
+                                "Engine error while checking for equivalence ({err}); automaton={self}, regex={regex}"
+                            );
                             None
                         }
                     },
                     Err(err) => {
                         if let crate::error::EngineError::RegexSyntaxError(err) = err {
-                            warn!("The generated regex cannot be converted to automaton to be checked for equivalence ({}); automaton={}, regex={}", err, self, regex);
+                            warn!(
+                                "The generated regex cannot be converted to automaton to be checked for equivalence ({err}); automaton={self}, regex={regex}"
+                            );
                         }
                         None
                     }
