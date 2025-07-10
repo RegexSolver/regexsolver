@@ -1,6 +1,6 @@
 use std::cmp;
 
-use crate::{execution_profile::ThreadLocalParams, EngineError};
+use crate::{EngineError, execution_profile::ExecutionProfile};
 use ahash::AHashSet;
 
 use super::*;
@@ -13,7 +13,7 @@ impl FastAutomaton {
 
         let mut strings = AHashSet::with_capacity(cmp::min(number, 1000));
 
-        let execution_profile = ThreadLocalParams::get_execution_profile();
+        let execution_profile = ExecutionProfile::get();
 
         let mut ranges_cache: AHashMap<&Condition, Range> =
             AHashMap::with_capacity(self.get_number_of_states());
@@ -98,7 +98,7 @@ mod tests {
         assert_generate_strings("(?:A+(?:\\.[AB]+)*|\"(?:C|\\\\D)*\")@", 500);
         assert_generate_strings(
             "(?:[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*|\"(?:[\\x01-\\x08\\x0b\\x0c\\x0e-\\x1f\\x21\\x23-\\x5b\\x5d-\\x7f]|\\\\[\\x01-\\x09\\x0b\\x0c\\x0e-\\x7f])*\")@",
-            500
+            500,
         );
         assert_generate_strings("[0-9]+[A-Z]*", 500);
         assert_generate_strings("a+(ba+)*", 200);

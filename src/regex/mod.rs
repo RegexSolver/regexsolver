@@ -1,7 +1,6 @@
 use std::{cmp, collections::VecDeque, fmt::Display};
 
-use crate::Range;
-use execution_profile::ThreadLocalParams;
+use crate::{Range, execution_profile::ExecutionProfile};
 use regex_charclass::CharacterClass;
 use regex_syntax::hir::{Class, ClassBytes, ClassUnicode, Hir, HirKind};
 
@@ -123,9 +122,8 @@ impl RegularExpression {
     }
 
     pub fn to_automaton(&self) -> Result<FastAutomaton, EngineError> {
-        if self.get_number_of_states_in_nfa() >= ThreadLocalParams::get_max_number_of_states() {
-            return Err(EngineError::AutomatonHasTooManyStates);
-        }
+        ExecutionProfile::get().assert_max_number_of_states(self.get_number_of_states_in_nfa())?;
+
         match self {
             RegularExpression::Character(range) => FastAutomaton::make_from_range(range),
             RegularExpression::Repetition(regular_expression, min, max_opt) => {

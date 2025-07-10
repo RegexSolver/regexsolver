@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use condition::converter::ConditionConverter;
 
-use crate::{error::EngineError, execution_profile::ThreadLocalParams};
+use crate::{error::EngineError, execution_profile::ExecutionProfile};
 
 use super::*;
 
@@ -39,7 +39,7 @@ impl FastAutomaton {
         } else if other.is_total() {
             return Ok(Cow::Owned(self.clone()));
         }
-        let execution_profile = ThreadLocalParams::get_execution_profile();
+        let execution_profile = ExecutionProfile::get();
 
         let new_spanning_set = self.spanning_set.merge(&other.spanning_set);
 
@@ -105,7 +105,7 @@ impl FastAutomaton {
         } else if self.is_total() || other.is_total() {
             return Ok(true);
         }
-        let execution_profile = ThreadLocalParams::get_execution_profile();
+        let execution_profile = ExecutionProfile::get();
 
         let new_spanning_set = self.spanning_set.merge(&other.spanning_set);
 

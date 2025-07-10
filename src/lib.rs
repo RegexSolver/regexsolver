@@ -1,10 +1,12 @@
 use std::{
-    borrow::Cow, collections::{HashMap, HashSet}, fmt::Display, hash::BuildHasherDefault
+    borrow::Cow,
+    collections::{HashMap, HashSet},
+    fmt::Display,
+    hash::BuildHasherDefault,
 };
 
 use cardinality::Cardinality;
 use error::EngineError;
-use execution_profile::ThreadLocalParams;
 use fast_automaton::FastAutomaton;
 use nohash_hasher::NoHashHasher;
 use regex::RegularExpression;
@@ -78,8 +80,6 @@ impl Term {
     /// }
     /// ```
     pub fn concat(&self, terms: &[Term]) -> Result<Term, EngineError> {
-        Self::check_number_of_terms(terms)?;
-
         let mut return_regex = RegularExpression::new_empty();
         let mut return_automaton = FastAutomaton::new_empty();
         let mut has_automaton = false;
@@ -110,12 +110,10 @@ impl Term {
 
         if !has_automaton {
             Ok(Term::RegularExpression(return_regex))
+        } else if let Some(return_regex) = return_automaton.to_regex() {
+            Ok(Term::RegularExpression(return_regex))
         } else {
-            if let Some(return_regex) = return_automaton.to_regex() {
-                Ok(Term::RegularExpression(return_regex))
-            } else {
-                Ok(Term::Automaton(return_automaton))
-            }
+            Ok(Term::Automaton(return_automaton))
         }
     }
 
@@ -138,8 +136,6 @@ impl Term {
     /// }
     /// ```
     pub fn union(&self, terms: &[Term]) -> Result<Term, EngineError> {
-        Self::check_number_of_terms(terms)?;
-
         if self.is_total() {
             return Ok(Term::new_total());
         }
@@ -177,12 +173,10 @@ impl Term {
 
         if !has_automaton {
             Ok(Term::RegularExpression(return_regex))
+        } else if let Some(return_regex) = return_automaton.to_regex() {
+            Ok(Term::RegularExpression(return_regex))
         } else {
-            if let Some(return_regex) = return_automaton.to_regex() {
-                Ok(Term::RegularExpression(return_regex))
-            } else {
-                Ok(Term::Automaton(return_automaton))
-            }
+            Ok(Term::Automaton(return_automaton))
         }
     }
 
@@ -205,8 +199,6 @@ impl Term {
     /// }
     /// ```
     pub fn intersection(&self, terms: &[Term]) -> Result<Term, EngineError> {
-        Self::check_number_of_terms(terms)?;
-
         if self.is_empty() {
             return Ok(Term::new_empty());
         }
@@ -405,19 +397,6 @@ impl Term {
         automaton_1.is_subset_of(&automaton_2)
     }
 
-    fn check_number_of_terms(terms: &[Term]) -> Result<(), EngineError> {
-        let number_of_terms = terms.len() + 1;
-        let max_number_of_terms = ThreadLocalParams::get_max_number_of_terms();
-        if number_of_terms > max_number_of_terms {
-            Err(EngineError::TooMuchTerms(
-                max_number_of_terms,
-                number_of_terms,
-            ))
-        } else {
-            Ok(())
-        }
-    }
-
     fn determinize_subtrahend<'a>(
         minuend: &FastAutomaton,
         subtrahend: &'a FastAutomaton,
@@ -500,7 +479,7 @@ impl Details {
 
 #[cfg(test)]
 mod tests {
-    use crate::regex::RegularExpression;
+    use crate::{execution_profile::ExecutionProfileBuilder, regex::RegularExpression};
 
     use super::*;
 
@@ -577,45 +556,93 @@ mod tests {
     }
 
     #[test]
-    fn test__() -> Result<(), EngineError> {
+    fn test_readme_code_1() -> Result<(), String> {
         // Create terms from regex
-        let t1 = Term::from_regex("abc.*")?;
-        let t2 = Term::from_regex(".*xyz")?;
+        let t1 = Term::from_regex("abc.*").unwrap();
+        let t2 = Term::from_regex(".*xyz").unwrap();
 
         // Concatenate
-        let concat = t1.concat(&[t2])?;
+        let concat = t1.concat(&[t2]).unwrap();
         assert_eq!(concat.to_string(), "abc.*xyz");
 
         // Union
-        let union = t1.union(&[Term::from_regex("fgh")?])?; // (abc.*|fgh)
+        let union = t1.union(&[Term::from_regex("fgh").unwrap()]).unwrap(); // (abc.*|fgh)
         assert_eq!(union.to_string(), "(abc.*|fgh)");
 
         // Intersection
-        let inter = Term::from_regex("(ab|xy){2}")?.intersection(&[Term::from_regex(".*xy")?])?; // (ab|xy)xy
+        let inter = Term::from_regex("(ab|xy){2}")
+            .unwrap()
+            .intersection(&[Term::from_regex(".*xy").unwrap()])
+            .unwrap(); // (ab|xy)xy
         assert_eq!(inter.to_string(), "(ab|xy)xy");
 
         // Subtraction
-        let diff = Term::from_regex("a*")?.subtraction(&Term::from_regex("")?)?;
+        let diff = Term::from_regex("a*")
+            .unwrap()
+            .subtraction(&Term::from_regex("").unwrap())
+            .unwrap();
         assert_eq!(diff.to_string(), "a+");
 
         // Repetition
-        let rep = Term::from_regex("abc")?.repeat(2, Some(4))?; // (abc){2,4}
+        let rep = Term::from_regex("abc").unwrap().repeat(2, Some(4)).unwrap(); // (abc){2,4}
         assert_eq!(rep.to_string(), "(abc){2,4}");
 
         // Analyze
-        let details = rep.get_details()?;
+        let details = rep.get_details().unwrap();
         assert_eq!(details.get_length(), &(Some(6), Some(12)));
         assert!(!details.is_empty());
 
         // Generate examples
-        let samples = Term::from_regex("(x|y){1,3}")?.generate_strings(5)?;
+        let samples = Term::from_regex("(x|y){1,3}")
+            .unwrap()
+            .generate_strings(5)
+            .unwrap();
         println!("Some matches: {:?}", samples);
 
         // Equivalence & subset
-        let a = Term::from_regex("a+")?;
-        let b = Term::from_regex("a*")?;
-        assert!(!a.are_equivalent(&b)?);
-        assert!(a.is_subset_of(&b)?);
+        let a = Term::from_regex("a+").unwrap();
+        let b = Term::from_regex("a*").unwrap();
+        assert!(!a.are_equivalent(&b).unwrap());
+        assert!(a.is_subset_of(&b).unwrap());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_readme_code_2() -> Result<(), String> {
+        let term = Term::from_regex(".*abc.*cdef.*sqdsqf.*").unwrap();
+
+        let execution_profile = ExecutionProfileBuilder::new()
+            .execution_timeout(5) // We set the limit (5ms)
+            .build();
+
+        // We run the operation with the defined limitation
+        execution_profile.run(|| {
+            assert_eq!(
+                EngineError::OperationTimeOutError,
+                term.generate_strings(1000).unwrap_err()
+            );
+        });
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_readme_code_3() -> Result<(), String> {
+        let term1 = Term::from_regex(".*abcdef.*").unwrap();
+        let term2 = Term::from_regex(".*defabc.*").unwrap();
+
+        let execution_profile = ExecutionProfileBuilder::new()
+            .max_number_of_states(5) // We set the limit
+            .build();
+
+        // We run the operation with the defined limitation
+        execution_profile.run(|| {
+            assert_eq!(
+                EngineError::AutomatonHasTooManyStates,
+                term1.intersection(&[term2]).unwrap_err()
+            );
+        });
 
         Ok(())
     }

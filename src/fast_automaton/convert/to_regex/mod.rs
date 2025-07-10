@@ -7,7 +7,7 @@ use ahash::{HashMapExt, HashSetExt};
 use log::warn;
 use nohash_hasher::IntMap;
 
-use crate::{error::EngineError, execution_profile::ThreadLocalParams, regex::RegularExpression};
+use crate::{error::EngineError, execution_profile::ExecutionProfile, regex::RegularExpression};
 
 use super::{FastAutomaton, IntSet, Range, State};
 
@@ -248,7 +248,7 @@ impl FastAutomaton {
         if self.is_empty() {
             return Some(RegularExpression::new_empty());
         }
-        let execution_profile = ThreadLocalParams::get_execution_profile();
+        let execution_profile = ExecutionProfile::get();
         if let Ok(graph) = StateEliminationAutomaton::new(self) {
             if let Ok(regex) = graph?.convert_to_regex(&execution_profile) {
                 let regex = regex?;

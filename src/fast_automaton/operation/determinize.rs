@@ -1,6 +1,6 @@
 use ahash::HashMapExt;
 
-use crate::{execution_profile::ThreadLocalParams, EngineError};
+use crate::{EngineError, execution_profile::ExecutionProfile};
 
 use super::*;
 
@@ -9,7 +9,7 @@ impl FastAutomaton {
         if self.deterministic {
             return Ok(self.clone());
         }
-        let execution_profile = ThreadLocalParams::get_execution_profile();
+        let execution_profile = ExecutionProfile::get();
 
         let ranges = self.get_ranges()?;
 
@@ -125,9 +125,11 @@ mod tests {
             deterministic_automaton.get_number_of_states()
         );
         assert!(deterministic_automaton.is_determinitic());
-        assert!(automaton
-            .subtraction(&deterministic_automaton)
-            .unwrap()
-            .is_empty());
+        assert!(
+            automaton
+                .subtraction(&deterministic_automaton)
+                .unwrap()
+                .is_empty()
+        );
     }
 }
