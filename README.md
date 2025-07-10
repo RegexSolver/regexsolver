@@ -1,7 +1,8 @@
 
 # RegexSolver
 [![Crates.io Version](https://img.shields.io/crates/v/regexsolver)](https://crates.io/crates/regexsolver)
- A high-performance Rust library for building, combining, and analyzing regular expressions and finite automata.
+
+A high-performance Rust library for building, combining, and analyzing regular expressions and finite automata.
  
 Ideal for constraint solvers, code generators, test-case generators, and any use case requiring rich regex/automaton operations at scale.
 
