@@ -55,6 +55,7 @@ impl PartialEq for ExecutionProfile {
 }
 
 impl ExecutionProfile {
+    /// Retrieve the current thread-local execution profile.
     pub fn get() -> ExecutionProfile {
         ThreadLocalParams::get_execution_profile()
     }
@@ -114,6 +115,7 @@ impl ExecutionProfile {
         self
     }
 
+    /// Run the given closure with this profile at thread level, setting its start time to now.
     pub fn run<F, R>(&self, f: F) -> R
     where
         F: FnOnce() -> R,
@@ -124,6 +126,19 @@ impl ExecutionProfile {
         execution_profile.start_execution_time = Some(SystemTime::now());
 
         ThreadLocalParams::set_execution_profile(&execution_profile);
+        let result = f();
+        ThreadLocalParams::set_execution_profile(&initial_execution_profile);
+        result
+    }
+
+    /// Like [`run`], but does *not* reset its start time. Useful if you want to pass a profile state to a new thread.
+    pub fn apply<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        let initial_execution_profile = ThreadLocalParams::get_execution_profile();
+
+        ThreadLocalParams::set_execution_profile(self);
         let result = f();
         ThreadLocalParams::set_execution_profile(&initial_execution_profile);
         result
@@ -219,6 +234,17 @@ mod tests {
     use crate::{Term, regex::RegularExpression};
 
     use super::*;
+
+    fn assert_send<T: Send>() {}
+    fn assert_sync<T: Sync>() {}
+
+    #[test]
+    fn test_traits() -> Result<(), String> {
+        assert_send::<ExecutionProfile>();
+        assert_sync::<ExecutionProfile>();
+
+        Ok(())
+    }
 
     #[test]
     fn test_execution_get() -> Result<(), String> {

@@ -9,10 +9,13 @@ use cardinality::Cardinality;
 use error::EngineError;
 use fast_automaton::FastAutomaton;
 use nohash_hasher::NoHashHasher;
+use rayon::prelude::*;
 use regex::RegularExpression;
 use regex_charclass::{char::Char, irange::RangeSet};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+
+use crate::execution_profile::ExecutionProfile;
 
 pub mod cardinality;
 pub mod error;
@@ -199,21 +202,33 @@ impl Term {
     /// }
     /// ```
     pub fn intersection(&self, terms: &[Term]) -> Result<Term, EngineError> {
-        if self.is_empty() {
+        if self.is_empty() || terms.iter().any(|t| t.is_empty()) {
             return Ok(Term::new_empty());
         }
 
-        let mut automaton_list = Vec::with_capacity(terms.len());
-        for term in terms {
-            if term.is_empty() {
-                return Ok(Term::new_empty());
-            }
-            automaton_list.push(term.get_automaton()?);
-        }
+        let parallel = terms.len() > 3;
 
-        let return_automaton = self
-            .get_automaton()?
-            .intersection_all(automaton_list.iter().map(Cow::as_ref))?;
+        let mut automaton_list = if parallel {
+            let execution_profile = ExecutionProfile::get();
+            terms
+                .par_iter()
+                .map(|a| execution_profile.apply(|| a.get_automaton()))
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            terms
+                .iter()
+                .map(Term::get_automaton)
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        automaton_list.push(self.get_automaton()?);
+
+        let automaton_list = automaton_list.iter().map(AsRef::as_ref).collect::<Vec<_>>();
+
+        let return_automaton = if parallel {
+            FastAutomaton::intersection_all_par(automaton_list)
+        } else {
+            FastAutomaton::intersection_all(automaton_list)
+        }?;
 
         if let Some(return_regex) = return_automaton.to_regex() {
             Ok(Term::RegularExpression(return_regex))
@@ -294,39 +309,6 @@ impl Term {
                     Term::Automaton(repeat_automaton)
                 })
             }
-        }
-    }
-
-    /// Returns the details of the current term, including cardinality, length, and emptiness.
-    ///
-    /// # Example:
-    ///
-    /// ```
-    /// use regexsolver::{Term, cardinality::Cardinality};
-    ///
-    /// let term = Term::from_regex("(abc|de)").unwrap();
-    ///
-    /// let details = term.get_details().unwrap();
-    ///
-    /// assert_eq!(Some(Cardinality::Integer(2)), *details.get_cardinality());
-    /// assert_eq!((Some(2), Some(3)), *details.get_length());
-    /// assert!(!details.is_empty());
-    /// assert!(!details.is_total());
-    /// ```
-    pub fn get_details(&self) -> Result<Details, EngineError> {
-        match self {
-            Term::RegularExpression(regex) => Ok(Details {
-                cardinality: Some(regex.get_cardinality()),
-                length: regex.get_length(),
-                empty: regex.is_empty(),
-                total: regex.is_total(),
-            }),
-            Term::Automaton(automaton) => Ok(Details {
-                cardinality: automaton.get_cardinality(),
-                length: automaton.get_length(),
-                empty: automaton.is_empty(),
-                total: automaton.is_total(),
-            }),
         }
     }
 
@@ -442,38 +424,31 @@ impl Term {
             Term::Automaton(fast_automaton) => fast_automaton.is_total(),
         }
     }
-}
 
-/// Represents details about a [Term].
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Clone, PartialEq, Eq, Debug)]
-#[cfg_attr(feature = "serde", serde(tag = "type", rename = "details"))]
-pub struct Details {
-    cardinality: Option<Cardinality<u32>>,
-    length: (Option<u32>, Option<u32>),
-    empty: bool,
-    total: bool,
-}
-
-impl Details {
-    /// Return the number of unique strings matched.
-    pub fn get_cardinality(&self) -> &Option<Cardinality<u32>> {
-        &self.cardinality
+    pub fn get_length(&self) -> (Option<u32>, Option<u32>) {
+        match self {
+            Term::RegularExpression(regex) => regex.get_length(),
+            Term::Automaton(automaton) => automaton.get_length(),
+        }
     }
 
-    /// Return the minimum and the maximum length of matched strings.
-    pub fn get_length(&self) -> &(Option<u32>, Option<u32>) {
-        &self.length
-    }
+    pub fn get_cardinality(&self) -> Result<Cardinality<u32>, EngineError> {
+        match self {
+            Term::RegularExpression(regex) => Ok(regex.get_cardinality()),
+            Term::Automaton(automaton) => {
+                let cardinality = if !automaton.is_determinitic() {
+                    automaton.determinize()?.get_cardinality()
+                } else {
+                    automaton.get_cardinality()
+                };
 
-    /// Return `true` if it does not match any string.
-    pub fn is_empty(&self) -> bool {
-        self.empty
-    }
-
-    /// Return `true` if it match all possible strings.
-    pub fn is_total(&self) -> bool {
-        self.total
+                if let Some(cardinality) = cardinality {
+                    Ok(cardinality)
+                } else {
+                    Err(EngineError::CannotComputeAutomatonCardinality)
+                }
+            }
+        }
     }
 }
 
@@ -588,9 +563,8 @@ mod tests {
         assert_eq!(rep.to_string(), "(abc){2,4}");
 
         // Analyze
-        let details = rep.get_details().unwrap();
-        assert_eq!(details.get_length(), &(Some(6), Some(12)));
-        assert!(!details.is_empty());
+        assert_eq!(rep.get_length(), (Some(6), Some(12)));
+        assert!(!rep.is_empty());
 
         // Generate examples
         let samples = Term::from_regex("(x|y){1,3}")

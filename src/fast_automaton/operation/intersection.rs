@@ -1,24 +1,29 @@
 use std::borrow::Cow;
 
+use rayon::prelude::*;
+
 use condition::converter::ConditionConverter;
 
-use crate::{error::EngineError, execution_profile::ExecutionProfile};
+use crate::{
+    error::EngineError,
+    execution_profile::{ExecutionProfile},
+};
 
 use super::*;
 
 impl FastAutomaton {
     pub fn intersection(&self, other: &FastAutomaton) -> Result<Self, EngineError> {
-        self.intersection_all([other])
+        FastAutomaton::intersection_all([self, other])
     }
 
-    pub fn intersection_all<'a, I>(&'a self, others: I) -> Result<Self, EngineError>
+    pub fn intersection_all<'a, I>(automatons: I) -> Result<Self, EngineError>
     where
         I: IntoIterator<Item = &'a FastAutomaton>,
     {
-        let mut result = Cow::Borrowed(self);
+        let mut result: Cow<'a, FastAutomaton> = Cow::Owned(FastAutomaton::new_total());
 
-        for other in others {
-            result = result.intersection_internal(other)?;
+        for automaton in automatons {
+            result = result.intersection_internal(automaton)?;
 
             if result.is_empty() {
                 break;
@@ -26,6 +31,22 @@ impl FastAutomaton {
         }
 
         Ok(result.into_owned())
+    }
+
+    pub fn intersection_all_par<'a, I>(others: I) -> Result<Self, EngineError>
+    where
+        I: IntoParallelIterator<Item = &'a FastAutomaton>,
+    {
+        let execution_profile = ExecutionProfile::get();
+
+        let total = FastAutomaton::new_total();
+
+        others.into_par_iter().cloned().map(Result::Ok).try_reduce(
+            || total.clone(),
+            |acc, next| {
+                execution_profile.apply(|| Ok(acc.intersection_internal(&next)?.into_owned()))
+            },
+        )
     }
 
     fn intersection_internal<'a>(
@@ -182,7 +203,7 @@ impl FastAutomaton {
 
 #[cfg(test)]
 mod tests {
-    use crate::regex::RegularExpression;
+    use crate::{fast_automaton::FastAutomaton, regex::RegularExpression};
 
     #[test]
     fn test_simple_intersection_regex_1() -> Result<(), String> {
@@ -280,6 +301,35 @@ mod tests {
         assert!(!intersection.is_empty());
 
         assert!(intersection.match_string("avb@gmail.com"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_intersection_par() -> Result<(), String> {
+        let c = 12;
+        let mut automaton_list = Vec::with_capacity(c);
+
+        for i in 0..c {
+            automaton_list.push(
+                RegularExpression::new(&format!(".*{i}.*"))
+                    .unwrap()
+                    .to_automaton()
+                    .unwrap(),
+            )
+        }
+
+        // FastAutomaton::intersection_all(automaton_list.iter().collect::<Vec<_>>());
+
+        // 3.76
+        // 4.47
+        // 3.84
+
+        let _ = FastAutomaton::intersection_all_par(automaton_list.iter().collect::<Vec<_>>());
+
+        // 0.59
+        // 0.55
+        // 0.53
+
         Ok(())
     }
 }

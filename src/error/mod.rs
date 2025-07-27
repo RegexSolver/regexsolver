@@ -21,6 +21,8 @@ pub enum EngineError {
     ConditionIndexOutOfBound,
     /// There is an error with one of the token.
     TokenError(TokenError),
+    /// Computing the cardinality of the provided automaton failed.
+    CannotComputeAutomatonCardinality,
 }
 
 impl fmt::Display for EngineError {
@@ -43,6 +45,10 @@ impl fmt::Display for EngineError {
             EngineError::ConditionIndexOutOfBound => {
                 write!(f, "The provided index is out of bound of the condition.")
             }
+            EngineError::CannotComputeAutomatonCardinality => write!(
+                f,
+                "Computing the cardinality of the provided automaton failed."
+            ),
         }
     }
 }
@@ -62,6 +68,7 @@ impl EngineError {
             EngineError::TokenError(_) => false,
             EngineError::ConditionInvalidRange => true,
             EngineError::ConditionIndexOutOfBound => true,
+            EngineError::CannotComputeAutomatonCardinality => false,
         }
     }
 }

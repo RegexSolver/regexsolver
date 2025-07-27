@@ -3,8 +3,7 @@
 [![Crates.io Version](https://img.shields.io/crates/v/regexsolver)](https://crates.io/crates/regexsolver)
 
 A high-performance Rust library for building, combining, and analyzing regular expressions and finite automata.
- 
-Ideal for constraint solvers, code generators, test-case generators, and any use case requiring rich regex/automaton operations at scale.
+Ideal for constraint solvers, code generators, test-case generators, and any use case requiring rich regex/automaton operations.
 
 ## Key Features
 -  **Dual Representation**: Work interchangeably with regex syntax or compiled automata via the `Term` enum.
@@ -14,6 +13,8 @@ Ideal for constraint solvers, code generators, test-case generators, and any use
 	- Check **equivalence** and **subset** relations between terms.
 -  **String Generation**: Generate example strings matching a term, for testing or sampling.
 -  **Performance & Tuning**: Pluggable `ExecutionProfile` to bound time and resource usage.
+
+This library also exposes the `regex` and `fast_automaton` modules for advanced use, providing low-level APIs for direct pattern and automaton operations. 
 
 ## Installation
 Add the following line in your `Cargo.toml`:
@@ -35,7 +36,7 @@ let concat = t1.concat(&[t2]).unwrap();
 assert_eq!(concat.to_string(), "abc.*xyz");
 
 // Union
-let union = t1.union(&[Term::from_regex("fgh").unwrap()]).unwrap(); // (abc.*|fgh)
+let union = t1.union(&[Term::from_regex("fgh").unwrap()]).unwrap();
 assert_eq!(union.to_string(), "(abc.*|fgh)");
 
 // Intersection
@@ -53,13 +54,12 @@ let diff = Term::from_regex("a*")
 assert_eq!(diff.to_string(), "a+");
 
 // Repetition
-let rep = Term::from_regex("abc").unwrap().repeat(2, Some(4)).unwrap(); // (abc){2,4}
+let rep = Term::from_regex("abc").unwrap().repeat(2, Some(4)).unwrap();
 assert_eq!(rep.to_string(), "(abc){2,4}");
 
 // Analyze
-let details = rep.get_details().unwrap();
-assert_eq!(details.get_length(), &(Some(6), Some(12)));
-assert!(!details.is_empty());
+assert_eq!(rep.get_length(), (Some(6), Some(12)));
+assert!(!rep.is_empty());
 
 // Generate examples
 let samples = Term::from_regex("(x|y){1,3}")
@@ -76,7 +76,7 @@ assert!(a.is_subset_of(&b).unwrap());
 ```
 
 ## Execution Profiles
-By default, all operations run without limits. For heavy or untrusted patterns, use an `ExecutionProfile` to cap execution time and maximum number of states in used automata.
+By default, all operations run without limits. For heavy or untrusted patterns, use a thread local `ExecutionProfile` to cap execution time and maximum number of states in used automata.
 
 ### Example: Limit the execution time
 ```rust
@@ -110,3 +110,12 @@ execution_profile.run(|| {
 	assert_eq!(EngineError::AutomatonHasTooManyStates, term1.intersection(&[term2]).unwrap_err());
 });
 ```
+
+## Usage with other programming languages
+
+If you want to use this library with other programming languages, we provide a wide range of wrappers:
+- [regexsolver-java](https://github.com/RegexSolver/regexsolver-java)
+- [regexsolver-js](https://github.com/RegexSolver/regexsolver-js)
+- [regexsolver-python](https://github.com/RegexSolver/regexsolver-python)
+
+For more information about how to use the wrappers, you can refer to our [getting started guide](https://docs.regexsolver.com/getting-started.html).

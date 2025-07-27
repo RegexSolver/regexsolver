@@ -314,4 +314,15 @@ mod tests {
         assert!(automaton.is_total());
         Ok(())
     }
+
+    fn assert_send<T: Send>() {}
+    fn assert_sync<T: Sync>() {}
+
+    #[test]
+    fn test_traits() -> Result<(), String> {
+        assert_send::<FastAutomaton>();
+        assert_sync::<FastAutomaton>();
+
+        Ok(())
+    }
 }
