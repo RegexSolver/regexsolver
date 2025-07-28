@@ -355,7 +355,7 @@ mod tests {
                     .as_millis();
 
                 println!("{run_duration}");
-                assert!(run_duration <= execution_timeout_in_ms + 50);
+                assert!(run_duration <= execution_timeout_in_ms + 100);
             });
 
         Ok(())

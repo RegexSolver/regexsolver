@@ -4,16 +4,16 @@ use super::*;
 
 impl RegularExpression {
     pub fn union(&self, other: &RegularExpression) -> RegularExpression {
-        self.union_all([other])
+        Self::union_all([self, other])
     }
 
-    pub fn union_all<'a, I>(&'a self, others: I) -> RegularExpression
+    pub fn union_all<'a, I>(regexes: I) -> RegularExpression
     where
         I: IntoIterator<Item = &'a RegularExpression>,
     {
-        let mut result = Cow::Borrowed(self);
+        let mut result: Cow<'a, RegularExpression> = Cow::Owned(RegularExpression::new_empty());
 
-        for other in others {
+        for other in regexes {
             result = result.union_(other);
 
             if result.is_total() {

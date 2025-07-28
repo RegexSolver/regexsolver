@@ -143,43 +143,45 @@ impl Term {
             return Ok(Term::new_total());
         }
 
-        let mut return_regex = RegularExpression::new_empty();
-        let mut return_automaton = FastAutomaton::new_empty();
-        let mut has_automaton = false;
-        match self {
-            Term::RegularExpression(regular_expression) => {
-                return_regex = regular_expression.clone()
-            }
-            Term::Automaton(fast_automaton) => {
-                has_automaton = true;
-                return_automaton = fast_automaton.clone();
-            }
-        }
-        for term in terms {
-            if term.is_total() {
-                return Ok(Term::new_total());
-            }
-            if has_automaton {
-                return_automaton = return_automaton.union(term.get_automaton()?.as_ref())?;
-            } else {
-                match term {
-                    Term::RegularExpression(regular_expression) => {
-                        return_regex = return_regex.union(regular_expression);
-                    }
-                    Term::Automaton(fast_automaton) => {
-                        has_automaton = true;
-                        return_automaton = return_regex.to_automaton()?.union(fast_automaton)?;
-                    }
+        let mut has_automaton = matches!(self, Term::Automaton(_));
+        if !has_automaton {
+            for term in terms {
+                if term.is_total() {
+                    return Ok(Term::new_total());
+                }
+                if matches!(term, Term::Automaton(_)) {
+                    has_automaton = true;
+                    break;
                 }
             }
         }
 
-        if !has_automaton {
-            Ok(Term::RegularExpression(return_regex))
-        } else if let Some(return_regex) = return_automaton.to_regex() {
-            Ok(Term::RegularExpression(return_regex))
+        if has_automaton {
+            let parallel = terms.len() > 3;
+
+            let automaton_list = self.get_automata(terms, parallel)?;
+
+            let automaton_list = automaton_list.iter().map(AsRef::as_ref).collect::<Vec<_>>();
+
+            let return_automaton = if parallel {
+                FastAutomaton::union_all_par(automaton_list)
+            } else {
+                FastAutomaton::union_all(automaton_list)
+            }?;
+
+            if let Some(return_regex) = return_automaton.to_regex() {
+                Ok(Term::RegularExpression(return_regex))
+            } else {
+                Ok(Term::Automaton(return_automaton))
+            }
         } else {
-            Ok(Term::Automaton(return_automaton))
+            let regexes_list = self.get_regexes(terms)?;
+
+            let regexes_list = regexes_list.iter().map(AsRef::as_ref).collect::<Vec<_>>();
+
+            Ok(Term::RegularExpression(RegularExpression::union_all(
+                regexes_list,
+            )))
         }
     }
 
@@ -208,19 +210,7 @@ impl Term {
 
         let parallel = terms.len() > 3;
 
-        let mut automaton_list = if parallel {
-            let execution_profile = ExecutionProfile::get();
-            terms
-                .par_iter()
-                .map(|a| execution_profile.apply(|| a.get_automaton()))
-                .collect::<Result<Vec<_>, _>>()?
-        } else {
-            terms
-                .iter()
-                .map(Term::get_automaton)
-                .collect::<Result<Vec<_>, _>>()?
-        };
-        automaton_list.push(self.get_automaton()?);
+        let automaton_list = self.get_automata(terms, parallel)?;
 
         let automaton_list = automaton_list.iter().map(AsRef::as_ref).collect::<Vec<_>>();
 
@@ -392,10 +382,64 @@ impl Term {
         }
     }
 
+    fn get_automata<'a>(
+        &'a self,
+        terms: &'a [Term],
+        parallel: bool,
+    ) -> Result<Vec<Cow<'a, FastAutomaton>>, EngineError> {
+        let mut automaton_list = Vec::with_capacity(terms.len() + 1);
+        automaton_list.push(self.get_automaton()?);
+
+        let mut terms_automata = if parallel {
+            let execution_profile = ExecutionProfile::get();
+            terms
+                .par_iter()
+                .map(|a| execution_profile.apply(|| a.get_automaton()))
+                .collect::<Result<Vec<_>, _>>()
+        } else {
+            terms
+                .iter()
+                .map(Term::get_automaton)
+                .collect::<Result<Vec<_>, _>>()
+        }?;
+        automaton_list.append(&mut terms_automata);
+
+        Ok(automaton_list)
+    }
+
+    fn get_regexes<'a>(
+        &'a self,
+        terms: &'a [Term],
+    ) -> Result<Vec<Cow<'a, RegularExpression>>, EngineError> {
+        let mut regex_list = Vec::with_capacity(terms.len() + 1);
+        regex_list.push(self.get_regex()?);
+
+        let mut terms_regexes = terms
+            .iter()
+            .map(Term::get_regex)
+            .collect::<Result<Vec<_>, _>>()?;
+        regex_list.append(&mut terms_regexes);
+
+        Ok(regex_list)
+    }
+
     fn get_automaton(&self) -> Result<Cow<FastAutomaton>, EngineError> {
         Ok(match self {
             Term::RegularExpression(regex) => Cow::Owned(regex.to_automaton()?),
             Term::Automaton(automaton) => Cow::Borrowed(automaton),
+        })
+    }
+
+    fn get_regex(&self) -> Result<Cow<RegularExpression>, EngineError> {
+        Ok(match self {
+            Term::RegularExpression(regex) => Cow::Borrowed(regex),
+            Term::Automaton(automaton) => {
+                if let Some(regex) = automaton.to_regex() {
+                    Cow::Owned(regex)
+                } else {
+                    todo!()
+                }
+            }
         })
     }
 

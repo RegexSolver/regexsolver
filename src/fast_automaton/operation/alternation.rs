@@ -1,24 +1,18 @@
 use std::hash::BuildHasherDefault;
 
 use condition::converter::ConditionConverter;
+use rayon::prelude::*;
 
-use crate::error::EngineError;
+use crate::{error::EngineError, execution_profile::ExecutionProfile};
 
 use super::*;
 
 impl FastAutomaton {
     pub fn union(&self, other: &FastAutomaton) -> Result<Self, EngineError> {
-        Self::build_union([self, other])
+        Self::union_all([self, other])
     }
 
-    pub fn union_all<'a, I>(&'a self, others: I) -> Result<Self, EngineError>
-    where
-        I: IntoIterator<Item = &'a FastAutomaton>,
-    {
-        Self::build_union(std::iter::once(self).chain(others))
-    }
-
-    pub(crate) fn build_union<'a, I>(automatons: I) -> Result<FastAutomaton, EngineError>
+    pub fn union_all<'a, I>(automatons: I) -> Result<Self, EngineError>
     where
         I: IntoIterator<Item = &'a FastAutomaton>,
     {
@@ -27,6 +21,34 @@ impl FastAutomaton {
             new_automaton.union_mut(automaton)?;
         }
         Ok(new_automaton)
+    }
+
+    pub fn union_all_par<'a, I>(automatons: I) -> Result<Self, EngineError>
+    where
+        I: IntoParallelIterator<Item = &'a FastAutomaton>,
+    {
+        let execution_profile = ExecutionProfile::get();
+
+        let empty = FastAutomaton::new_empty();
+
+        automatons.into_par_iter()
+        .try_fold(
+            || empty.clone(),
+            |mut acc, next| {
+                execution_profile.apply(|| {
+                    acc.union_mut(next)?;
+                    Ok(acc)
+                })
+            },
+        ).try_reduce(
+            || empty.clone(),
+            |mut acc, next| {
+                execution_profile.apply(|| {
+                    acc.union_mut(&next)?;
+                    Ok(acc)
+                })
+            },
+        )
     }
 
     fn prepare_start_states(

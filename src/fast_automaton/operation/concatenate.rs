@@ -8,17 +8,10 @@ use super::*;
 
 impl FastAutomaton {
     pub fn concat(&self, other: &FastAutomaton) -> Result<Self, EngineError> {
-        Self::build_concat([self, other])
+        Self::concat_all([self, other])
     }
 
-    pub fn concat_all<'a, I>(&'a self, others: I) -> Result<Self, EngineError>
-    where
-        I: IntoIterator<Item = &'a FastAutomaton>,
-    {
-        Self::build_concat(std::iter::once(self).chain(others))
-    }
-
-    pub(crate) fn build_concat<'a, I>(automatons: I) -> Result<FastAutomaton, EngineError>
+    pub fn concat_all<'a, I>(automatons: I) -> Result<Self, EngineError>
     where
         I: IntoIterator<Item = &'a FastAutomaton>,
     {

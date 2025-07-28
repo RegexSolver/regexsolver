@@ -33,7 +33,7 @@ impl FastAutomaton {
         Ok(result.into_owned())
     }
 
-    pub fn intersection_all_par<'a, I>(others: I) -> Result<Self, EngineError>
+    pub fn intersection_all_par<'a, I>(automatons: I) -> Result<Self, EngineError>
     where
         I: IntoParallelIterator<Item = &'a FastAutomaton>,
     {
@@ -41,7 +41,14 @@ impl FastAutomaton {
 
         let total = FastAutomaton::new_total();
 
-        others.into_par_iter().cloned().map(Result::Ok).try_reduce(
+        automatons.into_par_iter()
+        .try_fold(
+            || total.clone(),
+            |acc, next| {
+                execution_profile.apply(|| Ok(acc.intersection_internal(next)?.into_owned()))
+            },
+        )
+        .try_reduce(
             || total.clone(),
             |acc, next| {
                 execution_profile.apply(|| Ok(acc.intersection_internal(&next)?.into_owned()))
@@ -306,7 +313,7 @@ mod tests {
 
     #[test]
     fn test_intersection_par() -> Result<(), String> {
-        let c = 12;
+        let c = 14;
         let mut automaton_list = Vec::with_capacity(c);
 
         for i in 0..c {
