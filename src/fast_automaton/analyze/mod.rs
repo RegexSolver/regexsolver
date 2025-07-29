@@ -25,6 +25,11 @@ impl FastAutomaton {
         false
     }
 
+    #[inline]
+    pub fn is_empty_string(&self) -> bool {
+        self.accept_states.len() == 1 && self.accept_states.contains(&self.start_state) && self.in_degree(self.start_state) == 0
+    }
+
     pub fn get_reacheable_states(&self) -> IntSet<State> {
         let mut states_map: IntMap<usize, IntSet<usize>> =
             IntMap::with_capacity_and_hasher(self.transitions.len(), BuildHasherDefault::default());

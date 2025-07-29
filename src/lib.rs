@@ -51,17 +51,42 @@ impl Display for Term {
 }
 
 impl Term {
-    /// Create a term based on the given pattern.
+    /// Create a term that matches the empty language.
+    pub fn new_empty() -> Self {
+        Term::RegularExpression(RegularExpression::new_empty())
+    }
+
+    /// Create a term that matches all possible strings.
+    pub fn new_total() -> Self {
+        Term::RegularExpression(RegularExpression::new_total())
+    }
+
+    /// Create a term that only match the empty string `""`.
+    pub fn new_empty_string() -> Self {
+        Term::RegularExpression(RegularExpression::new_empty_string())
+    }
+
+    /// Parse the provided pattern and return a new `Term` holding the resulting `RegularExpression`.
     ///
     /// # Example:
     ///
     /// ```
     /// use regexsolver::Term;
     ///
-    /// let term = Term::from_regex(".*abc.*").unwrap();
+    /// let term = Term::from_pattern(".*abc.*").unwrap();
     /// ```
-    pub fn from_regex(regex: &str) -> Result<Self, EngineError> {
-        Ok(Term::RegularExpression(RegularExpression::new(regex)?))
+    pub fn from_pattern(pattern: &str) -> Result<Self, EngineError> {
+        Ok(Term::RegularExpression(RegularExpression::new(pattern)?))
+    }
+
+    /// Create a new `Term` holding the provided `RegularExpression`.
+    pub fn from_regex(regex: RegularExpression) -> Self {
+        Term::RegularExpression(regex)
+    }
+
+    /// Create a new `Term` holding the provided `FastAutomaton`.
+    pub fn from_automaton(automaton: FastAutomaton) -> Self {
+        Term::Automaton(automaton)
     }
 
     /// Compute the concatenation of the current term with the given list of terms.
@@ -302,7 +327,7 @@ impl Term {
         }
     }
 
-    /// Generate strings matched by the given term.
+    /// Generate the given count of strings matched by the given term.
     ///
     /// # Example:
     ///
@@ -367,6 +392,59 @@ impl Term {
         let automaton_1 = self.get_automaton()?;
         let automaton_2 = that.get_automaton()?;
         automaton_1.is_subset_of(&automaton_2)
+    }
+
+
+    /// Check if the current term matches the empty language.
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Term::RegularExpression(regular_expression) => regular_expression.is_empty(),
+            Term::Automaton(fast_automaton) => fast_automaton.is_empty(),
+        }
+    }
+
+    /// Check if the current term matches all possible strings.
+    pub fn is_total(&self) -> bool {
+        match self {
+            Term::RegularExpression(regular_expression) => regular_expression.is_total(),
+            Term::Automaton(fast_automaton) => fast_automaton.is_total(),
+        }
+    }
+
+    /// Check if the current term only match the empty string `""`.
+    pub fn is_empty_string(&self) -> bool {
+        match self {
+            Term::RegularExpression(regular_expression) => regular_expression.is_empty_string(),
+            Term::Automaton(fast_automaton) => fast_automaton.is_empty_string(),
+        }
+    }
+
+    /// Returns the minimum and maximum length of the possible matched strings.
+    pub fn get_length(&self) -> (Option<u32>, Option<u32>) {
+        match self {
+            Term::RegularExpression(regex) => regex.get_length(),
+            Term::Automaton(automaton) => automaton.get_length(),
+        }
+    }
+
+    /// Returns the cardinality of the provided term (i.e. the number of the possible matched strings).
+    pub fn get_cardinality(&self) -> Result<Cardinality<u32>, EngineError> {
+        match self {
+            Term::RegularExpression(regex) => Ok(regex.get_cardinality()),
+            Term::Automaton(automaton) => {
+                let cardinality = if !automaton.is_determinitic() {
+                    automaton.determinize()?.get_cardinality()
+                } else {
+                    automaton.get_cardinality()
+                };
+
+                if let Some(cardinality) = cardinality {
+                    Ok(cardinality)
+                } else {
+                    Err(EngineError::CannotComputeAutomatonCardinality)
+                }
+            }
+        }
     }
 
     fn determinize_subtrahend<'a>(
@@ -442,58 +520,6 @@ impl Term {
             }
         })
     }
-
-    /// Create a term that matches the empty language.
-    pub fn new_empty() -> Self {
-        Term::RegularExpression(RegularExpression::new_empty())
-    }
-
-    /// Create a term that matches all possible strings.
-    pub fn new_total() -> Self {
-        Term::RegularExpression(RegularExpression::new_total())
-    }
-
-    /// Check if the current term matches the empty language.
-    pub fn is_empty(&self) -> bool {
-        match self {
-            Term::RegularExpression(regular_expression) => regular_expression.is_empty(),
-            Term::Automaton(fast_automaton) => fast_automaton.is_empty(),
-        }
-    }
-
-    /// Check if the current term matches all possible strings.
-    pub fn is_total(&self) -> bool {
-        match self {
-            Term::RegularExpression(regular_expression) => regular_expression.is_total(),
-            Term::Automaton(fast_automaton) => fast_automaton.is_total(),
-        }
-    }
-
-    pub fn get_length(&self) -> (Option<u32>, Option<u32>) {
-        match self {
-            Term::RegularExpression(regex) => regex.get_length(),
-            Term::Automaton(automaton) => automaton.get_length(),
-        }
-    }
-
-    pub fn get_cardinality(&self) -> Result<Cardinality<u32>, EngineError> {
-        match self {
-            Term::RegularExpression(regex) => Ok(regex.get_cardinality()),
-            Term::Automaton(automaton) => {
-                let cardinality = if !automaton.is_determinitic() {
-                    automaton.determinize()?.get_cardinality()
-                } else {
-                    automaton.get_cardinality()
-                };
-
-                if let Some(cardinality) = cardinality {
-                    Ok(cardinality)
-                } else {
-                    Err(EngineError::CannotComputeAutomatonCardinality)
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -504,8 +530,8 @@ mod tests {
 
     #[test]
     fn test_details() -> Result<(), String> {
-        let regex1 = Term::from_regex("a").unwrap();
-        let regex2 = Term::from_regex("b").unwrap();
+        let regex1 = Term::from_pattern("a").unwrap();
+        let regex2 = Term::from_pattern("b").unwrap();
 
         let details = regex1.intersection(&vec![regex2]);
         assert!(details.is_ok());
@@ -515,8 +541,8 @@ mod tests {
 
     #[test]
     fn test_subtraction_1() -> Result<(), String> {
-        let regex1 = Term::from_regex("a*").unwrap();
-        let regex2 = Term::from_regex("").unwrap();
+        let regex1 = Term::from_pattern("a*").unwrap();
+        let regex2 = Term::from_pattern("").unwrap();
 
         let result = regex1.subtraction(&regex2);
         assert!(result.is_ok());
@@ -531,8 +557,8 @@ mod tests {
 
     #[test]
     fn test_subtraction_2() -> Result<(), String> {
-        let regex1 = Term::from_regex("x*").unwrap();
-        let regex2 = Term::from_regex("(xxx)*").unwrap();
+        let regex1 = Term::from_pattern("x*").unwrap();
+        let regex2 = Term::from_pattern("(xxx)*").unwrap();
 
         let result = regex1.subtraction(&regex2);
         assert!(result.is_ok());
@@ -547,21 +573,21 @@ mod tests {
 
     #[test]
     fn test_intersection_1() -> Result<(), String> {
-        let regex1 = Term::from_regex("a*").unwrap();
-        let regex2 = Term::from_regex("b*").unwrap();
+        let regex1 = Term::from_pattern("a*").unwrap();
+        let regex2 = Term::from_pattern("b*").unwrap();
 
         let result = regex1.intersection(&vec![regex2]);
         assert!(result.is_ok());
         let result = result.unwrap();
-        assert_eq!(Term::from_regex("").unwrap(), result);
+        assert_eq!(Term::from_pattern("").unwrap(), result);
 
         Ok(())
     }
 
     #[test]
     fn test_intersection_2() -> Result<(), String> {
-        let regex1 = Term::from_regex("x*").unwrap();
-        let regex2 = Term::from_regex("(xxx)*").unwrap();
+        let regex1 = Term::from_pattern("x*").unwrap();
+        let regex2 = Term::from_pattern("(xxx)*").unwrap();
 
         let result = regex1.intersection(&vec![regex2]);
         assert!(result.is_ok());
@@ -577,33 +603,33 @@ mod tests {
     #[test]
     fn test_readme_code_1() -> Result<(), String> {
         // Create terms from regex
-        let t1 = Term::from_regex("abc.*").unwrap();
-        let t2 = Term::from_regex(".*xyz").unwrap();
+        let t1 = Term::from_pattern("abc.*").unwrap();
+        let t2 = Term::from_pattern(".*xyz").unwrap();
 
         // Concatenate
         let concat = t1.concat(&[t2]).unwrap();
         assert_eq!(concat.to_string(), "abc.*xyz");
 
         // Union
-        let union = t1.union(&[Term::from_regex("fgh").unwrap()]).unwrap(); // (abc.*|fgh)
+        let union = t1.union(&[Term::from_pattern("fgh").unwrap()]).unwrap(); // (abc.*|fgh)
         assert_eq!(union.to_string(), "(abc.*|fgh)");
 
         // Intersection
-        let inter = Term::from_regex("(ab|xy){2}")
+        let inter = Term::from_pattern("(ab|xy){2}")
             .unwrap()
-            .intersection(&[Term::from_regex(".*xy").unwrap()])
+            .intersection(&[Term::from_pattern(".*xy").unwrap()])
             .unwrap(); // (ab|xy)xy
         assert_eq!(inter.to_string(), "(ab|xy)xy");
 
         // Subtraction
-        let diff = Term::from_regex("a*")
+        let diff = Term::from_pattern("a*")
             .unwrap()
-            .subtraction(&Term::from_regex("").unwrap())
+            .subtraction(&Term::from_pattern("").unwrap())
             .unwrap();
         assert_eq!(diff.to_string(), "a+");
 
         // Repetition
-        let rep = Term::from_regex("abc").unwrap().repeat(2, Some(4)).unwrap(); // (abc){2,4}
+        let rep = Term::from_pattern("abc").unwrap().repeat(2, Some(4)).unwrap(); // (abc){2,4}
         assert_eq!(rep.to_string(), "(abc){2,4}");
 
         // Analyze
@@ -611,15 +637,15 @@ mod tests {
         assert!(!rep.is_empty());
 
         // Generate examples
-        let samples = Term::from_regex("(x|y){1,3}")
+        let samples = Term::from_pattern("(x|y){1,3}")
             .unwrap()
             .generate_strings(5)
             .unwrap();
         println!("Some matches: {:?}", samples);
 
         // Equivalence & subset
-        let a = Term::from_regex("a+").unwrap();
-        let b = Term::from_regex("a*").unwrap();
+        let a = Term::from_pattern("a+").unwrap();
+        let b = Term::from_pattern("a*").unwrap();
         assert!(!a.are_equivalent(&b).unwrap());
         assert!(a.is_subset_of(&b).unwrap());
 
@@ -628,7 +654,7 @@ mod tests {
 
     #[test]
     fn test_readme_code_2() -> Result<(), String> {
-        let term = Term::from_regex(".*abc.*cdef.*sqdsqf.*").unwrap();
+        let term = Term::from_pattern(".*abc.*cdef.*sqdsqf.*").unwrap();
 
         let execution_profile = ExecutionProfileBuilder::new()
             .execution_timeout(5) // We set the limit (5ms)
@@ -647,8 +673,8 @@ mod tests {
 
     #[test]
     fn test_readme_code_3() -> Result<(), String> {
-        let term1 = Term::from_regex(".*abcdef.*").unwrap();
-        let term2 = Term::from_regex(".*defabc.*").unwrap();
+        let term1 = Term::from_pattern(".*abcdef.*").unwrap();
+        let term2 = Term::from_pattern(".*defabc.*").unwrap();
 
         let execution_profile = ExecutionProfileBuilder::new()
             .max_number_of_states(5) // We set the limit
