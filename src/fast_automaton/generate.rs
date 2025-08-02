@@ -15,10 +15,10 @@ impl FastAutomaton {
 
         let execution_profile = ExecutionProfile::get();
 
-        let mut ranges_cache: AHashMap<&Condition, Range> =
+        let mut ranges_cache: AHashMap<&Condition, CharRange> =
             AHashMap::with_capacity(self.get_number_of_states());
 
-        let mut worklist: VecDeque<(Vec<Range>, usize)> =
+        let mut worklist: VecDeque<(Vec<CharRange>, usize)> =
             VecDeque::with_capacity(cmp::min(number, 1000));
         let mut visited = AHashSet::with_capacity(cmp::min(number, 1000));
 
@@ -57,7 +57,7 @@ impl FastAutomaton {
                     break;
                 }
             }
-            for (to_state, cond) in self.transitions_from_state_enumerate_iter(&state) {
+            for (cond, to_state) in self.transitions_from_iter(state) {
                 execution_profile.assert_not_timed_out()?;
                 let range = match ranges_cache.entry(cond) {
                     Entry::Occupied(o) => o.get().clone(),

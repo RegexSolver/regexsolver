@@ -1,6 +1,6 @@
 use token::TokenError;
 
-use crate::{error::EngineError, fast_automaton::condition::Condition};
+use crate::{error::EngineError, fast_automaton::condition::Condition, CharRange};
 
 use self::token::range_token::RangeToken;
 
@@ -32,10 +32,7 @@ impl Tokenizer<'_> {
                 vec.push(AutomatonToken::AcceptState)
             }
 
-            for (to_state, condition) in self
-                .automaton
-                .transitions_from_state_enumerate_iter(&current_state)
-            {
+            for (condition, to_state) in self.automaton.transitions_from_iter(current_state) {
                 if condition.is_empty() {
                     continue;
                 }
@@ -73,7 +70,7 @@ impl Tokenizer<'_> {
 
         let mut from_state = None;
         let mut to_state = None;
-        let mut range = Range::empty();
+        let mut range = CharRange::empty();
         for token in vec {
             match token {
                 AutomatonToken::Range(r) => {
@@ -86,7 +83,7 @@ impl Tokenizer<'_> {
                     if let Some(fs) = from_state {
                         if let Some(ts) = to_state {
                             Self::apply_transition(&mut automaton, fs, ts, &range)?;
-                            range = Range::empty();
+                            range = CharRange::empty();
                         }
                         to_state = Some((*s).into());
                     } else {
@@ -107,7 +104,7 @@ impl Tokenizer<'_> {
                     }
                     from_state = None;
                     to_state = None;
-                    range = Range::empty();
+                    range = CharRange::empty();
                 }
                 _ => return Err(EngineError::TokenError(TokenError::UnknownToken)),
             };
@@ -122,10 +119,10 @@ impl Tokenizer<'_> {
         automaton: &mut FastAutomaton,
         from_state: State,
         to_state: State,
-        range: &Range,
+        range: &CharRange,
     ) -> Result<(), EngineError> {
         let condition = Condition::from_range(range, automaton.get_spanning_set())?;
-        automaton.add_transition_to(from_state, to_state, &condition);
+        automaton.add_transition(from_state, to_state, &condition);
         Ok(())
     }
 }
@@ -150,7 +147,9 @@ mod tests {
         assert_embedding_convertion_for_fair(
             "((aad|ads|a)*abc.*def.*uif(aad|ads|x)*abc.*oxs.*def(aad|ads|ax)*abc.*def.*ksd|q)",
         );
-        assert_embedding_convertion_for_fair("(?:[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*|\"(?:[\\x01-\\x08\\x0b\\x0c\\x0e-\\x1f\\x21\\x23-\\x5b\\x5d-\\x7f]|\\\\[\\x01-\\x09\\x0b\\x0c\\x0e-\\x7f])*\")@(?:(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?|\\[(?:(?:(2(5[0-5]|[0-4][0-9])|1[0-9][0-9]|[1-9]?[0-9]))\\.){3}(?:(2(5[0-5]|[0-4][0-9])|1[0-9][0-9]|[1-9]?[0-9])|[a-z0-9-]*[a-z0-9]:(?:[\\x01-\\x08\\x0b\\x0c\\x0e-\\x1f\\x21-\\x5a\\x53-\\x7f]|\\\\[\\x01-\\x09\\x0b\\x0c\\x0e-\\x7f])+)\\])");
+        assert_embedding_convertion_for_fair(
+            "(?:[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*|\"(?:[\\x01-\\x08\\x0b\\x0c\\x0e-\\x1f\\x21\\x23-\\x5b\\x5d-\\x7f]|\\\\[\\x01-\\x09\\x0b\\x0c\\x0e-\\x7f])*\")@(?:(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?|\\[(?:(?:(2(5[0-5]|[0-4][0-9])|1[0-9][0-9]|[1-9]?[0-9]))\\.){3}(?:(2(5[0-5]|[0-4][0-9])|1[0-9][0-9]|[1-9]?[0-9])|[a-z0-9-]*[a-z0-9]:(?:[\\x01-\\x08\\x0b\\x0c\\x0e-\\x1f\\x21-\\x5a\\x53-\\x7f]|\\\\[\\x01-\\x09\\x0b\\x0c\\x0e-\\x7f])+)\\])",
+        );
 
         Ok(())
     }
@@ -181,14 +180,18 @@ mod tests {
 
         let unembedded_automaton = tokenizer.from_embedding(&embedding).unwrap();
 
-        assert!(automaton
-            .subtraction(&unembedded_automaton)
-            .unwrap()
-            .is_empty());
-        assert!(unembedded_automaton
-            .subtraction(&automaton)
-            .unwrap()
-            .is_empty());
+        assert!(
+            automaton
+                .subtraction(&unembedded_automaton)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            unembedded_automaton
+                .subtraction(&automaton)
+                .unwrap()
+                .is_empty()
+        );
 
         if !ignore_ai {
             // AI
@@ -200,14 +203,18 @@ mod tests {
 
             let unembedded_automaton = tokenizer.from_embedding(&embedding).unwrap();
 
-            assert!(automaton
-                .subtraction(&unembedded_automaton)
-                .unwrap()
-                .is_empty());
-            assert!(unembedded_automaton
-                .subtraction(&automaton)
-                .unwrap()
-                .is_empty());
+            assert!(
+                automaton
+                    .subtraction(&unembedded_automaton)
+                    .unwrap()
+                    .is_empty()
+            );
+            assert!(
+                unembedded_automaton
+                    .subtraction(&automaton)
+                    .unwrap()
+                    .is_empty()
+            );
         }
     }
 }

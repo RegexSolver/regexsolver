@@ -16,9 +16,7 @@ impl FastAutomaton {
         FastAutomaton::intersection_all([self, other])
     }
 
-    pub fn intersection_all<'a, I>(automatons: I) -> Result<Self, EngineError>
-    where
-        I: IntoIterator<Item = &'a FastAutomaton>,
+    pub fn intersection_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(automatons: I) -> Result<Self, EngineError>
     {
         let mut result: Cow<'a, FastAutomaton> = Cow::Owned(FastAutomaton::new_total());
 
@@ -33,9 +31,7 @@ impl FastAutomaton {
         Ok(result.into_owned())
     }
 
-    pub fn intersection_all_par<'a, I>(automatons: I) -> Result<Self, EngineError>
-    where
-        I: IntoParallelIterator<Item = &'a FastAutomaton>,
+    pub fn intersection_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(automatons: I) -> Result<Self, EngineError>
     {
         let execution_profile = ExecutionProfile::get();
 
@@ -102,8 +98,8 @@ impl FastAutomaton {
             let transitions_2 =
                 other.get_projected_transitions(p.2, &condition_converter_other_to_new)?;
 
-            for (n1, condition_1) in transitions_1 {
-                for (n2, condition_2) in &transitions_2 {
+            for (condition_1, n1) in transitions_1 {
+                for (condition_2, n2) in &transitions_2 {
                     let intersection = condition_1.intersection(condition_2);
                     if intersection.is_empty() {
                         continue;
@@ -118,7 +114,7 @@ impl FastAutomaton {
                             new_r
                         }
                     };
-                    new_automaton.add_transition_to(p.0, r.0, &intersection);
+                    new_automaton.add_transition(p.0, r.0, &intersection);
                 }
             }
         }
@@ -168,8 +164,8 @@ impl FastAutomaton {
             let transitions_2 =
                 other.get_projected_transitions(p.2, &condition_converter_other_to_new)?;
 
-            for (n1, condition_1) in transitions_1 {
-                for (n2, condition_2) in &transitions_2 {
+            for (condition_1, n1) in transitions_1 {
+                for (condition_2, n2) in &transitions_2 {
                     let intersection = condition_1.intersection(condition_2);
                     if intersection.is_empty() {
                         continue;
@@ -184,7 +180,7 @@ impl FastAutomaton {
                             new_r
                         }
                     };
-                    new_automaton.add_transition_to(p.0, r.0, &intersection);
+                    new_automaton.add_transition(p.0, r.0, &intersection);
                 }
             }
         }
@@ -195,11 +191,11 @@ impl FastAutomaton {
         &self,
         state: State,
         condition_converter: &ConditionConverter,
-    ) -> Result<Vec<(State, Condition)>, EngineError> {
+    ) -> Result<Vec<TransitionTo>, EngineError> {
         let transitions_1: Result<Vec<_>, EngineError> = self
-            .transitions_from_state_enumerate_iter(&state)
-            .map(|(&s, c)| match condition_converter.convert(c) {
-                Ok(condition) => Ok((s, condition)),
+            .transitions_from_iter(state)
+            .map(|(c, &s)| match condition_converter.convert(c) {
+                Ok(condition) => Ok((condition, s)),
                 Err(err) => Err(err),
             })
             .collect();

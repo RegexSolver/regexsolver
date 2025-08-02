@@ -39,7 +39,7 @@ impl FastAutomaton {
 
             for base in &ranges {
                 for from_state in &states {
-                    for (to_state, cond) in self.transitions_from_state_enumerate_iter(from_state) {
+                    for (cond, to_state) in self.transitions_from_iter(*from_state) {
                         if cond.has_intersection(base) {
                             match new_states_to_add.binary_search(to_state) {
                                 Ok(_) => {} // element already in vector @ `pos`
@@ -60,7 +60,7 @@ impl FastAutomaton {
                         }
                     };
 
-                    new_automaton.add_transition_to(r, q, base);
+                    new_automaton.add_transition(r, q, base);
                 }
                 new_states_to_add.clear();
             }

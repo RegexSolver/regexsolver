@@ -1,17 +1,24 @@
-use crate::Range;
+use crate::error::EngineError;
 use ahash::{AHashMap, HashSetExt};
 use condition::Condition;
 use regex_charclass::CharacterClass;
 use spanning_set::SpanningSet;
-use std::collections::hash_map::Entry;
 use std::collections::VecDeque;
+use std::collections::hash_map::Entry;
 use std::fmt::Display;
-use crate::error::EngineError;
 
-use crate::{IntMap, IntSet};
+use super::*;
 
-pub(crate) type State = usize;
 pub(crate) type Transitions = IntMap<State, Condition>;
+
+/// The identifier of state in an [`FastAutomaton`]
+pub type State = usize;
+
+/// A tuple containing the condition of a transition to a state.
+pub type TransitionTo = (Condition, State);
+
+/// A tuple containing the condition of a transition from a state.
+pub type TransitionFrom = (State, Condition);
 
 mod analyze;
 mod builder;
@@ -40,7 +47,7 @@ impl Display for FastAutomaton {
     fn fmt(&self, sb: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(sb, "digraph Automaton {{")?;
         writeln!(sb, "\trankdir = LR;")?;
-        for from_state in self.transitions_iter() {
+        for from_state in self.all_states_iter() {
             write!(sb, "\t{from_state}")?;
             if self.accept_states.contains(&from_state) {
                 writeln!(sb, "\t[shape=doublecircle,label=\"{from_state}\"];")?;
@@ -52,7 +59,7 @@ impl Display for FastAutomaton {
                 writeln!(sb, "\tinitial [shape=plaintext,label=\"\"];")?;
                 writeln!(sb, "\tinitial -> {from_state}")?;
             }
-            for (to_state, cond) in self.transitions_from_state_enumerate_iter(&from_state) {
+            for (cond, to_state) in self.transitions_from_iter(from_state) {
                 writeln!(
                     sb,
                     "\t{from_state} -> {to_state} [label=\"{}\"]",
@@ -76,80 +83,110 @@ impl FastAutomaton {
         }
     }
 
+    /// Returns the number of transitions to the provided state.
     #[inline]
-    pub fn in_degree(&self, state: State) -> usize {
+    pub fn state_in_degree(&self, state: State) -> usize {
         self.transitions_in
             .get(&state)
             .unwrap_or(&IntSet::new())
             .len()
     }
 
+    /// Returns the number of transitions from the provided state.
     #[inline]
-    pub fn out_degree(&self, state: State) -> usize {
+    pub fn state_out_degree(&self, state: State) -> usize {
         self.transitions[state].len()
     }
 
-    pub fn in_transitions(&self, state: State) -> Vec<(usize, Condition)> {
+    /// Returns an iterator of the state of the automaton.
+    #[inline]
+    pub fn all_states_iter(&self) -> impl Iterator<Item = State> + '_ {
+        (0..self.transitions.len()).filter(|s| !self.removed_states.contains(s))
+    }
+
+    /// Returns a vector containing the states of the automaton.
+    #[inline]
+    pub fn all_states_vec(&self) -> Vec<State> {
+        self.all_states_iter().collect()
+    }
+
+    /// Returns an iterator over all states directly reachable from the given state in one transition.
+    #[inline]
+    pub fn direct_states_iter(&self, state: &State) -> impl Iterator<Item = State> + '_ {
+        self.transitions[*state]
+            .keys()
+            .cloned()
+            .filter(|s| !self.removed_states.contains(s))
+    }
+
+    /// Returns a vector containing all states directly reachable from the given state in one transition.
+    #[inline]
+    pub fn direct_states_vec(&self, state: &State) -> Vec<State> {
+        self.direct_states_iter(state).collect()
+    }
+
+    /// Returns a vector containing the transitions to the provided state.
+    pub fn transitions_to_vec(&self, state: State) -> Vec<TransitionFrom> {
         let mut in_transitions = vec![];
         for from_state in self.transitions_in.get(&state).unwrap_or(&IntSet::new()) {
-            for (to_state, condition) in self.transitions_from_state_enumerate_vec(from_state) {
+            for (condition, to_state) in self.transitions_from_vec(*from_state) {
                 if to_state == state {
                     in_transitions.push((*from_state, condition));
+                    break;
                 }
             }
         }
         in_transitions
     }
 
-    pub fn in_states(&self, state: State) -> IntSet<State> {
-        self.transitions_in
-            .get(&state)
-            .unwrap_or(&IntSet::new())
-            .clone()
-    }
-
+    /// Returns a vector containing the transitions from the provided state.
     #[inline]
-    pub fn transitions_iter(&self) -> impl Iterator<Item = State> + '_ {
-        (0..self.transitions.len()).filter(|s| !self.removed_states.contains(s))
-    }
-
-    #[inline]
-    pub fn transitions_vec(&self) -> Vec<State> {
-        self.transitions_iter().collect()
-    }
-
-    #[inline]
-    pub fn transitions_from_state_enumerate_iter(
-        &self,
-        from_state: &State,
-    ) -> impl Iterator<Item = (&State, &Condition)> {
-        self.transitions[*from_state]
+    pub fn transitions_from_vec(&self, state: State) -> Vec<TransitionTo> {
+        self.transitions[state]
             .iter()
-            .filter(|s| !self.removed_states.contains(s.0))
-    }
-
-    #[inline]
-    pub fn transitions_from_state_enumerate_iter_mut(
-        &mut self,
-        from_state: &State,
-    ) -> impl Iterator<Item = (&usize, &mut Condition)> {
-        self.transitions[*from_state]
-            .iter_mut()
-            .filter(|s| !self.removed_states.contains(s.0))
-    }
-
-    #[inline]
-    pub fn transitions_from_state_enumerate_vec(
-        &self,
-        from_state: &State,
-    ) -> Vec<(State, Condition)> {
-        self.transitions[*from_state]
-            .iter()
-            .map(|(s, c)| (*s, c.clone()))
-            .filter(|s| !self.removed_states.contains(&s.0))
+            .map(|(s, c)| (c.clone(), *s))
+            .filter(|s| !self.removed_states.contains(&s.1))
             .collect()
     }
 
+    /// Returns an iterator containing the transitions from the provided state.
+    #[inline]
+    pub fn transitions_from_iter(
+        &self,
+        state: State,
+    ) -> impl Iterator<Item = (&Condition, &State)> {
+        self.transitions[state]
+            .iter()
+            .map(|(s, c)| (c, s))
+            .filter(|s| !self.removed_states.contains(s.1))
+    }
+
+    /// Returns a mutable iterator containing the transitions from the provided state.
+    #[inline]
+    pub fn transitions_from_iter_mut(
+        &mut self,
+        state: &State,
+    ) -> impl Iterator<Item = (&mut Condition, &State)> {
+        self.transitions[*state]
+            .iter_mut()
+            .map(|(s, c)| (c, s))
+            .filter(|s| !self.removed_states.contains(s.1))
+    }
+
+    /// Returns an owned iterator containing the transitions from the provided state.
+    #[inline]
+    pub fn transitions_from_into_iter(
+        &self,
+        state: &State,
+    ) -> impl Iterator<Item = TransitionTo> + '_ {
+        self.transitions[*state]
+            .clone()
+            .into_iter()
+            .map(|(s, c)| (c, s))
+            .filter(|(_, state)| !self.removed_states.contains(state))
+    }
+
+    /// Returns `true` if there is a directed transition between the two provided states.
     #[inline]
     pub fn does_transition_exists(&self, from_state: State, to_state: State) -> bool {
         if !self.has_state(from_state) || !self.has_state(to_state) {
@@ -172,91 +209,65 @@ impl FastAutomaton {
             .collect()
     }
 
-    #[inline]
-    pub fn transitions_from_state_enumerate_into_iter(
-        &self,
-        from_state: &State,
-    ) -> impl Iterator<Item = (State, Condition)> + '_ {
-        self.transitions
-            .get(*from_state) // Assume transitions is a map; adjust accordingly.
-            .into_iter() // Creates an iterator over Option<&V>
-            .flat_map(|transitions| transitions.iter()) // Flattens into Iterator<Item = &(State, Condition)>
-            .filter(move |(state, _)| !self.removed_states.contains(state)) // Filters out removed states
-            .map(|(state, condition)| (*state, condition.clone())) // Creates owned data; adjust if cloning is expensive
-    }
-
-    #[inline]
-    pub fn transitions_from_state_iter(
-        &self,
-        from_state: &State,
-    ) -> impl Iterator<Item = State> + '_ {
-        self.transitions[*from_state]
-            .keys()
-            .cloned()
-            .filter(|s| !self.removed_states.contains(s))
-    }
-
-    #[inline]
-    pub fn transitions_from_state(&self, from_state: &State) -> Vec<State> {
-        self.transitions_from_state_iter(from_state).collect()
-    }
-
-    #[inline]
-    pub fn transitions_from_state_into_iter<'a>(
-        &'a self,
-        from_state: &State,
-    ) -> impl Iterator<Item = (State, Condition)> + 'a {
-        self.transitions[*from_state]
-            .clone()
-            .into_iter()
-            .filter(|s| !self.removed_states.contains(&s.0))
-    }
-
+    // Returns the number of states in the automaton.
     #[inline]
     pub fn get_number_of_states(&self) -> usize {
         self.transitions.len() - self.removed_states.len()
     }
 
+    // Get a reference of the directed transtion's condition between the two provided states.
     #[inline]
-    pub fn get_condition(&self, from_state: &State, to_state: &State) -> Option<&Condition> {
-        self.transitions[*from_state].get(to_state)
+    pub fn get_condition(&self, from_state: State, to_state: State) -> Option<&Condition> {
+        self.transitions[from_state].get(&to_state)
     }
 
+    // Get a mutable reference of the directed transtion's condition between the two provided states.
+    #[inline]
+    pub fn get_condition_mut(
+        &mut self,
+        from_state: State,
+        to_state: State,
+    ) -> Option<&mut Condition> {
+        self.transitions[from_state].get_mut(&to_state)
+    }
+
+    /// Returns the start state of the automaton.
     #[inline]
     pub fn get_start_state(&self) -> State {
         self.start_state
     }
 
-    #[inline]
-    pub fn get_removed_states(&self) -> &IntSet<State> {
-        &self.removed_states
-    }
-
+    // Get a reference to the set of accept (final) states of the automaton.
     #[inline]
     pub fn get_accept_states(&self) -> &IntSet<State> {
         &self.accept_states
     }
 
+    /// Returns a reference to the automaton's spanning set.
     #[inline]
     pub fn get_spanning_set(&self) -> &SpanningSet {
         &self.spanning_set
     }
 
+    /// Returns `true` if the given `state` is one of the automaton's accept states.
     #[inline]
     pub fn is_accepted(&self, state: &State) -> bool {
         self.accept_states.contains(state)
     }
 
+    /// Returns `true` if the automaton is deterministic.
     #[inline]
     pub fn is_determinitic(&self) -> bool {
         self.deterministic
     }
 
+    /// Returns `true` if the automaton contains at least one cycle.
     #[inline]
     pub fn is_cyclic(&self) -> bool {
         self.cyclic
     }
 
+    /// Returns `true` if the automaton has the provided state.
     #[inline]
     pub fn has_state(&self, state: State) -> bool {
         !(state >= self.transitions.len() || self.removed_states.contains(&state))
@@ -274,7 +285,7 @@ impl FastAutomaton {
                 continue;
             }
             let curr_char = input.chars().nth(position).unwrap() as u32;
-            for (to_state, cond) in self.transitions_from_state_enumerate_iter(current_state) {
+            for (cond, to_state) in self.transitions_from_iter(*current_state) {
                 if cond.has_character(&curr_char, &self.spanning_set).unwrap() {
                     if position + 1 == input.len() {
                         if self.accept_states.contains(to_state) {

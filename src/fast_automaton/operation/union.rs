@@ -12,9 +12,7 @@ impl FastAutomaton {
         Self::union_all([self, other])
     }
 
-    pub fn union_all<'a, I>(automatons: I) -> Result<Self, EngineError>
-    where
-        I: IntoIterator<Item = &'a FastAutomaton>,
+    pub fn union_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(automatons: I) -> Result<Self, EngineError>
     {
         let mut new_automaton = FastAutomaton::new_empty();
         for automaton in automatons {
@@ -23,9 +21,7 @@ impl FastAutomaton {
         Ok(new_automaton)
     }
 
-    pub fn union_all_par<'a, I>(automatons: I) -> Result<Self, EngineError>
-    where
-        I: IntoParallelIterator<Item = &'a FastAutomaton>,
+    pub fn union_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(automatons: I) -> Result<Self, EngineError>
     {
         let execution_profile = ExecutionProfile::get();
 
@@ -57,9 +53,9 @@ impl FastAutomaton {
         new_states: &mut IntMap<usize, usize>,
         condition_converter: &ConditionConverter,
     ) -> Result<IntSet<usize>, EngineError> {
-        let mut imcomplete_states = IntSet::with_capacity(other.out_degree(other.start_state) + 1);
-        let self_start_state_in_degree = self.in_degree(self.start_state);
-        let other_start_state_in_degree = other.in_degree(other.start_state);
+        let mut imcomplete_states = IntSet::with_capacity(other.state_out_degree(other.start_state) + 1);
+        let self_start_state_in_degree = self.state_in_degree(self.start_state);
+        let other_start_state_in_degree = other.state_in_degree(other.start_state);
         if self_start_state_in_degree == 0 && other_start_state_in_degree == 0 {
             // The start states can be the same state without any consequence
             new_states.insert(other.start_state, self.start_state);
@@ -71,9 +67,9 @@ impl FastAutomaton {
                     self.accept(new_state);
                 }
 
-                for (to_state, cond) in self.transitions_from_state_enumerate_vec(&self.start_state)
+                for (cond, to_state) in self.transitions_from_vec(self.start_state)
                 {
-                    self.add_transition_to(new_state, to_state, &cond);
+                    self.add_transition(new_state, to_state, &cond);
                 }
                 self.start_state = new_state;
             }
@@ -87,8 +83,8 @@ impl FastAutomaton {
                 new_states.insert(other.start_state, new_state);
                 imcomplete_states.insert(new_state);
 
-                for (other_to_state, cond) in
-                    other.transitions_from_state_enumerate_vec(&other.start_state)
+                for (cond, other_to_state) in
+                    other.transitions_from_vec(other.start_state)
                 {
                     let cond = condition_converter.convert(&cond)?;
                     let to_state = match new_states.entry(other_to_state) {
@@ -100,7 +96,7 @@ impl FastAutomaton {
                             new_state
                         }
                     };
-                    self.add_transition_to(self.start_state, to_state, &cond);
+                    self.add_transition(self.start_state, to_state, &cond);
                 }
             }
         }
@@ -115,7 +111,7 @@ impl FastAutomaton {
     ) {
         let mut self_accept_states_without_outgoing_edges = vec![];
         for &state in &self.accept_states {
-            if self.out_degree(state) == 0 && !imcomplete_states.contains(&state) {
+            if self.state_out_degree(state) == 0 && !imcomplete_states.contains(&state) {
                 self_accept_states_without_outgoing_edges.push(state);
             }
         }
@@ -127,8 +123,8 @@ impl FastAutomaton {
                     self.accept(new_state);
 
                     for &accept_state in &self_accept_states_without_outgoing_edges {
-                        for (from_state, condition) in self.in_transitions(accept_state) {
-                            self.add_transition_to(from_state, new_state, &condition);
+                        for (from_state, condition) in self.transitions_to_vec(accept_state) {
+                            self.add_transition(from_state, new_state, &condition);
                         }
                         self.remove_state(accept_state);
                     }
@@ -142,7 +138,7 @@ impl FastAutomaton {
             };
 
         for &state in &other.accept_states {
-            if other.out_degree(state) == 0 {
+            if other.state_out_degree(state) == 0 {
                 new_states
                     .entry(state)
                     .or_insert(accept_state_without_outgoing_edges);
@@ -182,7 +178,7 @@ impl FastAutomaton {
             self.prepare_start_states(other, &mut new_states, &condition_converter)?;
         self.prepare_accept_states(other, &mut new_states, &imcomplete_states);
 
-        for from_state in other.transitions_iter() {
+        for from_state in other.all_states_iter() {
             let new_from_state = match new_states.entry(from_state) {
                 Entry::Occupied(o) => *o.get(),
                 Entry::Vacant(v) => {
@@ -191,7 +187,7 @@ impl FastAutomaton {
                     new_state
                 }
             };
-            for (to_state, condition) in other.transitions_from_state_enumerate_iter(&from_state) {
+            for (condition, to_state) in other.transitions_from_iter(from_state) {
                 let new_condition = condition_converter.convert(condition)?;
                 let new_to_state = match new_states.entry(*to_state) {
                     Entry::Occupied(o) => *o.get(),
@@ -201,7 +197,7 @@ impl FastAutomaton {
                         new_state
                     }
                 };
-                self.add_transition_to(new_from_state, new_to_state, &new_condition);
+                self.add_transition(new_from_state, new_to_state, &new_condition);
             }
         }
         self.cyclic = self.cyclic || other.cyclic;

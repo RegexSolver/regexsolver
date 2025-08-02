@@ -5,11 +5,10 @@ use std::{
 
 use ahash::{HashMapExt, HashSetExt};
 use log::warn;
-use nohash_hasher::IntMap;
 
 use crate::{error::EngineError, execution_profile::ExecutionProfile, regex::RegularExpression};
 
-use super::{FastAutomaton, IntSet, Range, State};
+use super::*;
 
 mod builder;
 mod transform;
@@ -45,13 +44,13 @@ struct StateEliminationAutomaton<T> {
     cyclic: bool,
 }
 
-impl Display for StateEliminationAutomaton<Range> {
+impl Display for StateEliminationAutomaton<CharRange> {
     fn fmt(&self, sb: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.to_graph_dot(sb, None)
     }
 }
 
-impl StateEliminationAutomaton<Range> {
+impl StateEliminationAutomaton<CharRange> {
     //#[cfg(test)]
     #[allow(dead_code)]
     #[inline]
@@ -165,7 +164,7 @@ impl StateEliminationAutomaton<Range> {
     pub fn transitions_from_state_enumerate_iter(
         &self,
         from_state: &State,
-    ) -> impl Iterator<Item = (&State, &GraphTransition<Range>)> {
+    ) -> impl Iterator<Item = (&State, &GraphTransition<CharRange>)> {
         self.transitions[*from_state]
             .iter()
             .filter(|s| !self.removed_states.contains(s.0))
@@ -180,7 +179,7 @@ impl StateEliminationAutomaton<Range> {
             .collect()
     }
 
-    pub fn in_transitions_vec(&self, to_state: State) -> Vec<(State, GraphTransition<Range>)> {
+    pub fn in_transitions_vec(&self, to_state: State) -> Vec<(State, GraphTransition<CharRange>)> {
         let mut in_transitions = vec![];
         for from_state in self.transitions_in.get(&to_state).unwrap_or(&IntSet::new()) {
             for (state, transition) in self.transitions_from_state_enumerate_iter(from_state) {

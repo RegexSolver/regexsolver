@@ -2,7 +2,7 @@ use super::*;
 
 mod scc;
 
-impl StateEliminationAutomaton<Range> {
+impl StateEliminationAutomaton<CharRange> {
     pub fn new(automaton: &FastAutomaton) -> Result<Option<Self>, EngineError> {
         if automaton.is_empty() {
             return Ok(None);
@@ -19,15 +19,15 @@ impl StateEliminationAutomaton<Range> {
 
         let mut states_map = IntMap::with_capacity(automaton.get_number_of_states());
 
-        for from_state in automaton.transitions_iter() {
+        for from_state in automaton.all_states_iter() {
             let new_from_state = *states_map
                 .entry(from_state)
                 .or_insert_with(|| state_elimination_automaton.new_state());
-            for (to_state, condition) in
-                automaton.transitions_from_state_enumerate_into_iter(&from_state)
+            for (condition, to_state) in
+                automaton.transitions_from_iter(from_state)
             {
                 let new_to_state = *states_map
-                    .entry(to_state)
+                    .entry(*to_state)
                     .or_insert_with(|| state_elimination_automaton.new_state());
 
                 state_elimination_automaton.add_transition_to(
@@ -93,7 +93,7 @@ impl StateEliminationAutomaton<Range> {
         &mut self,
         from_state: State,
         to_state: State,
-        transition: GraphTransition<Range>,
+        transition: GraphTransition<CharRange>,
     ) {
         self.assert_state_exists(from_state);
         if from_state != to_state {
@@ -163,7 +163,7 @@ impl StateEliminationAutomaton<Range> {
         self.transitions[from_state].remove(&to_state);
     }
 
-    pub fn get_transition(&self, from_state: State, to_state: State) -> Option<&GraphTransition<Range>> {
+    pub fn get_transition(&self, from_state: State, to_state: State) -> Option<&GraphTransition<CharRange>> {
         self.transitions.get(from_state)?.get(&to_state)
     }
 }

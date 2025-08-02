@@ -24,9 +24,9 @@ pub mod fast_automaton;
 pub mod regex;
 pub mod tokenizer;
 
-type IntMap<Key, Value> = HashMap<Key, Value, BuildHasherDefault<NoHashHasher<Key>>>;
-type IntSet<Key> = HashSet<Key, BuildHasherDefault<NoHashHasher<Key>>>;
-type Range = RangeSet<Char>;
+pub type IntMap<Key, Value> = HashMap<Key, Value, BuildHasherDefault<NoHashHasher<Key>>>;
+pub type IntSet<Key> = HashSet<Key, BuildHasherDefault<NoHashHasher<Key>>>;
+pub type CharRange = RangeSet<Char>;
 
 /// Represents a term that can be either a regular expression or a finite automaton. This term can be manipulated with a wide range of operations.
 ///
@@ -97,9 +97,9 @@ impl Term {
     /// ```
     /// use regexsolver::Term;
     ///
-    /// let term1 = Term::from_regex("abc").unwrap();
-    /// let term2 = Term::from_regex("d.").unwrap();
-    /// let term3 = Term::from_regex(".*").unwrap();
+    /// let term1 = Term::from_pattern("abc").unwrap();
+    /// let term2 = Term::from_pattern("d.").unwrap();
+    /// let term3 = Term::from_pattern(".*").unwrap();
     ///
     /// let concat = term1.concat(&[term2, term3]).unwrap();
     ///
@@ -122,7 +122,7 @@ impl Term {
         }
         for term in terms {
             if has_automaton {
-                return_automaton = return_automaton.concat(term.get_automaton()?.as_ref())?;
+                return_automaton = return_automaton.concat(term.to_automaton()?.as_ref())?;
             } else {
                 match term {
                     Term::RegularExpression(regular_expression) => {
@@ -138,8 +138,6 @@ impl Term {
 
         if !has_automaton {
             Ok(Term::RegularExpression(return_regex))
-        } else if let Some(return_regex) = return_automaton.to_regex() {
-            Ok(Term::RegularExpression(return_regex))
         } else {
             Ok(Term::Automaton(return_automaton))
         }
@@ -153,9 +151,9 @@ impl Term {
     /// ```
     /// use regexsolver::Term;
     ///
-    /// let term1 = Term::from_regex("abc").unwrap();
-    /// let term2 = Term::from_regex("de").unwrap();
-    /// let term3 = Term::from_regex("fghi").unwrap();
+    /// let term1 = Term::from_pattern("abc").unwrap();
+    /// let term2 = Term::from_pattern("de").unwrap();
+    /// let term3 = Term::from_pattern("fghi").unwrap();
     ///
     /// let union = term1.union(&[term2, term3]).unwrap();
     ///
@@ -194,13 +192,11 @@ impl Term {
                 FastAutomaton::union_all(automaton_list)
             }?;
 
-            if let Some(return_regex) = return_automaton.to_regex() {
-                Ok(Term::RegularExpression(return_regex))
-            } else {
-                Ok(Term::Automaton(return_automaton))
-            }
+            Ok(Term::Automaton(return_automaton))
         } else {
-            let regexes_list = self.get_regexes(terms)?;
+            let regexes_list = self
+                .get_regexes(terms)
+                .expect("No automaton should be here so this operation is not supposed to fail.");
 
             let regexes_list = regexes_list.iter().map(AsRef::as_ref).collect::<Vec<_>>();
 
@@ -218,9 +214,9 @@ impl Term {
     /// ```
     /// use regexsolver::Term;
     ///
-    /// let term1 = Term::from_regex("(abc|de){2}").unwrap();
-    /// let term2 = Term::from_regex("de.*").unwrap();
-    /// let term3 = Term::from_regex(".*abc").unwrap();
+    /// let term1 = Term::from_pattern("(abc|de){2}").unwrap();
+    /// let term2 = Term::from_pattern("de.*").unwrap();
+    /// let term3 = Term::from_pattern(".*abc").unwrap();
     ///
     /// let intersection = term1.intersection(&[term2, term3]).unwrap();
     ///
@@ -245,11 +241,7 @@ impl Term {
             FastAutomaton::intersection_all(automaton_list)
         }?;
 
-        if let Some(return_regex) = return_automaton.to_regex() {
-            Ok(Term::RegularExpression(return_regex))
-        } else {
-            Ok(Term::Automaton(return_automaton))
-        }
+        Ok(Term::Automaton(return_automaton))
     }
 
     /// Compute the subtraction of the current term and the given `subtrahend`.
@@ -260,8 +252,8 @@ impl Term {
     /// ```
     /// use regexsolver::Term;
     ///
-    /// let term1 = Term::from_regex("(abc|de)").unwrap();
-    /// let term2 = Term::from_regex("de").unwrap();
+    /// let term1 = Term::from_pattern("(abc|de)").unwrap();
+    /// let term2 = Term::from_pattern("de").unwrap();
     ///
     /// let subtraction = term1.subtraction(&term2).unwrap();
     ///
@@ -270,17 +262,13 @@ impl Term {
     /// }
     /// ```
     pub fn subtraction(&self, subtrahend: &Term) -> Result<Term, EngineError> {
-        let minuend_automaton = self.get_automaton()?;
-        let subtrahend_automaton = subtrahend.get_automaton()?;
+        let minuend_automaton = self.to_automaton()?;
+        let subtrahend_automaton = subtrahend.to_automaton()?;
         let subtrahend_automaton =
             Self::determinize_subtrahend(&minuend_automaton, &subtrahend_automaton)?;
         let return_automaton = minuend_automaton.subtraction(&subtrahend_automaton)?;
 
-        if let Some(return_regex) = return_automaton.to_regex() {
-            Ok(Term::RegularExpression(return_regex))
-        } else {
-            Ok(Term::Automaton(return_automaton))
-        }
+        Ok(Term::Automaton(return_automaton))
     }
 
     /// See [`Self::subtraction`].
@@ -297,7 +285,7 @@ impl Term {
     /// ```
     /// use regexsolver::Term;
     ///
-    /// let term = Term::from_regex("abc").unwrap();
+    /// let term = Term::from_pattern("abc").unwrap();
     ///
     /// let repeat = term.repeat(1, None).unwrap();
     ///
@@ -318,11 +306,7 @@ impl Term {
             )),
             Term::Automaton(fast_automaton) => {
                 let repeat_automaton = fast_automaton.repeat(min, max_opt)?;
-                Ok(if let Some(repeat_regex) = repeat_automaton.to_regex() {
-                    Term::RegularExpression(repeat_regex)
-                } else {
-                    Term::Automaton(repeat_automaton)
-                })
+                Ok(Term::Automaton(repeat_automaton))
             }
         }
     }
@@ -334,7 +318,7 @@ impl Term {
     /// ```
     /// use regexsolver::Term;
     ///
-    /// let term = Term::from_regex("(abc|de){2}").unwrap();
+    /// let term = Term::from_pattern("(abc|de){2}").unwrap();
     ///
     /// let strings = term.generate_strings(3).unwrap();
     ///
@@ -342,7 +326,7 @@ impl Term {
     /// ```
     pub fn generate_strings(&self, count: usize) -> Result<Vec<String>, EngineError> {
         Ok(self
-            .get_automaton()?
+            .to_automaton()?
             .generate_strings(count)?
             .into_iter()
             .collect())
@@ -356,8 +340,8 @@ impl Term {
     /// ```
     /// use regexsolver::Term;
     ///
-    /// let term1 = Term::from_regex("(abc|de)").unwrap();
-    /// let term2 = Term::from_regex("(abc|de)*").unwrap();
+    /// let term1 = Term::from_pattern("(abc|de)").unwrap();
+    /// let term2 = Term::from_pattern("(abc|de)*").unwrap();
     ///
     /// assert!(!term1.are_equivalent(&term2).unwrap());
     /// ```
@@ -366,8 +350,8 @@ impl Term {
             return Ok(true);
         }
 
-        let automaton_1 = self.get_automaton()?;
-        let automaton_2 = that.get_automaton()?;
+        let automaton_1 = self.to_automaton()?;
+        let automaton_2 = that.to_automaton()?;
         automaton_1.is_equivalent_of(&automaton_2)
     }
 
@@ -379,8 +363,8 @@ impl Term {
     /// ```
     /// use regexsolver::Term;
     ///
-    /// let term1 = Term::from_regex("de").unwrap();
-    /// let term2 = Term::from_regex("(abc|de)").unwrap();
+    /// let term1 = Term::from_pattern("de").unwrap();
+    /// let term2 = Term::from_pattern("(abc|de)").unwrap();
     ///
     /// assert!(term1.is_subset_of(&term2).unwrap());
     /// ```
@@ -389,11 +373,10 @@ impl Term {
             return Ok(true);
         }
 
-        let automaton_1 = self.get_automaton()?;
-        let automaton_2 = that.get_automaton()?;
+        let automaton_1 = self.to_automaton()?;
+        let automaton_2 = that.to_automaton()?;
         automaton_1.is_subset_of(&automaton_2)
     }
-
 
     /// Check if the current term matches the empty language.
     pub fn is_empty(&self) -> bool {
@@ -447,6 +430,20 @@ impl Term {
         }
     }
 
+    pub fn to_automaton(&self) -> Result<Cow<FastAutomaton>, EngineError> {
+        Ok(match self {
+            Term::RegularExpression(regex) => Cow::Owned(regex.to_automaton()?),
+            Term::Automaton(automaton) => Cow::Borrowed(automaton),
+        })
+    }
+
+    pub fn to_regex(&self) -> Option<Cow<RegularExpression>> {
+        Some(match self {
+            Term::RegularExpression(regex) => Cow::Borrowed(regex),
+            Term::Automaton(automaton) => Cow::Owned(automaton.to_regex()?),
+        })
+    }
+
     fn determinize_subtrahend<'a>(
         minuend: &FastAutomaton,
         subtrahend: &'a FastAutomaton,
@@ -466,18 +463,18 @@ impl Term {
         parallel: bool,
     ) -> Result<Vec<Cow<'a, FastAutomaton>>, EngineError> {
         let mut automaton_list = Vec::with_capacity(terms.len() + 1);
-        automaton_list.push(self.get_automaton()?);
+        automaton_list.push(self.to_automaton()?);
 
         let mut terms_automata = if parallel {
             let execution_profile = ExecutionProfile::get();
             terms
                 .par_iter()
-                .map(|a| execution_profile.apply(|| a.get_automaton()))
+                .map(|a| execution_profile.apply(|| a.to_automaton()))
                 .collect::<Result<Vec<_>, _>>()
         } else {
             terms
                 .iter()
-                .map(Term::get_automaton)
+                .map(Term::to_automaton)
                 .collect::<Result<Vec<_>, _>>()
         }?;
         automaton_list.append(&mut terms_automata);
@@ -485,40 +482,17 @@ impl Term {
         Ok(automaton_list)
     }
 
-    fn get_regexes<'a>(
-        &'a self,
-        terms: &'a [Term],
-    ) -> Result<Vec<Cow<'a, RegularExpression>>, EngineError> {
+    fn get_regexes<'a>(&'a self, terms: &'a [Term]) -> Option<Vec<Cow<'a, RegularExpression>>> {
         let mut regex_list = Vec::with_capacity(terms.len() + 1);
-        regex_list.push(self.get_regex()?);
+        regex_list.push(self.to_regex()?);
 
         let mut terms_regexes = terms
             .iter()
-            .map(Term::get_regex)
-            .collect::<Result<Vec<_>, _>>()?;
+            .map(Term::to_regex)
+            .collect::<Option<Vec<_>>>()?;
         regex_list.append(&mut terms_regexes);
 
-        Ok(regex_list)
-    }
-
-    fn get_automaton(&self) -> Result<Cow<FastAutomaton>, EngineError> {
-        Ok(match self {
-            Term::RegularExpression(regex) => Cow::Owned(regex.to_automaton()?),
-            Term::Automaton(automaton) => Cow::Borrowed(automaton),
-        })
-    }
-
-    fn get_regex(&self) -> Result<Cow<RegularExpression>, EngineError> {
-        Ok(match self {
-            Term::RegularExpression(regex) => Cow::Borrowed(regex),
-            Term::Automaton(automaton) => {
-                if let Some(regex) = automaton.to_regex() {
-                    Cow::Owned(regex)
-                } else {
-                    todo!()
-                }
-            }
-        })
+        Some(regex_list)
     }
 }
 
@@ -629,7 +603,10 @@ mod tests {
         assert_eq!(diff.to_string(), "a+");
 
         // Repetition
-        let rep = Term::from_pattern("abc").unwrap().repeat(2, Some(4)).unwrap(); // (abc){2,4}
+        let rep = Term::from_pattern("abc")
+            .unwrap()
+            .repeat(2, Some(4))
+            .unwrap(); // (abc){2,4}
         assert_eq!(rep.to_string(), "(abc){2,4}");
 
         // Analyze

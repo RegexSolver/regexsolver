@@ -1,15 +1,16 @@
 use super::*;
 
 mod concat;
+mod repeat;
 mod simplify;
 mod union;
-mod repeat;
 
 #[cfg(test)]
 mod tests {
-    use regex_charclass::{char::Char, irange::RangeSet};
 
-    use crate::regex::RegularExpression;
+    use regex_charclass::char::Char;
+
+    use crate::{regex::RegularExpression, CharRange};
 
     #[test]
     fn test_parse_and_simplify() -> Result<(), String> {
@@ -37,8 +38,11 @@ mod tests {
         assert_parse_and_simplify("((ab))?(ab)(((ab)))((((ab)){3}))", "(ab){5,6}");
         assert_parse_and_simplify("(cd|ab)*(ab|cd)*", "(ab|cd)*");
         assert_parse_and_simplify(".*q(ab|ab|abc|ca)x", ".*q(abc?|ca)x");
-        assert_parse_and_simplify("((aad|ads|a)*abc.*def.*uif(aad|ads|x)*abc.*oxs.*def(aad|ads|ax)*abc.*def.*ksd|q){1,100}", "(q|(a|ads|a{2}d)*abc.*def.*uif(x|ads|a{2}d)*abc.*oxs.*def(ads|ax|a{2}d)*abc.*def.*ksd){1,100}");
-        
+        assert_parse_and_simplify(
+            "((aad|ads|a)*abc.*def.*uif(aad|ads|x)*abc.*oxs.*def(aad|ads|ax)*abc.*def.*ksd|q){1,100}",
+            "(q|(a|ads|a{2}d)*abc.*def.*uif(x|ads|a{2}d)*abc.*oxs.*def(ads|ax|a{2}d)*abc.*def.*ksd){1,100}",
+        );
+
         assert_parse_and_simplify("(a{2,4}){2,4}", "a{4,16}");
         Ok(())
     }
@@ -51,7 +55,7 @@ mod tests {
     #[test]
     fn test_repeat_simplify() -> Result<(), String> {
         assert_repeat_simplify(
-            &RangeSet::new_from_range(Char::new('a')..=Char::new('a')),
+            &CharRange::new_from_range(Char::new('a')..=Char::new('a')),
             2,
             Some(2),
             3,
@@ -59,7 +63,7 @@ mod tests {
         );
 
         assert_repeat_simplify(
-            &RangeSet::new_from_range(Char::new('a')..=Char::new('a')),
+            &CharRange::new_from_range(Char::new('a')..=Char::new('a')),
             2,
             Some(2),
             2,
@@ -67,7 +71,7 @@ mod tests {
         );
 
         assert_repeat_simplify(
-            &RangeSet::new_from_range(Char::new('a')..=Char::new('a')),
+            &CharRange::new_from_range(Char::new('a')..=Char::new('a')),
             3,
             Some(3),
             0,
@@ -75,7 +79,7 @@ mod tests {
         );
 
         assert_repeat_simplify(
-            &RangeSet::new_from_range(Char::new('a')..=Char::new('a')),
+            &CharRange::new_from_range(Char::new('a')..=Char::new('a')),
             0,
             Some(3),
             1,
@@ -83,7 +87,7 @@ mod tests {
         );
 
         assert_repeat_simplify(
-            &RangeSet::new_from_range(Char::new('a')..=Char::new('a')),
+            &CharRange::new_from_range(Char::new('a')..=Char::new('a')),
             1,
             Some(2),
             1,
@@ -91,7 +95,7 @@ mod tests {
         );
 
         assert_repeat_simplify(
-            &RangeSet::new_from_range(Char::new('a')..=Char::new('a')),
+            &CharRange::new_from_range(Char::new('a')..=Char::new('a')),
             2,
             Some(3),
             1,
@@ -99,7 +103,7 @@ mod tests {
         );
 
         assert_repeat_simplify(
-            &RangeSet::new_from_range(Char::new('a')..=Char::new('a')),
+            &CharRange::new_from_range(Char::new('a')..=Char::new('a')),
             3,
             Some(4),
             1,
@@ -107,7 +111,7 @@ mod tests {
         );
 
         assert_repeat_simplify(
-            &RangeSet::new_from_range(Char::new('a')..=Char::new('a')),
+            &CharRange::new_from_range(Char::new('a')..=Char::new('a')),
             7,
             Some(8),
             1,
@@ -115,7 +119,7 @@ mod tests {
         );
 
         assert_repeat_simplify(
-            &RangeSet::new_from_range(Char::new('a')..=Char::new('a')),
+            &CharRange::new_from_range(Char::new('a')..=Char::new('a')),
             0,
             None,
             3,
@@ -123,7 +127,7 @@ mod tests {
         );
 
         assert_repeat_simplify(
-            &RangeSet::new_from_range(Char::new('a')..=Char::new('a')),
+            &CharRange::new_from_range(Char::new('a')..=Char::new('a')),
             1,
             None,
             0,
@@ -131,7 +135,7 @@ mod tests {
         );
 
         assert_repeat_simplify(
-            &RangeSet::new_from_range(Char::new('a')..=Char::new('a')),
+            &CharRange::new_from_range(Char::new('a')..=Char::new('a')),
             0,
             Some(1),
             1,
@@ -139,7 +143,7 @@ mod tests {
         );
 
         assert_repeat_simplify(
-            &RangeSet::new_from_range(Char::new('a')..=Char::new('a')),
+            &CharRange::new_from_range(Char::new('a')..=Char::new('a')),
             2,
             Some(4),
             2,
@@ -150,7 +154,7 @@ mod tests {
     }
 
     fn assert_repeat_simplify(
-        range: &RangeSet<Char>,
+        range: &CharRange,
         min1: u32,
         max1: Option<u32>,
         min2: u32,

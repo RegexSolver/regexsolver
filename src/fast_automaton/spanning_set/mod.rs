@@ -1,22 +1,24 @@
 use std::slice::Iter;
 
 use ahash::AHashSet;
-use regex_charclass::{char::Char, irange::RangeSet};
+
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-/// Contains a set of [`RangeSet<Char>`] that span all the transition of a [`crate::FastAutomaton`].
+use crate::CharRange;
+
+/// Contains a set of [`CharRange`] that span all the transition of a [`crate::FastAutomaton`].
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SpanningSet(Vec<RangeSet<Char>>, RangeSet<Char>);
+pub struct SpanningSet(Vec<CharRange>, CharRange);
 
 impl SpanningSet {
     pub fn new_empty() -> Self {
-        SpanningSet(vec![], RangeSet::total())
+        SpanningSet(vec![], CharRange::total())
     }
 
     pub fn new_total() -> Self {
-        SpanningSet(vec![RangeSet::total()], RangeSet::empty())
+        SpanningSet(vec![CharRange::total()], CharRange::empty())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -35,7 +37,7 @@ impl SpanningSet {
         }
     }
 
-    pub(crate) fn get_spanning_ranges_with_rest(&self) -> Vec<RangeSet<Char>> {
+    pub(crate) fn get_spanning_ranges_with_rest(&self) -> Vec<CharRange> {
         if self.1.is_empty() {
             self.0.clone()
         } else {
@@ -45,7 +47,7 @@ impl SpanningSet {
         }
     }
 
-    pub fn get_spanning_ranges(&self) -> Iter<RangeSet<Char>> {
+    pub fn get_spanning_ranges(&self) -> Iter<CharRange> {
         self.0.iter()
     }
 
@@ -53,11 +55,11 @@ impl SpanningSet {
         self.0.len()
     }
 
-    pub fn get_spanning_range(&self, i: usize) -> Option<&RangeSet<Char>> {
+    pub fn get_spanning_range(&self, i: usize) -> Option<&CharRange> {
         self.0.get(i)
     }
 
-    pub fn get_rest(&self) -> &RangeSet<Char> {
+    pub fn get_rest(&self) -> &CharRange {
         &self.1
     }
 
@@ -69,8 +71,8 @@ impl SpanningSet {
         Self::compute_spanning_set(&ranges)
     }
 
-    pub fn compute_spanning_set(ranges: &[RangeSet<Char>]) -> Self {
-        let mut spanning_ranges: Vec<RangeSet<Char>> = ranges.to_vec();
+    pub fn compute_spanning_set(ranges: &[CharRange]) -> Self {
+        let mut spanning_ranges: Vec<CharRange> = ranges.to_vec();
         spanning_ranges.sort_unstable();
         spanning_ranges.dedup();
 
@@ -105,7 +107,7 @@ impl SpanningSet {
 
         spanning_ranges.sort_unstable();
 
-        let mut total = RangeSet::empty();
+        let mut total = CharRange::empty();
         for base in &spanning_ranges {
             total = total.union(base);
         }

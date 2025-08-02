@@ -2,8 +2,6 @@ use std::{cmp::Ordering, collections::VecDeque, vec};
 
 use ahash::HashMapExt;
 use crate::fast_automaton::spanning_set::SpanningSet;
-use crate::Range;
-
 use crate::{
     fast_automaton::{FastAutomaton, State},
     IntMap, IntSet,
@@ -43,9 +41,9 @@ impl Tokenizer<'_> {
             state_counter += 1;
 
             automaton
-                .transitions_from_state_enumerate_iter(&current_state)
-                .filter(|(_, c)| !c.is_empty())
-                .for_each(|(to_state, _)| {
+                .transitions_from_iter(current_state)
+                .filter(|(c, _)| !c.is_empty())
+                .for_each(|(_, to_state)| {
                     if !seen.contains(to_state) {
                         worklist.push_front(*to_state);
                     }

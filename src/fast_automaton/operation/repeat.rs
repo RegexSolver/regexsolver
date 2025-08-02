@@ -20,20 +20,20 @@ impl FastAutomaton {
 
         let automaton_to_repeat = self.clone();
 
-        if min == 0 && self.in_degree(self.start_state) != 0 {
+        if min == 0 && self.state_in_degree(self.start_state) != 0 {
             let new_state = self.new_state();
             if self.is_accepted(&self.start_state) {
                 self.accept(new_state);
             }
 
-            for to_state in self.transitions_from_state(&self.start_state) {
-                self.add_epsilon(new_state, to_state);
+            for to_state in self.direct_states_vec(&self.start_state) {
+                self.add_epsilon_transition(new_state, to_state);
             }
             self.start_state = new_state;
 
             if max_opt.is_none() {
                 for accept_state in self.accept_states.clone() {
-                    self.add_epsilon(accept_state, self.start_state);
+                    self.add_epsilon_transition(accept_state, self.start_state);
                 }
                 self.accept(self.start_state);
                 return Ok(());
@@ -59,10 +59,10 @@ impl FastAutomaton {
 
             let accept_state = *automaton_to_repeat.accept_states.iter().next().unwrap();
             if automaton_to_repeat.accept_states.len() == 1
-                && automaton_to_repeat.out_degree(accept_state) == 0
-                && automaton_to_repeat.in_degree(automaton_to_repeat.start_state) == 0
+                && automaton_to_repeat.state_out_degree(accept_state) == 0
+                && automaton_to_repeat.state_in_degree(automaton_to_repeat.start_state) == 0
             {
-                automaton_to_repeat.add_epsilon(accept_state, automaton_to_repeat.start_state);
+                automaton_to_repeat.add_epsilon_transition(accept_state, automaton_to_repeat.start_state);
                 let old_start_state = automaton_to_repeat.start_state;
                 automaton_to_repeat.start_state = accept_state;
                 automaton_to_repeat.remove_state(old_start_state);
@@ -76,7 +76,7 @@ impl FastAutomaton {
 
                 for state in automaton_to_repeat.accept_states.clone() {
                     for &(to_state, condition) in &transitions {
-                        automaton_to_repeat.add_transition_to(state, *to_state, condition);
+                        automaton_to_repeat.add_transition(state, *to_state, condition);
                     }
                 }
 

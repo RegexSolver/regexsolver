@@ -11,9 +11,7 @@ impl FastAutomaton {
         Self::concat_all([self, other])
     }
 
-    pub fn concat_all<'a, I>(automatons: I) -> Result<Self, EngineError>
-    where
-        I: IntoIterator<Item = &'a FastAutomaton>,
+    pub fn concat_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(automatons: I) -> Result<Self, EngineError>
     {
         let mut new_automaton = FastAutomaton::new_empty_string();
         for automaton in automatons {
@@ -41,12 +39,12 @@ impl FastAutomaton {
             BuildHasherDefault::default(),
         );
 
-        let start_state_and_accept_states_not_mergeable = other.in_degree(other.start_state) > 0
+        let start_state_and_accept_states_not_mergeable = other.state_in_degree(other.start_state) > 0
             && self
                 .accept_states
                 .iter()
                 .cloned()
-                .any(|s| self.out_degree(s) > 0);
+                .any(|s| self.state_out_degree(s) > 0);
 
         let accept_states = self.accept_states.iter().cloned().collect::<Vec<usize>>();
 
@@ -67,7 +65,7 @@ impl FastAutomaton {
             }
         }
 
-        for from_state in other.transitions_iter() {
+        for from_state in other.all_states_iter() {
             let new_from_states = match new_states.entry(from_state) {
                 Entry::Occupied(o) => {
                     vec![*o.get()]
@@ -86,7 +84,7 @@ impl FastAutomaton {
                 }
             };
 
-            for (to_state, condition) in other.transitions_from_state_enumerate_iter(&from_state) {
+            for (condition, to_state) in other.transitions_from_iter(from_state) {
                 let new_to_states = match new_states.entry(*to_state) {
                     Entry::Occupied(o) => {
                         vec![*o.get()]
@@ -107,7 +105,7 @@ impl FastAutomaton {
                 let projected_condition = condition_converter.convert(condition)?;
                 for new_from_state in new_from_states.iter() {
                     for new_to_state in new_to_states.iter() {
-                        self.add_transition_to(
+                        self.add_transition(
                             *new_from_state,
                             *new_to_state,
                             &projected_condition,
@@ -120,7 +118,7 @@ impl FastAutomaton {
         if start_state_and_accept_states_not_mergeable {
             if let Some(&other_start_state) = new_states.get(&other.start_state) {
                 for accept_state in &accept_states {
-                    self.add_epsilon(*accept_state, other_start_state);
+                    self.add_epsilon_transition(*accept_state, other_start_state);
                 }
             }
         }

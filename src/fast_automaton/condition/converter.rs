@@ -86,17 +86,16 @@ impl<'a, 'b> ConditionConverter<'a, 'b> {
 
 #[cfg(test)]
 mod tests {
-    use regex_charclass::{char::Char, irange::range::AnyRange};
-
-    use crate::Range;
+    use regex_charclass::{char::Char, irange::{range::AnyRange}};
+    use crate::CharRange;
 
     use super::*;
 
     fn get_from_spanning_set() -> SpanningSet {
         let ranges = vec![
-            Range::new_from_range(Char::new('\0')..=Char::new('\u{2}')),
-            Range::new_from_range(Char::new('\u{4}')..=Char::new('\u{6}')),
-            Range::new_from_range(Char::new('\u{9}')..=Char::new('\u{9}')),
+            CharRange::new_from_range(Char::new('\0')..=Char::new('\u{2}')),
+            CharRange::new_from_range(Char::new('\u{4}')..=Char::new('\u{6}')),
+            CharRange::new_from_range(Char::new('\u{9}')..=Char::new('\u{9}')),
         ];
 
         SpanningSet::compute_spanning_set(&ranges)
@@ -104,11 +103,11 @@ mod tests {
 
     fn get_to_spanning_set() -> SpanningSet {
         let ranges = vec![
-            Range::new_from_range(Char::new('\0')..=Char::new('\u{1}')),
-            Range::new_from_range(Char::new('\u{2}')..=Char::new('\u{2}')),
-            Range::new_from_range(Char::new('\u{4}')..=Char::new('\u{6}')),
-            Range::new_from_range(Char::new('\u{9}')..=Char::new('\u{9}')),
-            Range::new_from_range(Char::new('\u{20}')..=Char::new('\u{22}')),
+            CharRange::new_from_range(Char::new('\0')..=Char::new('\u{1}')),
+            CharRange::new_from_range(Char::new('\u{2}')..=Char::new('\u{2}')),
+            CharRange::new_from_range(Char::new('\u{4}')..=Char::new('\u{6}')),
+            CharRange::new_from_range(Char::new('\u{9}')..=Char::new('\u{9}')),
+            CharRange::new_from_range(Char::new('\u{20}')..=Char::new('\u{22}')),
         ];
 
         SpanningSet::compute_spanning_set(&ranges)
@@ -127,7 +126,7 @@ mod tests {
         let total = Condition::total(&from_spanning_set);
         assert!(converter.convert(&total).unwrap().is_total());
 
-        let range = Range::new_from_range(Char::new('\0')..=Char::new('\u{2}'));
+        let range = CharRange::new_from_range(Char::new('\0')..=Char::new('\u{2}'));
         let condition = Condition::from_range(&range, &from_spanning_set).unwrap();
         assert_eq!(
             range,
@@ -138,7 +137,7 @@ mod tests {
                 .unwrap()
         );
 
-        let range = Range::new_from_range(Char::new('\u{4}')..=Char::new('\u{6}'));
+        let range = CharRange::new_from_range(Char::new('\u{4}')..=Char::new('\u{6}'));
         let condition = Condition::from_range(&range, &from_spanning_set).unwrap();
         assert_eq!(
             range,
@@ -149,7 +148,7 @@ mod tests {
                 .unwrap()
         );
 
-        let range = Range::new_from_ranges(&[
+        let range = CharRange::new_from_ranges(&[
             AnyRange::from(Char::new('\u{4}')..=Char::new('\u{6}')),
             AnyRange::from(Char::new('\u{9}')..=Char::new('\u{9}')),
         ]);

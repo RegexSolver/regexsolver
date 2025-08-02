@@ -1,6 +1,6 @@
 use token::TokenError;
 
-use crate::regex::RegularExpression;
+use crate::{regex::RegularExpression, CharRange};
 
 use self::token::regex_token::RegexToken;
 
@@ -94,7 +94,7 @@ impl Tokenizer<'_> {
         vec: &[RegexToken],
     ) -> Result<RegularExpression, TokenError> {
         let mut regex_groups = vec![(RegularExpression::new_empty_string(), false)];
-        let mut current_range: Option<Range> = None;
+        let mut current_range: Option<CharRange> = None;
         let mut current_min = None;
         for i in 0..vec.len() {
             let token = vec[i];

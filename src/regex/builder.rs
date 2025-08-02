@@ -34,14 +34,14 @@ impl RegularExpression {
 
     pub fn new_total() -> Self {
         RegularExpression::Repetition(
-            Box::new(RegularExpression::Character(Range::total())),
+            Box::new(RegularExpression::Character(CharRange::total())),
             0,
             None,
         )
     }
 
     pub fn new_empty() -> Self {
-        RegularExpression::Character(Range::empty())
+        RegularExpression::Character(CharRange::empty())
     }
 
     pub fn new_empty_string() -> Self {
@@ -56,7 +56,7 @@ impl RegularExpression {
                 if let Ok(string) = String::from_utf8(literal.0.clone().into_vec()) {
                     for char in string.chars() {
                         regex_concat = regex_concat.concat(
-                            &RegularExpression::Character(Range::new_from_range(
+                            &RegularExpression::Character(CharRange::new_from_range(
                                 Char::new(char)..=Char::new(char),
                             )),
                             true,
@@ -104,24 +104,24 @@ impl RegularExpression {
         }
     }
 
-    fn to_range_unicode(class_unicode: &ClassUnicode) -> Range {
+    fn to_range_unicode(class_unicode: &ClassUnicode) -> CharRange {
         let mut new_range = Vec::with_capacity(class_unicode.ranges().len());
         for range in class_unicode.ranges() {
             new_range.push(AnyRange::from(
                 Char::new(range.start())..=Char::new(range.end()),
             ));
         }
-        Range::new_from_ranges(&new_range)
+        CharRange::new_from_ranges(&new_range)
     }
 
-    fn to_range_bytes(class_bytes: &ClassBytes) -> Range {
+    fn to_range_bytes(class_bytes: &ClassBytes) -> CharRange {
         let mut new_range = Vec::with_capacity(class_bytes.ranges().len());
         for range in class_bytes.ranges() {
             new_range.push(AnyRange::from(
                 Char::new(range.start() as char)..=Char::new(range.end() as char),
             ));
         }
-        Range::new_from_ranges(&new_range)
+        CharRange::new_from_ranges(&new_range)
     }
 }
 

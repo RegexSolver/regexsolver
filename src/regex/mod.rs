@@ -1,6 +1,6 @@
 use std::{cmp, collections::VecDeque, fmt::Display};
 
-use crate::{Range, execution_profile::ExecutionProfile};
+use crate::execution_profile::ExecutionProfile;
 use regex_charclass::CharacterClass;
 use regex_syntax::hir::{Class, ClassBytes, ClassUnicode, Hir, HirKind};
 
@@ -17,7 +17,7 @@ mod serializer;
 /// Represent a regular expression.
 #[derive(Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
 pub enum RegularExpression {
-    Character(Range),
+    Character(CharRange),
     Repetition(Box<RegularExpression>, u32, Option<u32>),
     Concat(VecDeque<RegularExpression>),
     Alternation(Vec<RegularExpression>),
@@ -125,7 +125,7 @@ impl RegularExpression {
         ExecutionProfile::get().assert_max_number_of_states(self.get_number_of_states_in_nfa())?;
 
         match self {
-            RegularExpression::Character(range) => FastAutomaton::make_from_range(range),
+            RegularExpression::Character(range) => FastAutomaton::new_from_range(range),
             RegularExpression::Repetition(regular_expression, min, max_opt) => {
                 let mut automaton = regular_expression.to_automaton()?;
                 automaton.repeat_mut(*min, *max_opt)?;

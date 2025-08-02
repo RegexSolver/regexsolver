@@ -1,6 +1,6 @@
 use super::*;
 
-impl StateEliminationAutomaton<Range> {
+impl StateEliminationAutomaton<CharRange> {
     pub fn identify_and_apply_components(&mut self) -> Result<(), EngineError> {
         let mut index = 0;
         let mut stack = Vec::new();

@@ -4,7 +4,7 @@ use crate::execution_profile::ExecutionProfile;
 
 use super::*;
 
-impl StateEliminationAutomaton<Range> {
+impl StateEliminationAutomaton<CharRange> {
     pub fn convert_to_regex(
         &self,
         execution_profile: &ExecutionProfile,

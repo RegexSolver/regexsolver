@@ -5,6 +5,7 @@ use crate::error::EngineError;
 use super::*;
 
 impl FastAutomaton {
+    /// Create an automaton that matches the empty language.
     #[inline]
     pub fn new_empty() -> Self {
         Self {
@@ -19,6 +20,7 @@ impl FastAutomaton {
         }
     }
 
+    /// Create an automaton that only match the empty string `""`.
     #[inline]
     pub fn new_empty_string() -> Self {
         let mut automaton = Self::new_empty();
@@ -26,26 +28,18 @@ impl FastAutomaton {
         automaton
     }
 
+    /// Create an automaton that matches all possible strings.
     #[inline]
     pub fn new_total() -> Self {
         let mut automaton: FastAutomaton = Self::new_empty();
         automaton.spanning_set = SpanningSet::new_total();
         automaton.accept(automaton.start_state);
-        automaton.add_transition_to(0, 0, &Condition::total(&automaton.spanning_set));
+        automaton.add_transition(0, 0, &Condition::total(&automaton.spanning_set));
         automaton
     }
 
-    #[inline]
-    pub fn make_empty(&mut self) {
-        self.apply_model(&Self::new_empty())
-    }
-
-    #[inline]
-    pub fn make_total(&mut self) {
-        self.apply_model(&Self::new_total())
-    }
-
-    pub fn make_from_range(range: &Range) -> Result<Self, EngineError> {
+    /// Create an automaton that matches one of the characters in the provided `CharRange`.
+    pub fn new_from_range(range: &CharRange) -> Result<Self, EngineError> {
         let mut automaton = Self::new_empty();
         if range.is_empty() {
             return Ok(automaton);
@@ -55,44 +49,12 @@ impl FastAutomaton {
         let spanning_set = SpanningSet::compute_spanning_set(&[range.clone()]);
         let condition = Condition::from_range(range, &spanning_set)?;
         automaton.spanning_set = spanning_set;
-        automaton.add_transition_to(0, new_state, &condition);
+        automaton.add_transition(0, new_state, &condition);
         automaton.accept(new_state);
         Ok(automaton)
     }
 
-    pub fn apply_new_spanning_set(
-        &mut self,
-        new_spanning_set: &SpanningSet,
-    ) -> Result<(), EngineError> {
-        if new_spanning_set == &self.spanning_set {
-            return Ok(());
-        }
-        let condition_converter = ConditionConverter::new(&self.spanning_set, new_spanning_set)?;
-        for from_state in &self.transitions_vec() {
-            for to_state in self.transitions_from_state(from_state) {
-                match self.transitions[*from_state].entry(to_state) {
-                    Entry::Occupied(mut o) => {
-                        o.insert(condition_converter.convert(o.get())?);
-                    }
-                    Entry::Vacant(_) => {}
-                };
-            }
-        }
-        self.spanning_set = new_spanning_set.clone();
-        Ok(())
-    }
-
-    #[inline]
-    pub fn apply_model(&mut self, model: &FastAutomaton) {
-        self.transitions = model.transitions.clone();
-        self.start_state = model.start_state;
-        self.accept_states = model.accept_states.clone();
-        self.removed_states = model.removed_states.clone();
-        self.spanning_set = model.spanning_set.clone();
-        self.deterministic = model.deterministic;
-        self.cyclic = model.cyclic;
-    }
-
+    /// Create a new state in the automaton and returns its identifier.
     #[inline]
     pub fn new_state(&mut self) -> State {
         if let Some(new_state) = self.removed_states.clone().iter().next() {
@@ -104,13 +66,15 @@ impl FastAutomaton {
         }
     }
 
+    /// Make the automaton accept the provided state as a valid final state.
     #[inline]
     pub fn accept(&mut self, state: State) {
         self.assert_state_exists(state);
         self.accept_states.insert(state);
     }
 
-    pub fn add_transition_to(&mut self, from_state: State, to_state: State, new_cond: &Condition) {
+    /// Create a new transition between the two provided states with the given condition, the provided condition must follow the same spanning set as the rest of the automaton.
+    pub fn add_transition(&mut self, from_state: State, to_state: State, new_cond: &Condition) {
         self.assert_state_exists(from_state);
         if from_state != to_state {
             self.assert_state_exists(to_state);
@@ -121,7 +85,7 @@ impl FastAutomaton {
 
         if self.deterministic {
             let mut deterministic = true;
-            for (state, condition) in self.transitions_from_state_enumerate_iter(&from_state) {
+            for (condition, state) in self.transitions_from_iter(from_state) {
                 if state == &to_state {
                     continue;
                 }
@@ -147,7 +111,8 @@ impl FastAutomaton {
         };
     }
 
-    pub fn add_epsilon(&mut self, from_state: State, to_state: State) {
+    /// Create a new epsilon transition between the two provided states.
+    pub fn add_epsilon_transition(&mut self, from_state: State, to_state: State) {
         if from_state == to_state {
             return;
         }
@@ -157,12 +122,12 @@ impl FastAutomaton {
             self.accept_states.insert(from_state);
         }
 
-        let transitions_to: Vec<_> = self.transitions_from_state_into_iter(&to_state).collect();
+        let transitions_to: Vec<_> = self.transitions_from_into_iter(&to_state).collect();
 
-        for (state, cond) in transitions_to {
+        for (cond, state) in transitions_to {
             if self.deterministic {
                 let mut deterministic = true;
-                for (s, c) in self.transitions_from_state_enumerate_iter(&from_state) {
+                for (c, s) in self.transitions_from_iter(from_state) {
                     if state == *s {
                         continue;
                     }
@@ -188,12 +153,11 @@ impl FastAutomaton {
         }
     }
 
+    /// Remove the provided state from the automaton. Remove all the transitions it is connected to. Panic if the state is used as a start state.
     pub fn remove_state(&mut self, state: State) {
         self.assert_state_exists(state);
         if self.start_state == state {
-            panic!(
-                "Can not remove the state {state}, it is still used as start state."
-            );
+            panic!("Can not remove the state {state}, it is still used as start state.");
         }
         self.accept_states.remove(&state);
         self.transitions_in.remove(&state);
@@ -219,6 +183,7 @@ impl FastAutomaton {
         }
     }
 
+    /// Remove the provided states from the automaton. Remove all the transitions they are connected to. Panic if one of the state is used as a start state.
     pub fn remove_states(&mut self, states: &IntSet<State>) {
         self.accept_states.retain(|e| !states.contains(e));
 
@@ -226,9 +191,7 @@ impl FastAutomaton {
 
         for &state in states {
             if self.start_state == state {
-                panic!(
-                    "Can not remove the state {state}, it is still used as start state."
-                );
+                panic!("Can not remove the state {state}, it is still used as start state.");
             }
             if self.transitions.len() - 1 == state {
                 self.transitions.remove(state);
@@ -258,6 +221,50 @@ impl FastAutomaton {
                 transitions.remove(state);
             }
         }
+    }
+
+    /// Apply the provided spanning set to the automaton and project all of its conditions on it.
+    pub fn apply_new_spanning_set(
+        &mut self,
+        new_spanning_set: &SpanningSet,
+    ) -> Result<(), EngineError> {
+        if new_spanning_set == &self.spanning_set {
+            return Ok(());
+        }
+        let condition_converter = ConditionConverter::new(&self.spanning_set, new_spanning_set)?;
+        for from_state in &self.all_states_vec() {
+            for to_state in self.direct_states_vec(from_state) {
+                match self.transitions[*from_state].entry(to_state) {
+                    Entry::Occupied(mut o) => {
+                        o.insert(condition_converter.convert(o.get())?);
+                    }
+                    Entry::Vacant(_) => {}
+                };
+            }
+        }
+        self.spanning_set = new_spanning_set.clone();
+        Ok(())
+    }
+
+    #[inline]
+    pub(crate) fn make_empty(&mut self) {
+        self.apply_model(&Self::new_empty())
+    }
+
+    #[inline]
+    pub(crate) fn make_total(&mut self) {
+        self.apply_model(&Self::new_total())
+    }
+
+    #[inline]
+    pub(crate) fn apply_model(&mut self, model: &FastAutomaton) {
+        self.transitions = model.transitions.clone();
+        self.start_state = model.start_state;
+        self.accept_states = model.accept_states.clone();
+        self.removed_states = model.removed_states.clone();
+        self.spanning_set = model.spanning_set.clone();
+        self.deterministic = model.deterministic;
+        self.cyclic = model.cyclic;
     }
 }
 

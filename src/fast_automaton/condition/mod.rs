@@ -1,10 +1,9 @@
 use std::hash::Hash;
 
-use crate::Range;
 use fast_bit_vec::FastBitVec;
 use regex_charclass::{char::Char, CharacterClass};
 
-use crate::error::EngineError;
+use crate::{error::EngineError, CharRange};
 
 use super::spanning_set::SpanningSet;
 pub mod converter;
@@ -43,7 +42,7 @@ impl Condition {
         ))
     }
 
-    pub fn from_range(range: &Range, spanning_set: &SpanningSet) -> Result<Self, EngineError> {
+    pub fn from_range(range: &CharRange, spanning_set: &SpanningSet) -> Result<Self, EngineError> {
         if range.is_empty() {
             return Ok(Self::empty(spanning_set));
         } else if range.is_total() {
@@ -69,8 +68,8 @@ impl Condition {
         Ok(cond)
     }
 
-    pub fn to_range(&self, spanning_set: &SpanningSet) -> Result<Range, EngineError> {
-        let mut range = Range::empty();
+    pub fn to_range(&self, spanning_set: &SpanningSet) -> Result<CharRange, EngineError> {
+        let mut range = CharRange::empty();
 
         for (i, base) in spanning_set
             .get_spanning_ranges_with_rest()
@@ -166,25 +165,25 @@ mod tests {
 
     fn get_spanning_set() -> SpanningSet {
         let ranges = vec![
-            Range::new_from_range(Char::new('\u{0}')..=Char::new('\u{2}')),
-            Range::new_from_range(Char::new('\u{4}')..=Char::new('\u{6}')),
-            Range::new_from_range(Char::new('\u{9}')..=Char::new('\u{9}')),
+            CharRange::new_from_range(Char::new('\u{0}')..=Char::new('\u{2}')),
+            CharRange::new_from_range(Char::new('\u{4}')..=Char::new('\u{6}')),
+            CharRange::new_from_range(Char::new('\u{9}')..=Char::new('\u{9}')),
         ];
 
         SpanningSet::compute_spanning_set(&ranges)
     }
 
-    fn get_test_cases_range() -> Vec<Range> {
+    fn get_test_cases_range() -> Vec<CharRange> {
         vec![
-            Range::empty(),
-            Range::total(),
-            Range::new_from_range(Char::new('\u{0}')..=Char::new('\u{2}')),
-            Range::new_from_range(Char::new('\u{4}')..=Char::new('\u{6}')),
-            Range::new_from_ranges(&[
+            CharRange::empty(),
+            CharRange::total(),
+            CharRange::new_from_range(Char::new('\u{0}')..=Char::new('\u{2}')),
+            CharRange::new_from_range(Char::new('\u{4}')..=Char::new('\u{6}')),
+            CharRange::new_from_ranges(&[
                 AnyRange::from(Char::new('\u{0}')..=Char::new('\u{2}')),
                 AnyRange::from(Char::new('\u{4}')..=Char::new('\u{6}')),
             ]),
-            Range::new_from_range(Char::new('\u{9}')..=Char::new('\u{9}')),
+            CharRange::new_from_range(Char::new('\u{9}')..=Char::new('\u{9}')),
         ]
     }
 
@@ -200,16 +199,16 @@ mod tests {
         assert!(total.is_total());
         assert_eq!(vec![true, true, true, true], total.get_binary_representation());
 
-        assert_eq!(Range::empty(), empty.to_range(&spanning_set).unwrap());
-        assert_eq!(Range::total(), total.to_range(&spanning_set).unwrap());
+        assert_eq!(CharRange::empty(), empty.to_range(&spanning_set).unwrap());
+        assert_eq!(CharRange::total(), total.to_range(&spanning_set).unwrap());
 
         assert_eq!(
             empty,
-            Condition::from_range(&Range::empty(), &spanning_set).unwrap()
+            Condition::from_range(&CharRange::empty(), &spanning_set).unwrap()
         );
         assert_eq!(
             total,
-            Condition::from_range(&Range::total(), &spanning_set).unwrap()
+            Condition::from_range(&CharRange::total(), &spanning_set).unwrap()
         );
 
         assert_eq!(empty, total.complement());
@@ -219,18 +218,18 @@ mod tests {
         let empty = Condition::empty(&spanning_set);
         let total = Condition::total(&spanning_set);
 
-        assert_eq!(Range::empty(), empty.to_range(&spanning_set).unwrap());
-        assert_eq!(Range::total(), total.to_range(&spanning_set).unwrap());
+        assert_eq!(CharRange::empty(), empty.to_range(&spanning_set).unwrap());
+        assert_eq!(CharRange::total(), total.to_range(&spanning_set).unwrap());
 
         assert_eq!(
             empty,
-            Condition::from_range(&Range::empty(), &spanning_set).unwrap()
+            Condition::from_range(&CharRange::empty(), &spanning_set).unwrap()
         );
         assert_eq!(vec![false], empty.get_binary_representation());
 
         assert_eq!(
             total,
-            Condition::from_range(&Range::total(), &spanning_set).unwrap()
+            Condition::from_range(&CharRange::total(), &spanning_set).unwrap()
         );
         assert_eq!(vec![true], total.get_binary_representation());
 
@@ -252,7 +251,7 @@ mod tests {
         Ok(())
     }
 
-    fn assert_range_convertion_to_range(range: &Range, spanning_set: &SpanningSet) {
+    fn assert_range_convertion_to_range(range: &CharRange, spanning_set: &SpanningSet) {
         let condition = Condition::from_range(range, spanning_set).unwrap();
         let range_from_condition = condition.to_range(spanning_set).unwrap();
         assert_eq!(range, &range_from_condition);
@@ -267,11 +266,11 @@ mod tests {
         let current_spanning_set = get_spanning_set();
 
         let ranges = vec![
-            Range::new_from_range(Char::new('\u{0}')..=Char::new('\u{1}')),
-            Range::new_from_range(Char::new('\u{2}')..=Char::new('\u{2}')),
-            Range::new_from_range(Char::new('\u{4}')..=Char::new('\u{6}')),
-            Range::new_from_range(Char::new('\u{5}')..=Char::new('\u{6}')),
-            Range::new_from_range(Char::new('\u{9}')..=Char::new('\u{9}')),
+            CharRange::new_from_range(Char::new('\u{0}')..=Char::new('\u{1}')),
+            CharRange::new_from_range(Char::new('\u{2}')..=Char::new('\u{2}')),
+            CharRange::new_from_range(Char::new('\u{4}')..=Char::new('\u{6}')),
+            CharRange::new_from_range(Char::new('\u{5}')..=Char::new('\u{6}')),
+            CharRange::new_from_range(Char::new('\u{9}')..=Char::new('\u{9}')),
         ];
         let new_spanning_set = SpanningSet::compute_spanning_set(&ranges);
         let condition_converter =
@@ -296,7 +295,7 @@ mod tests {
     }
 
     fn assert_project_to(
-        range: &Range,
+        range: &CharRange,
         currently_used_spanning_set: &SpanningSet,
         newly_used_spanning_set: &SpanningSet,
         condition_converter: &ConditionConverter,
@@ -348,8 +347,8 @@ mod tests {
     }
 
     fn assert_union_intersection_complement(
-        range_1: &Range,
-        range_2: &Range,
+        range_1: &CharRange,
+        range_2: &CharRange,
         used_characters: &SpanningSet,
     ) {
         let condition_1 = Condition::from_range(range_1, used_characters).unwrap();
@@ -378,14 +377,14 @@ mod tests {
     #[test]
     fn test_1() -> Result<(), String> {
         let ranges = vec![
-            Range::new_from_range(Char::new('\u{0}')..=Char::new('\u{9}')),
-            Range::new_from_range(Char::new('\u{B}')..=Char::new('\u{63}')),
-            Range::new_from_range(Char::new('\u{65}')..=Char::new('\u{10FFFF}')),
+            CharRange::new_from_range(Char::new('\u{0}')..=Char::new('\u{9}')),
+            CharRange::new_from_range(Char::new('\u{B}')..=Char::new('\u{63}')),
+            CharRange::new_from_range(Char::new('\u{65}')..=Char::new('\u{10FFFF}')),
         ];
         let spanning_set = SpanningSet::compute_spanning_set(&ranges);
         println!("{:?}", spanning_set);
 
-        let range1 = Range::new_from_ranges(&[
+        let range1 = CharRange::new_from_ranges(&[
             AnyRange::from(Char::new('\u{0}')..=Char::new('\u{9}')),
             AnyRange::from(Char::new('\u{B}')..=Char::new('\u{63}')),
             AnyRange::from(Char::new('\u{65}')..=Char::new('\u{10FFFF}')),
@@ -393,7 +392,7 @@ mod tests {
         let condition1 = Condition::from_range(&range1, &spanning_set).unwrap();
         assert_eq!(range1, condition1.to_range(&spanning_set).unwrap());
 
-        let range2 = Range::new_from_range(Char::new('\u{B}')..=Char::new('\u{63}'));
+        let range2 = CharRange::new_from_range(Char::new('\u{B}')..=Char::new('\u{63}'));
         let condition2 = Condition::from_range(&range2, &spanning_set).unwrap();
         assert_eq!(range2, condition2.to_range(&spanning_set).unwrap());
 

@@ -10,8 +10,8 @@ use crate::error::EngineError;
 /// ```
 /// use regexsolver::{Term, execution_profile::{ExecutionProfile, ExecutionProfileBuilder}, error::EngineError};
 ///
-/// let term1 = Term::from_regex(".*abcdef.*").unwrap();
-/// let term2 = Term::from_regex(".*defabc.*").unwrap();
+/// let term1 = Term::from_pattern(".*abcdef.*").unwrap();
+/// let term2 = Term::from_pattern(".*defabc.*").unwrap();
 ///
 /// let execution_profile = ExecutionProfileBuilder::new()
 ///     .max_number_of_states(5)
@@ -27,7 +27,7 @@ use crate::error::EngineError;
 /// use regexsolver::{Term, execution_profile::{ExecutionProfile, ExecutionProfileBuilder}, error::EngineError};
 /// use std::time::SystemTime;
 ///
-/// let term = Term::from_regex(".*abc.*cdef.*sqdsqf.*").unwrap();
+/// let term = Term::from_pattern(".*abc.*cdef.*sqdsqf.*").unwrap();
 ///
 /// let execution_profile = ExecutionProfileBuilder::new()
 ///     .execution_timeout(5) // 5ms

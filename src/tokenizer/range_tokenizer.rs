@@ -1,3 +1,5 @@
+use crate::CharRange;
+
 use self::token::range_token::RangeToken;
 
 use super::*;
@@ -5,7 +7,7 @@ use super::*;
 #[derive(Debug)]
 pub struct RangeTokenizer<'a> {
     spanning_set: &'a SpanningSet,
-    total: Range,
+    total: CharRange,
 }
 
 impl RangeTokenizer<'_> {
@@ -21,7 +23,7 @@ impl RangeTokenizer<'_> {
         }
     }
 
-    pub fn range_to_embedding(&self, range: &Range) -> Option<Vec<RangeToken>> {
+    pub fn range_to_embedding(&self, range: &CharRange) -> Option<Vec<RangeToken>> {
         if range == &self.total {
             return Some(vec![RangeToken::Total]);
         } else if !range.difference(&self.total).is_empty() {
@@ -39,12 +41,12 @@ impl RangeTokenizer<'_> {
         Some(vec)
     }
 
-    pub fn embedding_to_range(&self, vec: &[RangeToken]) -> Option<Range> {
+    pub fn embedding_to_range(&self, vec: &[RangeToken]) -> Option<CharRange> {
         if vec.is_empty() {
-            return Some(Range::empty());
+            return Some(CharRange::empty());
         }
 
-        let mut range = Range::empty();
+        let mut range = CharRange::empty();
         if vec[0] == RangeToken::Total {
             return Some(self.total.clone());
         }
@@ -60,7 +62,7 @@ impl RangeTokenizer<'_> {
         Some(range)
     }
 
-    pub fn token_to_range(&self, token: &RangeToken) -> Option<&Range> {
+    pub fn token_to_range(&self, token: &RangeToken) -> Option<&CharRange> {
         match token {
             RangeToken::Total => Some(&self.total),
             RangeToken::Base(b) => self.spanning_set.get_spanning_range(*b),

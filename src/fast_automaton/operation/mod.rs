@@ -4,20 +4,20 @@ use ahash::AHasher;
 
 use super::*;
 
-mod alternation;
-mod concatenate;
+mod union;
+mod concat;
 mod determinize;
 mod intersection;
 mod subtraction;
 mod repeat;
 
 impl FastAutomaton {
-    pub fn remove_dead_transitions(&mut self) {
+    pub(crate) fn remove_dead_transitions(&mut self) {
         if !self.is_empty() {
             let reacheable_states = self.get_reacheable_states();
 
             let mut dead_states = IntSet::default();
-            for from_state in self.transitions_iter() {
+            for from_state in self.all_states_iter() {
                 if !reacheable_states.contains(&from_state) {
                     dead_states.insert(from_state);
                 }
