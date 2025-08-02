@@ -43,6 +43,7 @@ impl FastAutomaton {
         Ok(())
     }
 
+    /// Complement the automaton, the automaton needs to be deterministic.
     pub fn complement(&mut self) -> Result<(), EngineError> {
         self.totalize()?;
 
@@ -58,6 +59,7 @@ impl FastAutomaton {
         Ok(())
     }
 
+    /// Returns a new `FastAutomaton` representing the substraction of `self` and `other`.
     pub fn subtraction(&self, other: &FastAutomaton) -> Result<FastAutomaton, EngineError> {
         let mut complement = other.clone();
         match complement.complement() {

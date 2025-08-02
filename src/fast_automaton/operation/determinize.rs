@@ -5,6 +5,7 @@ use crate::{EngineError, execution_profile::ExecutionProfile};
 use super::*;
 
 impl FastAutomaton {
+    /// Determinize the automaton and returns it as a new `FastAutomaton`.
     pub fn determinize(&self) -> Result<Self, EngineError> {
         if self.deterministic {
             return Ok(self.clone());

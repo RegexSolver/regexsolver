@@ -7,7 +7,7 @@
 
  - [Installation](#installation)
  - [Example](#example)
- - [Key Concepts & Limitations](#key-concepts-limitations)
+ - [Key Concepts & Limitations](#key-concepts--limitations)
  - [API](#api)
     - [Term](#term)
     - [FastAutomaton](#fastautomaton)
@@ -177,18 +177,18 @@ This design allows us to perform unions, intersections, and complements of trans
 #### Manipulate
 | Method | Return | Description |
 | -------- | ------- | ------- |
-| `union(&self, other: &FastAutomaton)` | `Result<FastAutomaton, EngineError>` |  |
-| `union_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(automatons: I)` | `Result<FastAutomaton, EngineError>` |  |
-| `union_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(automatons: I)` | `Result<FastAutomaton, EngineError>` |  |
-| `concat(&self, other: &FastAutomaton)` | `Result<FastAutomaton, EngineError>` |  |
-| `concat_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(automatons: I)` | `Result<FastAutomaton, EngineError>` |  |
-| `determinize(&self)` | `Result<FastAutomaton, EngineError>` |  |
-| `intersection(&self, other: &FastAutomaton)` | `Result<FastAutomaton, EngineError>` |  |
-| `intersection_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(automatons: I)` | `Result<FastAutomaton, EngineError>` |  |
-| `intersection_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(automatons: I)` | `Result<FastAutomaton, EngineError>` |  |
-| `complement(&mut self)` | `Result<(), EngineError>` |  |
-| `subtraction(&self, other: &FastAutomaton)` | `Result<FastAutomaton, EngineError>` |  |
-| `repeat(&self, min: u32, max_opt: Option<u32>)` | `Result<FastAutomaton, EngineError>` |  |
+| `union(&self, other: &FastAutomaton)` | `Result<FastAutomaton, EngineError>` | Returns a new `FastAutomaton` representing the union of `self` and `other`. |
+| `union_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(automatons: I)` | `Result<FastAutomaton, EngineError>` | Returns a new `FastAutomaton` that is the union of all automatons in the given iterator. |
+| `union_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(automatons: I)` | `Result<FastAutomaton, EngineError>` | Returns a new `FastAutomaton` that is the union of all automatons in the given parallel iterator. |
+| `concat(&self, other: &FastAutomaton)` | `Result<FastAutomaton, EngineError>` | Returns a new `FastAutomaton` representing the concatenation of `self` and `other`. |
+| `concat_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(automatons: I)` | `Result<FastAutomaton, EngineError>` | Returns a new `FastAutomaton` representing the concatenation of `self` and `other`. |
+| `determinize(&self)` | `Result<FastAutomaton, EngineError>` | Determinize the automaton and returns it as a new `FastAutomaton`. |
+| `intersection(&self, other: &FastAutomaton)` | `Result<FastAutomaton, EngineError>` | Returns a new `FastAutomaton` representing the intersection of `self` and `other`. |
+| `intersection_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(automatons: I)` | `Result<FastAutomaton, EngineError>` | Returns a new `FastAutomaton` that is the intersection of all automatons in the given iterator. |
+| `intersection_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(automatons: I)` | `Result<FastAutomaton, EngineError>` | Returns a new `FastAutomaton` that is the union of all automatons in the given parallel iterator. |
+| `complement(&mut self)` | `Result<(), EngineError>` | Complement the automaton, the automaton needs to be deterministic. |
+| `subtraction(&self, other: &FastAutomaton)` | `Result<FastAutomaton, EngineError>` | Returns a new `FastAutomaton` representing the substraction of `self` and `other`. |
+| `repeat(&self, min: u32, max_opt: Option<u32>)` | `Result<FastAutomaton, EngineError>` | Returns the repetition of the automaton, between `min` and `max_opt` times. If `max_opt` is `None`, the repetition is unbounded. |
 
 #### Analyze
 | Method | Return | Description |

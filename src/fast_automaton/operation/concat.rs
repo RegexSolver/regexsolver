@@ -7,10 +7,12 @@ use crate::error::EngineError;
 use super::*;
 
 impl FastAutomaton {
+    /// Returns a new `FastAutomaton` representing the concatenation of `self` and `other`.
     pub fn concat(&self, other: &FastAutomaton) -> Result<Self, EngineError> {
         Self::concat_all([self, other])
     }
 
+    /// Returns a new `FastAutomaton` that is the concatenation of all automatons in the given iterator.
     pub fn concat_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(automatons: I) -> Result<Self, EngineError>
     {
         let mut new_automaton = FastAutomaton::new_empty_string();
