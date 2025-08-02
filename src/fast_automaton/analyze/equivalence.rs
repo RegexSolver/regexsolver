@@ -3,6 +3,7 @@ use crate::error::EngineError;
 use super::*;
 
 impl FastAutomaton {
+    /// Computes whether the current `FastAutomaton` and the given `FastAutomaton` are equivalent. Returns `true` if both automata accept the same language.
     pub fn is_equivalent_of(&self, other: &FastAutomaton) -> Result<bool, EngineError> {
         if self.is_empty() != other.is_empty() && self.is_total() != other.is_total() {
             return Ok(false);

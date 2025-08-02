@@ -75,7 +75,7 @@ println!("Some matches: {:?}", samples);
 // Equivalence & subset
 let a = Term::from_pattern("a+").unwrap();
 let b = Term::from_pattern("a*").unwrap();
-assert!(!a.are_equivalent(&b).unwrap());
+assert!(!a.is_equivalent_of(&b).unwrap());
 assert!(a.is_subset_of(&b).unwrap());
 ```
 
@@ -121,7 +121,7 @@ RegexSolver is based on the [regex-syntax](https://docs.rs/regex-syntax/0.8.5/re
 | Method | Return | Description |
 | -------- | ------- | ------- |
 | `generate_strings(&self, count: usize)` | `Result<Vec<String>, EngineError>` | Generates the given count of strings matched by the given term. |
-| `are_equivalent(&self, term: &Term)` | `Result<bool, EngineError>` | Computes whether the current term and the given term are equivalent. Returns `true` if both terms accept the same language. |
+| `is_equivalent_of(&self, term: &Term)` | `Result<bool, EngineError>` | Computes whether the current term and the given term are equivalent. Returns `true` if both terms accept the same language. |
 | `is_subset_of(&self, term: &Term)` | `Result<bool, EngineError>` | Computes whether the current term is a subset of the given term. Returns `true` if all strings matched by the current term are also matched by the given term. |
 | `is_empty(&self)` | `bool` | Checks if the current term matches the empty language. |
 | `is_total(&self)` | `bool` | Checks if the current term matches all possible strings. |
@@ -185,7 +185,7 @@ This design allows us to perform unions, intersections, and complements of trans
 | `determinize(&self)` | `Result<FastAutomaton, EngineError>` | Determinize the automaton and returns it as a new `FastAutomaton`. |
 | `intersection(&self, other: &FastAutomaton)` | `Result<FastAutomaton, EngineError>` | Returns a new `FastAutomaton` representing the intersection of `self` and `other`. |
 | `intersection_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(automatons: I)` | `Result<FastAutomaton, EngineError>` | Returns a new `FastAutomaton` that is the intersection of all automatons in the given iterator. |
-| `intersection_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(automatons: I)` | `Result<FastAutomaton, EngineError>` | Returns a new `FastAutomaton` that is the union of all automatons in the given parallel iterator. |
+| `intersection_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(automatons: I)` | `Result<FastAutomaton, EngineError>` | Returns a new `FastAutomaton` that is the intersection of all automatons in the given parallel iterator. |
 | `complement(&mut self)` | `Result<(), EngineError>` | Complement the automaton, the automaton needs to be deterministic. |
 | `subtraction(&self, other: &FastAutomaton)` | `Result<FastAutomaton, EngineError>` | Returns a new `FastAutomaton` representing the substraction of `self` and `other`. |
 | `repeat(&self, min: u32, max_opt: Option<u32>)` | `Result<FastAutomaton, EngineError>` | Returns the repetition of the automaton, between `min` and `max_opt` times. If `max_opt` is `None`, the repetition is unbounded. |
@@ -193,6 +193,10 @@ This design allows us to perform unions, intersections, and complements of trans
 #### Analyze
 | Method | Return | Description |
 | -------- | ------- | ------- |
+| `is_empty(&self)` | `bool` | Checks if the current `FastAutomaton` matches the empty language. |
+| `is_total(&self)` | `bool` | Checks if the current `FastAutomaton` matches all possible strings. |
+| `is_empty_string(&self)` | `bool` | Checks if the current `FastAutomaton` only match the empty string `""`. |
+| `get_reacheable_states(&self)` | `IntSet<State>` | Get a set of all reacheable states from the start state. |
 | `state_in_degree(&self, state: State)` | `usize` | Returns the number of transitions to the provided state. |
 | `state_out_degree(&self, state: State)` | `usize` | Returns the number of transitions from the provided state. |
 | `all_states_iter(&self)` | `impl Iterator<Item = State>` | Returns an iterator of the states of the automaton. |
@@ -215,12 +219,39 @@ This design allows us to perform unions, intersections, and complements of trans
 | `is_cyclic(&self)` | `bool` | Returns `true` if the automaton contains at least one cycle. |
 | `has_state(&self, state: State)` | `bool` | Returns `true` if the automaton contains at least one cycle. |
 | `to_regex(&self)` | `Option<RegularExpression>` | Try to convert the automaton to a `RegularExpression`. If it cannot find an equivalent pattern returns `None`. |
-| `has_intersection(&self, other: &FastAutomaton)` | `Result<bool, EngineError>` | |
+| `has_intersection(&self, other: &FastAutomaton)` | `Result<bool, EngineError>` | Returns `true` if the two automatons have a non-empty intersection. |
+| `is_equivalent_of(&self, other: &FastAutomaton)` | `Result<bool, EngineError>` | Computes whether the current `FastAutomaton` and the given `FastAutomaton` are equivalent. Returns `true` if both automata accept the same language. |
+| `is_subset_of(&self, other: &FastAutomaton)` | `Result<bool, EngineError>` | Computes whether the current `FastAutomaton` is a subset of the given `FastAutomaton`. Returns `true` if all strings matched by the current `FastAutomaton` are also matched by the given `FastAutomaton`. |
+| `get_length(&self)` | `(Option<u32>, Option<u32>)` | Returns the minimum and maximum length of the possible matched strings. |
+| `get_cardinality(&self)` | `Cardinality<u32>` | Returns the cardinality of the provided term (i.e. the number of the possible matched strings). |
 
 
 ### RegularExpression
 
 `RegularExpression` is used to directly build, manipulate and analyze regular expression patterns. Not all the set operations are available, for more advanced operation such as intersection, subtraction/difference and complement it is necessary to convert in to a `FastAutomaton` with the method `to_automaton()`.
+
+#### Build
+| Method | Return | Description |
+| -------- | ------- | ------- |
+| `new(pattern: &str)` | `Result<RegularExpression, EngineError>` | Parses the provided pattern and return the resulting `RegularExpression`. |
+| `new_empty()` | `RegularExpression` | Create a `RegularExpression` that matches the empty language. |
+| `new_total()` | `RegularExpression` | Create a `RegularExpression` that matches all possible strings. |
+| `new_empty_string()` | `RegularExpression` | Create a `RegularExpression` that only match the empty string `""`. |
+| `concat(&self, other: &RegularExpression, append_back: bool)` | `RegularExpression` | Returns a new `RegularExpression` representing the concatenation of `self` and `other`, using `append_back` to determine their order. |
+| `repeat(&self, min: u32, max_opt: Option<u32>)` | `RegularExpression` | Returns the repetition of the `RegularExpression`, between `min` and `max_opt` times. If `max_opt` is `None`, the repetition is unbounded. |
+| `union(&self, other: &RegularExpression)` | `RegularExpression` | Create a`RegularExpression` that only match the empty string `""`. |
+| `union_all<'a, I: IntoIterator<Item = &'a RegularExpression>>(patterns: I)` | `RegularExpression` | Returns a `RegularExpression` formed by taking the union of all expressions in `patterns`. |
+| `simplify(&self)` | `RegularExpression` | Returns a simplified version of this regular expression by eliminating redundant constructs and applying canonical reductions. |
+
+#### Analyze
+| Method | Return | Description |
+| -------- | ------- | ------- |
+| `is_empty(&self)` | `bool` | Checks if the current `RegularExpression` matches the empty language. |
+| `is_total(&self)` | `bool` | Checks if the current `RegularExpression` matches all possible strings. |
+| `is_empty_string(&self)` | `bool` | Checks if the current `RegularExpression` only match the empty string `""`. |
+| `to_automaton(&self)` | `Result<FastAutomaton, EngineError>` | Convert the current `RegularExpression` to an equivalent `FastAutomaton`. |
+| `get_length(&self)` | `(Option<u32>, Option<u32>)` | Returns the minimum and maximum length of the possible matched strings. |
+| `get_cardinality(&self)` | `Cardinality<u32>` | Returns the cardinality of the provided term (i.e. the number of the possible matched strings). |
 
 ## Error Handling
 

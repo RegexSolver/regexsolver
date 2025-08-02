@@ -90,6 +90,7 @@ impl Display for RegularExpression {
 }
 
 impl RegularExpression {
+    /// Checks if the current `RegularExpression` matches the empty language.
     pub fn is_empty(&self) -> bool {
         match self {
             RegularExpression::Alternation(alternation) => alternation.is_empty(),
@@ -98,6 +99,7 @@ impl RegularExpression {
         }
     }
 
+    /// Checks if the current `RegularExpression` matches all possible strings.
     pub fn is_empty_string(&self) -> bool {
         match self {
             RegularExpression::Concat(concat) => concat.is_empty(),
@@ -105,6 +107,7 @@ impl RegularExpression {
         }
     }
 
+    /// Checks if the current `RegularExpression` only match the empty string `""`. 
     pub fn is_total(&self) -> bool {
         match self {
             RegularExpression::Repetition(regular_expression, min, max_opt) => {
@@ -121,6 +124,7 @@ impl RegularExpression {
         }
     }
 
+    /// Convert the current `RegularExpression` to an equivalent `FastAutomaton`.
     pub fn to_automaton(&self) -> Result<FastAutomaton, EngineError> {
         ExecutionProfile::get().assert_max_number_of_states(self.get_number_of_states_in_nfa())?;
 

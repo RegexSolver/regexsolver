@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use super::*;
 
 impl RegularExpression {
-    pub fn get_common_affixes(
+    pub(crate) fn get_common_affixes(
         &self,
         other: &RegularExpression,
     ) -> (
@@ -21,7 +21,7 @@ impl RegularExpression {
         (common_prefix, (self_regex, other_regex), common_suffix)
     }
 
-    pub fn get_common_affix(
+    pub(crate) fn get_common_affix(
         &self,
         other: &RegularExpression,
         is_prefix: bool,

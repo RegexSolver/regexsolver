@@ -3,6 +3,7 @@ use crate::error::EngineError;
 use super::*;
 
 impl FastAutomaton {
+    /// Computes whether the current `FastAutomaton` is a subset of the given `FastAutomaton`. Returns `true` if all strings matched by the current `FastAutomaton` are also matched by the given `FastAutomaton`.
     pub fn is_subset_of(&self, other: &FastAutomaton) -> Result<bool, EngineError> {
         if self.is_empty() || other.is_total() || self == other {
             return Ok(true);

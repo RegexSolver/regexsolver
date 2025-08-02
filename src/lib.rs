@@ -343,9 +343,9 @@ impl Term {
     /// let term1 = Term::from_pattern("(abc|de)").unwrap();
     /// let term2 = Term::from_pattern("(abc|de)*").unwrap();
     ///
-    /// assert!(!term1.are_equivalent(&term2).unwrap());
+    /// assert!(!term1.is_equivalent_of(&term2).unwrap());
     /// ```
-    pub fn are_equivalent(&self, that: &Term) -> Result<bool, EngineError> {
+    pub fn is_equivalent_of(&self, that: &Term) -> Result<bool, EngineError> {
         if self == that {
             return Ok(true);
         }
@@ -430,6 +430,7 @@ impl Term {
         }
     }
 
+    /// Converts the current `Term` to a `FastAutomaton`.
     pub fn to_automaton(&self) -> Result<Cow<FastAutomaton>, EngineError> {
         Ok(match self {
             Term::RegularExpression(regex) => Cow::Owned(regex.to_automaton()?),
@@ -437,6 +438,7 @@ impl Term {
         })
     }
 
+    /// Converts the current `Term` to a `RegularExpression`. Returns `None` if the automaton cannot be converted.
     pub fn to_regex(&self) -> Option<Cow<RegularExpression>> {
         Some(match self {
             Term::RegularExpression(regex) => Cow::Borrowed(regex),
@@ -623,7 +625,7 @@ mod tests {
         // Equivalence & subset
         let a = Term::from_pattern("a+").unwrap();
         let b = Term::from_pattern("a*").unwrap();
-        assert!(!a.are_equivalent(&b).unwrap());
+        assert!(!a.is_equivalent_of(&b).unwrap());
         assert!(a.is_subset_of(&b).unwrap());
 
         Ok(())

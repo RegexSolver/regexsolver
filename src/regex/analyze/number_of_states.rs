@@ -9,7 +9,7 @@ struct AbstractStateMetadata {
 }
 
 impl AbstractStateMetadata {
-    pub fn new(has_incoming_edges: bool, has_outgoing_edges: bool) -> Self {
+    pub(crate) fn new(has_incoming_edges: bool, has_outgoing_edges: bool) -> Self {
         AbstractStateMetadata {
             has_incoming_edges,
             has_outgoing_edges,
@@ -25,7 +25,7 @@ struct AbstractNFAMetadata {
 }
 
 impl AbstractNFAMetadata {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         AbstractNFAMetadata {
             start: AbstractStateMetadata::new(false, true),
             accepted: vec![AbstractStateMetadata::new(true, false)],
@@ -33,7 +33,7 @@ impl AbstractNFAMetadata {
         }
     }
 
-    pub fn new_empty_string() -> Self {
+    pub(crate) fn new_empty_string() -> Self {
         AbstractNFAMetadata {
             start: AbstractStateMetadata::new(false, false),
             accepted: vec![AbstractStateMetadata::new(false, false)],
@@ -41,7 +41,7 @@ impl AbstractNFAMetadata {
         }
     }
 
-    pub fn new_empty() -> Self {
+    pub(crate) fn new_empty() -> Self {
         AbstractNFAMetadata {
             start: AbstractStateMetadata::new(false, false),
             accepted: vec![],
@@ -49,7 +49,7 @@ impl AbstractNFAMetadata {
         }
     }
 
-    pub fn concat(&self, nfa: &AbstractNFAMetadata) -> Self {
+    pub(crate) fn concat(&self, nfa: &AbstractNFAMetadata) -> Self {
         let start_state_and_accept_states_not_mergeable =
             nfa.start.has_incoming_edges && self.accepted.iter().any(|s| s.has_outgoing_edges);
 
@@ -68,7 +68,7 @@ impl AbstractNFAMetadata {
         }
     }
 
-    pub fn repeat(&self, min: u32, max_opt: &Option<u32>) -> Self {
+    pub(crate) fn repeat(&self, min: u32, max_opt: &Option<u32>) -> Self {
         let start_state_not_mergeable = self.start.has_incoming_edges;
         let accepted_not_mergeable = self.accepted.iter().any(|s| s.has_outgoing_edges);
         let start_state_or_accept_states_not_mergeable =
@@ -129,7 +129,7 @@ impl AbstractNFAMetadata {
         }
     }
 
-    pub fn alternate(&mut self, nfa: &AbstractNFAMetadata) -> Self {
+    pub(crate) fn alternate(&mut self, nfa: &AbstractNFAMetadata) -> Self {
         let self_start_state_not_mergeable = self.start.has_incoming_edges;
         let self_accepted_not_mergeable = self.accepted.iter().any(|s| s.has_outgoing_edges);
 

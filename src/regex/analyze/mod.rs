@@ -6,6 +6,7 @@ mod affixes;
 mod number_of_states;
 
 impl RegularExpression {
+    /// Returns the minimum and maximum length of the possible matched strings.
     pub fn get_length(&self) -> (Option<u32>, Option<u32>) {
         match self {
             RegularExpression::Character(range) => {
@@ -84,6 +85,7 @@ impl RegularExpression {
         }
     }
 
+    /// Returns the cardinality of the provided term (i.e. the number of the possible matched strings).
     pub fn get_cardinality(&self) -> Cardinality<u32> {
         if self.is_empty() {
             return Cardinality::Integer(0);

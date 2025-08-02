@@ -33,7 +33,7 @@ impl FastAutomaton {
         Ok(result.into_owned())
     }
 
-    /// Returns a new `FastAutomaton` that is the union of all automatons in the given parallel iterator.
+    /// Returns a new `FastAutomaton` that is the intersection of all automatons in the given parallel iterator.
     pub fn intersection_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(automatons: I) -> Result<Self, EngineError>
     {
         let execution_profile = ExecutionProfile::get();
@@ -126,6 +126,7 @@ impl FastAutomaton {
         Ok(Cow::Owned(new_automaton))
     }
 
+    // Returns `true` if the two automatons have a non-empty intersection.
     pub fn has_intersection(&self, other: &FastAutomaton) -> Result<bool, EngineError> {
         if self.is_empty() || other.is_empty() {
             return Ok(false);

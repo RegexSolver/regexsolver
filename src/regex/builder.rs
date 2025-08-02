@@ -11,17 +11,18 @@ lazy_static! {
 }
 
 impl RegularExpression {
-    pub fn new(regex: &str) -> Result<Self, EngineError> {
-        if regex.is_empty() {
+    /// Parses the provided pattern and return the resulting `RegularExpression`.
+    pub fn new(pattern: &str) -> Result<Self, EngineError> {
+        if pattern.is_empty() {
             return Ok(RegularExpression::new_empty_string());
         }
-        if regex == "[]" {
+        if pattern == "[]" {
             return Ok(RegularExpression::new_empty());
         }
         match ParserBuilder::new()
             .dot_matches_new_line(true)
             .build()
-            .parse(&Self::remove_flags(regex))
+            .parse(&Self::remove_flags(pattern))
         {
             Ok(hir) => Self::convert_to_regex(&hir),
             Err(err) => Err(EngineError::RegexSyntaxError(err.to_string())),
@@ -32,6 +33,7 @@ impl RegularExpression {
         RE_FLAG_DETECTION.replace_all(regex, "").to_string()
     }
 
+    /// Create a `RegularExpression` that matches all possible strings.
     pub fn new_total() -> Self {
         RegularExpression::Repetition(
             Box::new(RegularExpression::Character(CharRange::total())),
@@ -40,10 +42,12 @@ impl RegularExpression {
         )
     }
 
+    /// Create a `RegularExpression` that matches the empty language.
     pub fn new_empty() -> Self {
         RegularExpression::Character(CharRange::empty())
     }
 
+    /// Create a`RegularExpression` that only match the empty string `""`.
     pub fn new_empty_string() -> Self {
         RegularExpression::Concat(VecDeque::new())
     }

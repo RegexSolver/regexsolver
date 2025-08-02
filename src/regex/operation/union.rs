@@ -3,17 +3,17 @@ use std::collections::BTreeSet;
 use super::*;
 
 impl RegularExpression {
+    /// Returns a new `RegularExpression` representing the union of this expression with `other`.
     pub fn union(&self, other: &RegularExpression) -> RegularExpression {
         Self::union_all([self, other])
     }
 
-    pub fn union_all<'a, I>(regexes: I) -> RegularExpression
-    where
-        I: IntoIterator<Item = &'a RegularExpression>,
+    /// Returns a `RegularExpression` formed by taking the union of all expressions in `patterns`.
+    pub fn union_all<'a, I: IntoIterator<Item = &'a RegularExpression>>(patterns: I) -> RegularExpression
     {
         let mut result: Cow<'a, RegularExpression> = Cow::Owned(RegularExpression::new_empty());
 
-        for other in regexes {
+        for other in patterns {
             result = result.union_(other);
 
             if result.is_total() {
@@ -115,9 +115,7 @@ impl RegularExpression {
                 RegularExpression::Alternation(alternate)
             }
         } else {
-            panic!(
-                "Not character and repetition {this_character:?} {that_repetition:?}"
-            )
+            panic!("Not character and repetition {this_character:?} {that_repetition:?}")
         }
     }
 

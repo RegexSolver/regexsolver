@@ -30,6 +30,7 @@ impl FastAutomaton {
         self.accept_states.len() == 1 && self.accept_states.contains(&self.start_state) && self.state_in_degree(self.start_state) == 0
     }
 
+    /// Get a set of all reacheable states from the start state.
     pub fn get_reacheable_states(&self) -> IntSet<State> {
         let mut states_map: IntMap<usize, IntSet<usize>> =
             IntMap::with_capacity_and_hasher(self.transitions.len(), BuildHasherDefault::default());
@@ -66,7 +67,7 @@ impl FastAutomaton {
         live
     }
 
-    pub fn get_ranges(&self) -> Result<Vec<Condition>, EngineError> {
+    pub(crate) fn get_ranges(&self) -> Result<Vec<Condition>, EngineError> {
         self.spanning_set.get_spanning_ranges().map(|range| {
             Condition::from_range(range, &self.spanning_set)
         }).collect()
