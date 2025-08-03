@@ -76,23 +76,37 @@ impl FastAutomaton {
     /// Creates a new transition with the given condition; the condition must follow the automaton’s current spanning set.
     ///
     /// This method accepts a `Condition` rather than a raw character set. To build a `Condition`, call:
-    /// ```rust,ignore
+    /// ```rust
+    /// # use regexsolver::CharRange;
+    /// # use regexsolver::fast_automaton::{condition::Condition, spanning_set::SpanningSet};
+    /// # let range = CharRange::total();
+    /// # let spanning_set = SpanningSet::new_total();
     /// Condition::from_range(&range, &spanning_set);
     /// ```
     /// where `spanning_set` is the automaton's current `SpanningSet`. The `CharRange` you pass must be fully covered by that spanning set. If it isn't, you have two options:
     ///
     /// 1. Merge an existing spanning set with another:
-    /// ```rust,ignore
+    /// ```rust
+    /// # use regexsolver::fast_automaton::spanning_set::SpanningSet;
+    /// # let old_set = SpanningSet::new_total();
+    /// # let other_set = SpanningSet::new_total();
     /// let new_set = SpanningSet::merge(&old_set, &other_set);
     /// ```
     ///
     /// 2. Recompute from a list of ranges:
-    /// ```rust,ignore
-    /// let new_set = SpanningSet::compute_spanning_set(&[range_set1, range_set2, …]);
+    /// ```rust
+    /// # use regexsolver::CharRange;
+    /// # use regexsolver::fast_automaton::spanning_set::SpanningSet;
+    /// # let range_set1 = CharRange::total();
+    /// # let range_set2 = CharRange::total();
+    /// let new_set = SpanningSet::compute_spanning_set(&[range_set1, range_set2]);
     /// ```
     ///
     /// After constructing `new_set`, apply it to the automaton:
-    /// ```rust,ignore
+    /// ```rust
+    /// # use regexsolver::fast_automaton::{FastAutomaton, spanning_set::SpanningSet};
+    /// # let mut fast_automaton = FastAutomaton::new_total();
+    /// # let new_set = SpanningSet::new_total();
     /// fast_automaton.apply_new_spanning_set(&new_set);
     /// ```
     ///
