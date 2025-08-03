@@ -1,4 +1,3 @@
-use ahash::AHashSet;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use regexsolver::{fast_automaton::FastAutomaton, regex::RegularExpression};
 
@@ -11,14 +10,14 @@ fn to_regex(automaton: &FastAutomaton) -> RegularExpression {
 }
 
 fn determinize(automaton: &FastAutomaton) -> FastAutomaton {
-    automaton.determinize().unwrap()
+    automaton.determinize().unwrap().into_owned()
 }
 
 fn intersection(automaton_1: &FastAutomaton, automaton_2: &FastAutomaton) -> FastAutomaton {
     automaton_1.intersection(automaton_2).unwrap()
 }
 
-fn generate_strings(automaton: &FastAutomaton) -> AHashSet<String> {
+fn generate_strings(automaton: &FastAutomaton) -> Vec<String> {
     automaton.generate_strings(2000).unwrap()
 }
 
