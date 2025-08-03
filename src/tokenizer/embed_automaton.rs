@@ -1,6 +1,6 @@
 use token::TokenError;
 
-use crate::{error::EngineError, fast_automaton::condition::Condition, CharRange};
+use crate::{CharRange, error::EngineError, fast_automaton::condition::Condition};
 
 use self::token::range_token::RangeToken;
 
@@ -162,7 +162,8 @@ mod tests {
         let regex = RegularExpression::new(regex).unwrap();
         println!("{}", regex);
 
-        let automaton = regex.to_automaton().unwrap().determinize().unwrap();
+        let automaton = regex.to_automaton().unwrap();
+        let automaton = automaton.determinize().unwrap();
 
         let tokenizer = Tokenizer::new(&automaton);
         let embedding = tokenizer.to_embedding();

@@ -51,22 +51,22 @@ impl Display for Term {
 }
 
 impl Term {
-    /// Create a term that matches the empty language.
+    /// Creates a term that matches the empty language.
     pub fn new_empty() -> Self {
         Term::RegularExpression(RegularExpression::new_empty())
     }
 
-    /// Create a term that matches all possible strings.
+    /// Creates a term that matches all possible strings.
     pub fn new_total() -> Self {
         Term::RegularExpression(RegularExpression::new_total())
     }
 
-    /// Create a term that only match the empty string `""`.
+    /// Creates a term that only matches the empty string `""`.
     pub fn new_empty_string() -> Self {
         Term::RegularExpression(RegularExpression::new_empty_string())
     }
 
-    /// Parse the provided pattern and return a new `Term` holding the resulting `RegularExpression`.
+    /// Parses the provided pattern and returns a new `Term` holding the resulting `RegularExpression`.
     ///
     /// # Example:
     ///
@@ -79,18 +79,17 @@ impl Term {
         Ok(Term::RegularExpression(RegularExpression::new(pattern)?))
     }
 
-    /// Create a new `Term` holding the provided `RegularExpression`.
+    /// Creates a new `Term` holding the provided `RegularExpression`.
     pub fn from_regex(regex: RegularExpression) -> Self {
         Term::RegularExpression(regex)
     }
 
-    /// Create a new `Term` holding the provided `FastAutomaton`.
+    /// Creates a new `Term` holding the provided `FastAutomaton`.
     pub fn from_automaton(automaton: FastAutomaton) -> Self {
         Term::Automaton(automaton)
     }
 
-    /// Compute the concatenation of the current term with the given list of terms.
-    /// Returns the resulting term.
+    /// Computes the concatenation of the given terms.
     ///
     /// # Example:
     ///
@@ -143,8 +142,7 @@ impl Term {
         }
     }
 
-    /// Compute the union of the current term with the given collection of terms.
-    /// Returns the resulting term.
+    /// Computes the union of the given terms.
     ///
     /// # Example:
     ///
@@ -206,8 +204,7 @@ impl Term {
         }
     }
 
-    /// Compute the intersection of the current term with the given collection of terms.
-    /// Returns the resulting term.
+    /// Computes the intersection of the given terms.
     ///
     /// # Example:
     ///
@@ -244,8 +241,7 @@ impl Term {
         Ok(Term::Automaton(return_automaton))
     }
 
-    /// Compute the subtraction of the current term and the given `subtrahend`.
-    /// Returns the resulting term.
+    /// Computes the difference between `self` and the given subtrahend.
     ///
     /// # Example:
     ///
@@ -277,8 +273,7 @@ impl Term {
         self.subtraction(subtrahend)
     }
 
-    /// Returns the repetition of the current term,
-    /// between `min` and `max_opt` times. If `max_opt` is `None`, the repetition is unbounded.
+    /// Computes the repetition of the current term between `min` and `max_opt` times; if `max_opt` is `None`, the repetition is unbounded.
     ///
     /// # Example:
     ///
@@ -311,7 +306,7 @@ impl Term {
         }
     }
 
-    /// Generate the given count of strings matched by the given term.
+    /// Generates `count` strings matched by the term.
     ///
     /// # Example:
     ///
@@ -325,14 +320,9 @@ impl Term {
     /// assert_eq!(3, strings.len()); // ex: ["deabc", "dede", "abcde"]
     /// ```
     pub fn generate_strings(&self, count: usize) -> Result<Vec<String>, EngineError> {
-        Ok(self
-            .to_automaton()?
-            .generate_strings(count)?
-            .into_iter()
-            .collect())
+        self.to_automaton()?.generate_strings(count)
     }
 
-    /// Compute whether the current term and the given term are equivalent.
     /// Returns `true` if both terms accept the same language.
     ///
     /// # Example:
@@ -355,7 +345,6 @@ impl Term {
         automaton_1.are_equivalent(&automaton_2)
     }
 
-    /// Compute whether the current term is a subset of the given term.
     /// Returns `true` if all strings matched by the current term are also matched by the given term.
     ///
     /// # Example:
@@ -378,7 +367,7 @@ impl Term {
         automaton_1.is_subset_of(&automaton_2)
     }
 
-    /// Check if the current term matches the empty language.
+    /// Checks if the term matches the empty language.
     pub fn is_empty(&self) -> bool {
         match self {
             Term::RegularExpression(regular_expression) => regular_expression.is_empty(),
@@ -386,7 +375,7 @@ impl Term {
         }
     }
 
-    /// Check if the current term matches all possible strings.
+    /// Checks if the term matches all possible strings.
     pub fn is_total(&self) -> bool {
         match self {
             Term::RegularExpression(regular_expression) => regular_expression.is_total(),
@@ -394,7 +383,7 @@ impl Term {
         }
     }
 
-    /// Check if the current term only match the empty string `""`.
+    /// Checks if the term matches only the empty string `""`.
     pub fn is_empty_string(&self) -> bool {
         match self {
             Term::RegularExpression(regular_expression) => regular_expression.is_empty_string(),
@@ -402,7 +391,7 @@ impl Term {
         }
     }
 
-    /// Returns the minimum and maximum length of the possible matched strings.
+    /// Returns the minimum and maximum length of matched strings.
     pub fn get_length(&self) -> (Option<u32>, Option<u32>) {
         match self {
             Term::RegularExpression(regex) => regex.get_length(),
@@ -410,7 +399,7 @@ impl Term {
         }
     }
 
-    /// Returns the cardinality of the provided term (i.e. the number of the possible matched strings).
+    /// Returns the cardinality of the term (i.e., the number of possible matched strings).
     pub fn get_cardinality(&self) -> Result<Cardinality<u32>, EngineError> {
         match self {
             Term::RegularExpression(regex) => Ok(regex.get_cardinality()),
@@ -430,7 +419,7 @@ impl Term {
         }
     }
 
-    /// Converts the current `Term` to a `FastAutomaton`.
+    /// Converts the term to a `FastAutomaton`.
     pub fn to_automaton(&self) -> Result<Cow<FastAutomaton>, EngineError> {
         Ok(match self {
             Term::RegularExpression(regex) => Cow::Owned(regex.to_automaton()?),
@@ -438,7 +427,7 @@ impl Term {
         })
     }
 
-    /// Converts the current `Term` to a `RegularExpression`. Returns `None` if the automaton cannot be converted.
+    /// Converts the term to a RegularExpression; returns `None` if conversion isn’t possible.
     pub fn to_regex(&self) -> Option<Cow<RegularExpression>> {
         Some(match self {
             Term::RegularExpression(regex) => Cow::Borrowed(regex),
@@ -446,7 +435,7 @@ impl Term {
         })
     }
 
-    /// Converts the current `Term` to a regular expression pattern. Returns `None` if the automaton cannot be converted.
+    /// Converts the term to a regular expression pattern; returns `None` if conversion isn’t possible.
     pub fn to_pattern(&self) -> Option<String> {
         Some(self.to_regex()?.to_string())
     }
@@ -458,9 +447,9 @@ impl Term {
         if subtrahend.is_determinitic() {
             Ok(Cow::Borrowed(subtrahend))
         } else if !minuend.is_cyclic() && subtrahend.is_cyclic() {
-            Ok(Cow::Owned(minuend.intersection(subtrahend)?.determinize()?))
+            Ok(Cow::Owned(minuend.intersection(subtrahend)?.determinize()?.into_owned()))
         } else {
-            Ok(Cow::Owned(subtrahend.determinize()?))
+            Ok(subtrahend.determinize()?)
         }
     }
 
@@ -528,10 +517,7 @@ mod tests {
         let result = regex1.subtraction(&regex2);
         assert!(result.is_ok());
         let result = result.unwrap().to_pattern().unwrap();
-        assert_eq!(
-            "a+",
-            result
-        );
+        assert_eq!("a+", result);
 
         Ok(())
     }
@@ -573,10 +559,7 @@ mod tests {
         let result = regex1.intersection(&vec![regex2]);
         assert!(result.is_ok());
         let result = result.unwrap().to_pattern().unwrap();
-        assert_eq!(
-            "(x{3})*",
-            result
-        );
+        assert_eq!("(x{3})*", result);
 
         Ok(())
     }

@@ -10,13 +10,13 @@ mod length;
 mod subset;
 
 impl FastAutomaton {
-    /// Checks if the current `FastAutomaton` matches the empty language.
+    /// Checks if the automaton matches the empty language.
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.accept_states.is_empty()
     }
 
-    /// Checks if the current `FastAutomaton` matches all possible strings.
+    /// Checks if the automaton matches all possible strings.
     #[inline]
     pub fn is_total(&self) -> bool {
         if self.accept_states.contains(&self.start_state) {
@@ -27,7 +27,7 @@ impl FastAutomaton {
         false
     }
 
-    /// Checks if the current `FastAutomaton` only match the empty string `""`.
+    /// Checks if the automaton only matches the empty string `""`.
     #[inline]
     pub fn is_empty_string(&self) -> bool {
         self.accept_states.len() == 1
@@ -35,7 +35,7 @@ impl FastAutomaton {
             && self.state_in_degree(self.start_state) == 0
     }
 
-    /// Get a set of all reacheable states from the start state.
+    /// Returns the set of all states reachable from the start state.
     pub fn get_reacheable_states(&self) -> IntSet<State> {
         let mut states_map: IntMap<usize, IntSet<usize>> =
             IntMap::with_capacity_and_hasher(self.transitions.len(), BuildHasherDefault::default());

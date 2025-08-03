@@ -3,7 +3,7 @@ use crate::error::EngineError;
 use super::*;
 
 impl FastAutomaton {
-    /// Computes whether the current `FastAutomaton` and the given `FastAutomaton` are equivalent. Returns `true` if both automata accept the same language.
+    /// Returns `true` if both automata accept the same language.
     pub fn are_equivalent(&self, other: &FastAutomaton) -> Result<bool, EngineError> {
         if self.is_empty() != other.is_empty() && self.is_total() != other.is_total() {
             return Ok(false);
@@ -11,14 +11,14 @@ impl FastAutomaton {
             return Ok(true);
         }
 
-        let mut other_complement = other.determinize()?;
+        let mut other_complement = other.determinize()?.into_owned();
         other_complement.complement()?;
 
         if self.has_intersection(&other_complement)? {
             return Ok(false);
         }
 
-        let mut self_complement = self.determinize()?;
+        let mut self_complement = self.determinize()?.into_owned();
         self_complement.complement()?;
 
         Ok(!self_complement.has_intersection(other)?)

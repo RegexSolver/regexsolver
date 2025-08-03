@@ -98,19 +98,19 @@ impl FastAutomaton {
         self.transitions[state].len()
     }
 
-    /// Returns an iterator of the state of the automaton.
+    /// Returns an iterator over the automaton’s states.
     #[inline]
     pub fn all_states_iter(&self) -> impl Iterator<Item = State> + '_ {
         (0..self.transitions.len()).filter(|s| !self.removed_states.contains(s))
     }
 
-    /// Returns a vector containing the states of the automaton.
+    /// Returns a vector containing the automaton’s states.
     #[inline]
     pub fn all_states_vec(&self) -> Vec<State> {
         self.all_states_iter().collect()
     }
 
-    /// Returns an iterator over all states directly reachable from the given state in one transition.
+    /// Returns an iterator over states directly reachable from the given state in one transition.
     #[inline]
     pub fn direct_states_iter(&self, state: &State) -> impl Iterator<Item = State> + '_ {
         self.transitions[*state]
@@ -119,7 +119,7 @@ impl FastAutomaton {
             .filter(|s| !self.removed_states.contains(s))
     }
 
-    /// Returns a vector containing all states directly reachable from the given state in one transition.
+    /// Returns a vector of states directly reachable from the given state in one transition.
     #[inline]
     pub fn direct_states_vec(&self, state: &State) -> Vec<State> {
         self.direct_states_iter(state).collect()
@@ -139,7 +139,7 @@ impl FastAutomaton {
         in_transitions
     }
 
-    /// Returns a vector containing the transitions from the provided state.
+    /// Returns a vector of transitions from the given state.
     #[inline]
     pub fn transitions_from_vec(&self, state: State) -> Vec<TransitionTo> {
         self.transitions[state]
@@ -149,7 +149,7 @@ impl FastAutomaton {
             .collect()
     }
 
-    /// Returns an iterator containing the transitions from the provided state.
+    /// Returns an iterator over transitions from the given state.
     #[inline]
     pub fn transitions_from_iter(
         &self,
@@ -161,7 +161,7 @@ impl FastAutomaton {
             .filter(|s| !self.removed_states.contains(s.1))
     }
 
-    /// Returns a mutable iterator containing the transitions from the provided state.
+    /// Returns a mutable iterator over transitions from the given state.
     #[inline]
     pub fn transitions_from_iter_mut(
         &mut self,
@@ -173,7 +173,7 @@ impl FastAutomaton {
             .filter(|s| !self.removed_states.contains(s.1))
     }
 
-    /// Returns an owned iterator containing the transitions from the provided state.
+    /// Returns an owned iterator over transitions from the given state.
     #[inline]
     pub fn transitions_from_into_iter(
         &self,
@@ -186,7 +186,7 @@ impl FastAutomaton {
             .filter(|(_, state)| !self.removed_states.contains(state))
     }
 
-    /// Returns `true` if there is a directed transition between the two provided states.
+    /// Returns `true` if there is a directed transition from `from_state` to `to_state`.
     #[inline]
     pub fn does_transition_exists(&self, from_state: State, to_state: State) -> bool {
         if !self.has_state(from_state) || !self.has_state(to_state) {
@@ -215,13 +215,13 @@ impl FastAutomaton {
         self.transitions.len() - self.removed_states.len()
     }
 
-    // Get a reference of the directed transtion's condition between the two provided states.
+    // Returns a reference to the condition of the directed transition between the two states, if any.
     #[inline]
     pub fn get_condition(&self, from_state: State, to_state: State) -> Option<&Condition> {
         self.transitions[from_state].get(&to_state)
     }
 
-    // Get a mutable reference of the directed transtion's condition between the two provided states.
+    // Returns a mutable reference to the condition of the directed transition between the two states, if any.
     #[inline]
     pub fn get_condition_mut(
         &mut self,
@@ -231,13 +231,13 @@ impl FastAutomaton {
         self.transitions[from_state].get_mut(&to_state)
     }
 
-    /// Returns the start state of the automaton.
+    /// Returns the start state.
     #[inline]
     pub fn get_start_state(&self) -> State {
         self.start_state
     }
 
-    // Get a reference to the set of accept (final) states of the automaton.
+    // Returns a reference to the set of accept (final) states.
     #[inline]
     pub fn get_accept_states(&self) -> &IntSet<State> {
         &self.accept_states
@@ -249,7 +249,7 @@ impl FastAutomaton {
         &self.spanning_set
     }
 
-    /// Returns `true` if the given `state` is one of the automaton's accept states.
+    /// Returns `true` if the given state is one of the accept states.
     #[inline]
     pub fn is_accepted(&self, state: &State) -> bool {
         self.accept_states.contains(state)
@@ -267,7 +267,7 @@ impl FastAutomaton {
         self.cyclic
     }
 
-    /// Returns `true` if the automaton has the provided state.
+    /// Returns `true` if the automaton contains the given state.
     #[inline]
     pub fn has_state(&self, state: State) -> bool {
         !(state >= self.transitions.len() || self.removed_states.contains(&state))

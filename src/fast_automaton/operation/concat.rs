@@ -12,7 +12,7 @@ impl FastAutomaton {
         Self::concat_all([self, other])
     }
 
-    /// Returns a new `FastAutomaton` that is the concatenation of all automatons in the given iterator.
+    /// Returns a new `FastAutomaton` representing the concatenation of all automata in the given iterator.
     pub fn concat_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(automatons: I) -> Result<Self, EngineError>
     {
         let mut new_automaton = FastAutomaton::new_empty_string();

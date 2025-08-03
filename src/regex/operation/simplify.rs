@@ -1,7 +1,7 @@
 use super::*;
 
 impl RegularExpression {
-    /// Returns a simplified version of this regular expression by eliminating redundant constructs and applying canonical reductions.
+    /// Returns a simplified version by eliminating redundant constructs and applying canonical reductions.
     pub fn simplify(&self) -> Self {
         match self {
             RegularExpression::Character(_) => self.clone(),

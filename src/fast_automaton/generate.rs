@@ -6,9 +6,10 @@ use ahash::AHashSet;
 use super::*;
 
 impl FastAutomaton {
-    pub fn generate_strings(&self, number: usize) -> Result<AHashSet<String>, EngineError> {
+    /// Generates `count` strings matched by the automaton.
+    pub fn generate_strings(&self, number: usize) -> Result<Vec<String>, EngineError> {
         if self.is_empty() {
-            return Ok(AHashSet::new());
+            return Ok(Vec::new());
         }
 
         let mut strings = AHashSet::with_capacity(cmp::min(number, 1000));
@@ -81,7 +82,7 @@ impl FastAutomaton {
             }
         }
 
-        Ok(strings)
+        Ok(strings.into_iter().collect())
     }
 }
 

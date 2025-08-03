@@ -240,9 +240,7 @@ impl StateEliminationAutomaton<CharRange> {
 }
 
 impl FastAutomaton {
-    /// Try to convert the current FastAutomaton to a RegularExpression.
-    /// If it cannot find an equivalent regex it returns None.
-    /// This method is still a work in progress.
+    /// Attempts to convert the automaton to a `RegularExpression`; returns `None` if no equivalent pattern are found.
     pub fn to_regex(&self) -> Option<RegularExpression> {
         if self.is_empty() {
             return Some(RegularExpression::new_empty());
@@ -359,9 +357,8 @@ mod tests {
         let automaton2 = RegularExpression::new("ab")
             .unwrap()
             .to_automaton()
-            .unwrap()
-            .determinize()
             .unwrap();
+        let automaton2 = automaton2.determinize().unwrap();
 
         let result = automaton1.subtraction(&automaton2).unwrap();
 
@@ -403,9 +400,8 @@ mod tests {
         let automaton2 = RegularExpression::new("(xxx)*")
             .unwrap()
             .to_automaton()
-            .unwrap()
-            .determinize()
             .unwrap();
+        let automaton2 = automaton2.determinize().unwrap();
 
         let result = automaton1.subtraction(&automaton2).unwrap();
         result.to_dot();

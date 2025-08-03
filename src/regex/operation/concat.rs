@@ -1,7 +1,7 @@
 use super::*;
 
 impl RegularExpression {
-    /// Returns a new `RegularExpression` representing the concatenation of `self` and `other`, using `append_back` to determine their order.
+    /// Returns a new regular expression representing the concatenation of `self` and `other`; `append_back` determines their order.
     pub fn concat(&self, other: &RegularExpression, append_back: bool) -> RegularExpression {
         if self.is_empty() || other.is_empty() {
             return RegularExpression::new_empty();

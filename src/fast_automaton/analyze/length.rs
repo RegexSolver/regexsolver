@@ -1,7 +1,7 @@
 use super::*;
 
 impl FastAutomaton {
-    /// Returns the minimum and maximum length of the possible matched strings.
+    /// Returns the minimum and maximum length of matched strings.
     pub fn get_length(&self) -> (Option<u32>, Option<u32>) {
         if self.is_empty() {
             return (None, None);

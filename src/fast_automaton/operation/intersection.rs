@@ -126,7 +126,7 @@ impl FastAutomaton {
         Ok(Cow::Owned(new_automaton))
     }
 
-    // Returns `true` if the two automatons have a non-empty intersection.
+    // Returns `true` if the two automata have a non-empty intersection.
     pub fn has_intersection(&self, other: &FastAutomaton) -> Result<bool, EngineError> {
         if self.is_empty() || other.is_empty() {
             return Ok(false);

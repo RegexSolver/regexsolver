@@ -43,7 +43,7 @@ impl FastAutomaton {
         Ok(())
     }
 
-    /// Complement the automaton, the automaton needs to be deterministic.
+    /// Complements the automaton; it must be deterministic.
     pub fn complement(&mut self) -> Result<(), EngineError> {
         self.totalize()?;
 

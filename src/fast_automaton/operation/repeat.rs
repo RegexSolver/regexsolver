@@ -1,7 +1,7 @@
 use super::*;
 
 impl FastAutomaton {
-    // Returns the repetition of the automaton, between `min` and `max_opt` times. If `max_opt` is `None`, the repetition is unbounded.
+    // Computes the repetition of the automaton between `min` and `max_opt` times; if `max_opt` is `None`, the repetition is unbounded.
     pub fn repeat(&self, min: u32, max_opt: Option<u32>) -> Result<FastAutomaton, EngineError> {
         let mut automaton = self.clone();
         if let Err(error) = automaton.repeat_mut(min, max_opt) {

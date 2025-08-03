@@ -3,7 +3,7 @@ use std::hash::BuildHasherDefault;
 use super::*;
 
 impl FastAutomaton {
-    /// Returns the cardinality of the provided term (i.e. the number of the possible matched strings).
+    /// Returns the cardinality of the automaton (i.e., the number of possible matched strings).
     pub fn get_cardinality(&self) -> Option<Cardinality<u32>> {
         if self.is_empty() {
             return Some(Cardinality::Integer(0));

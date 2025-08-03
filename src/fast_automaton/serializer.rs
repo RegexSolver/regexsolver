@@ -1,24 +1,24 @@
 use super::*;
+use crate::tokenizer::Tokenizer;
 use lazy_static::lazy_static;
 use rand::Rng;
-use serde::{de, ser, Deserializer, Serializer};
 use serde::{Deserialize, Serialize};
+use serde::{Deserializer, Serializer, de, ser};
 use std::env;
 use z85::{decode, encode};
-use crate::tokenizer::Tokenizer;
 
 use sha2::{Digest, Sha256};
 
 use aes_gcm_siv::{
-    aead::{Aead, KeyInit},
     Aes256GcmSiv, Nonce,
+    aead::{Aead, KeyInit},
 };
+use flate2::Compression;
 use flate2::read::ZlibDecoder;
 use flate2::write::ZlibEncoder;
-use flate2::Compression;
 use std::io::prelude::*;
 
-use crate::tokenizer::token::{automaton_token::AutomatonToken, Token};
+use crate::tokenizer::token::{Token, automaton_token::AutomatonToken};
 
 pub struct FastAutomatonReader {
     cipher: Aes256GcmSiv,
@@ -171,7 +171,9 @@ mod tests {
         assert_serialization(
             "((aad|ads|a)*abc.*def.*uif(aad|ads|x)*abc.*oxs.*def(aad|ads|ax)*abc.*def.*ksd|q){1,2}",
         );
-        assert_serialization("(?:[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*|\"(?:[\\x01-\\x08\\x0b\\x0c\\x0e-\\x1f\\x21\\x23-\\x5b\\x5d-\\x7f]|\\\\[\\x01-\\x09\\x0b\\x0c\\x0e-\\x7f])*\")@(?:(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?|\\[(?:(?:(2(5[0-5]|[0-4][0-9])|1[0-9][0-9]|[1-9]?[0-9]))\\.){3}(?:(2(5[0-5]|[0-4][0-9])|1[0-9][0-9]|[1-9]?[0-9])|[a-z0-9-]*[a-z0-9]:(?:[\\x01-\\x08\\x0b\\x0c\\x0e-\\x1f\\x21-\\x5a\\x53-\\x7f]|\\\\[\\x01-\\x09\\x0b\\x0c\\x0e-\\x7f])+)\\])");
+        assert_serialization(
+            "(?:[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*|\"(?:[\\x01-\\x08\\x0b\\x0c\\x0e-\\x1f\\x21\\x23-\\x5b\\x5d-\\x7f]|\\\\[\\x01-\\x09\\x0b\\x0c\\x0e-\\x7f])*\")@(?:(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?|\\[(?:(?:(2(5[0-5]|[0-4][0-9])|1[0-9][0-9]|[1-9]?[0-9]))\\.){3}(?:(2(5[0-5]|[0-4][0-9])|1[0-9][0-9]|[1-9]?[0-9])|[a-z0-9-]*[a-z0-9]:(?:[\\x01-\\x08\\x0b\\x0c\\x0e-\\x1f\\x21-\\x5a\\x53-\\x7f]|\\\\[\\x01-\\x09\\x0b\\x0c\\x0e-\\x7f])+)\\])",
+        );
 
         Ok(())
     }
@@ -203,9 +205,8 @@ mod tests {
         let automaton2 = RegularExpression::new("\\d+")
             .unwrap()
             .to_automaton()
-            .unwrap()
-            .determinize()
             .unwrap();
+        let automaton2 = automaton2.determinize().unwrap();
 
         let subtraction = automaton1.subtraction(&automaton2).unwrap();
 
@@ -219,7 +220,7 @@ mod tests {
 
         assert!(automaton.subtraction(&unserialized).unwrap().is_empty());
         assert!(unserialized.subtraction(&automaton).unwrap().is_empty());
-        
+
         Ok(())
     }
 }

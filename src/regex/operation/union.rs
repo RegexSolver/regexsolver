@@ -3,12 +3,12 @@ use std::collections::BTreeSet;
 use super::*;
 
 impl RegularExpression {
-    /// Returns a new `RegularExpression` representing the union of this expression with `other`.
+    /// Returns a regular expression matching the union of `self` and `other`.
     pub fn union(&self, other: &RegularExpression) -> RegularExpression {
         Self::union_all([self, other])
     }
 
-    /// Returns a `RegularExpression` formed by taking the union of all expressions in `patterns`.
+    /// Returns a regular expression that is the union of all expressions in `patterns`.
     pub fn union_all<'a, I: IntoIterator<Item = &'a RegularExpression>>(patterns: I) -> RegularExpression
     {
         let mut result: Cow<'a, RegularExpression> = Cow::Owned(RegularExpression::new_empty());

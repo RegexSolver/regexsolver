@@ -5,10 +5,10 @@ use crate::{EngineError, execution_profile::ExecutionProfile};
 use super::*;
 
 impl FastAutomaton {
-    /// Determinize the automaton and returns it as a new `FastAutomaton`.
-    pub fn determinize(&self) -> Result<Self, EngineError> {
+    /// Determinizes the automaton and returns the result as a new `FastAutomaton`.
+    pub fn determinize(&self) -> Result<Cow<Self>, EngineError> {
         if self.deterministic {
-            return Ok(self.clone());
+            return Ok(Cow::Borrowed(self));
         }
         let execution_profile = ExecutionProfile::get();
 
@@ -66,7 +66,7 @@ impl FastAutomaton {
                 new_states_to_add.clear();
             }
         }
-        Ok(new_automaton)
+        Ok(Cow::Owned(new_automaton))
     }
 
     fn simple_hash(list: &VecDeque<usize>) -> u64 {

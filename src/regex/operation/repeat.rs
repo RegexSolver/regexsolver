@@ -1,7 +1,7 @@
 use super::*;
 
 impl RegularExpression {
-    /// Returns the repetition of the `RegularExpression`, between `min` and `max_opt` times. If `max_opt` is `None`, the repetition is unbounded.
+    /// Returns the repetition of the expression between `min` and `max_opt` times; if `max_opt` is `None`, the repetition is unbounded.
     pub fn repeat(&self, min: u32, max_opt: Option<u32>) -> RegularExpression {
         if self.is_total() {
             return RegularExpression::new_total();

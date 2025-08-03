@@ -270,7 +270,8 @@ mod tests {
         let regex = RegularExpression::new(regex).unwrap();
         println!("{}", regex);
 
-        let automaton = regex.to_automaton().unwrap().determinize().unwrap();
+        let automaton = regex.to_automaton().unwrap();
+        let automaton = automaton.determinize().unwrap();
         //automaton.to_dot();
 
         let tokenizer = Tokenizer::new(&automaton);

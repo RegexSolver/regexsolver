@@ -11,7 +11,7 @@ lazy_static! {
 }
 
 impl RegularExpression {
-    /// Parses the provided pattern and return the resulting `RegularExpression`.
+    /// Parses the provided pattern and returns the resulting `RegularExpression`.
     pub fn new(pattern: &str) -> Result<Self, EngineError> {
         if pattern.is_empty() {
             return Ok(RegularExpression::new_empty_string());
@@ -33,7 +33,7 @@ impl RegularExpression {
         RE_FLAG_DETECTION.replace_all(regex, "").to_string()
     }
 
-    /// Create a `RegularExpression` that matches all possible strings.
+    /// Creates a regular expression that matches all possible strings.
     pub fn new_total() -> Self {
         RegularExpression::Repetition(
             Box::new(RegularExpression::Character(CharRange::total())),
@@ -42,12 +42,12 @@ impl RegularExpression {
         )
     }
 
-    /// Create a `RegularExpression` that matches the empty language.
+    /// Creates a regular expression that matches the empty language.
     pub fn new_empty() -> Self {
         RegularExpression::Character(CharRange::empty())
     }
 
-    /// Create a`RegularExpression` that only match the empty string `""`.
+    /// Creates a regular expression that matches only the empty string `""`.
     pub fn new_empty_string() -> Self {
         RegularExpression::Concat(VecDeque::new())
     }
