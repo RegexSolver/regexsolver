@@ -54,21 +54,3 @@ impl fmt::Display for EngineError {
 }
 
 impl std::error::Error for EngineError {}
-
-impl EngineError {
-    /// Determine if the error is a server error.
-    /// A server error should not be shown to the end user.
-    pub fn is_server_error(&self) -> bool {
-        match self {
-            EngineError::InvalidCharacterInRegex => false,
-            EngineError::OperationTimeOutError => false,
-            EngineError::AutomatonShouldBeDeterministic => true,
-            EngineError::AutomatonHasTooManyStates => false,
-            EngineError::RegexSyntaxError(_) => false,
-            EngineError::TokenError(_) => false,
-            EngineError::ConditionInvalidRange => true,
-            EngineError::ConditionIndexOutOfBound => true,
-            EngineError::CannotComputeAutomatonCardinality => false,
-        }
-    }
-}

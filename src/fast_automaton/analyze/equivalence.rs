@@ -4,7 +4,7 @@ use super::*;
 
 impl FastAutomaton {
     /// Computes whether the current `FastAutomaton` and the given `FastAutomaton` are equivalent. Returns `true` if both automata accept the same language.
-    pub fn is_equivalent_of(&self, other: &FastAutomaton) -> Result<bool, EngineError> {
+    pub fn are_equivalent(&self, other: &FastAutomaton) -> Result<bool, EngineError> {
         if self.is_empty() != other.is_empty() && self.is_total() != other.is_total() {
             return Ok(false);
         } else if self == other {
@@ -72,14 +72,14 @@ mod tests {
     fn assert_equivalent(regex_1: &RegularExpression, regex_2: &RegularExpression, expected: bool) {
         println!("{regex_1} and {regex_2}");
         let automaton_1 = regex_1.to_automaton().unwrap();
-        assert_eq!(true, automaton_1.is_equivalent_of(&automaton_1).unwrap());
+        assert_eq!(true, automaton_1.are_equivalent(&automaton_1).unwrap());
 
         let automaton_2 = regex_2.to_automaton().unwrap();
-        assert_eq!(true, automaton_2.is_equivalent_of(&automaton_2).unwrap());
+        assert_eq!(true, automaton_2.are_equivalent(&automaton_2).unwrap());
 
         assert_eq!(
             expected,
-            automaton_1.is_equivalent_of(&automaton_2).unwrap()
+            automaton_1.are_equivalent(&automaton_2).unwrap()
         );
     }
 }

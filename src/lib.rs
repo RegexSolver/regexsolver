@@ -343,16 +343,16 @@ impl Term {
     /// let term1 = Term::from_pattern("(abc|de)").unwrap();
     /// let term2 = Term::from_pattern("(abc|de)*").unwrap();
     ///
-    /// assert!(!term1.is_equivalent_of(&term2).unwrap());
+    /// assert!(!term1.are_equivalent(&term2).unwrap());
     /// ```
-    pub fn is_equivalent_of(&self, that: &Term) -> Result<bool, EngineError> {
+    pub fn are_equivalent(&self, that: &Term) -> Result<bool, EngineError> {
         if self == that {
             return Ok(true);
         }
 
         let automaton_1 = self.to_automaton()?;
         let automaton_2 = that.to_automaton()?;
-        automaton_1.is_equivalent_of(&automaton_2)
+        automaton_1.are_equivalent(&automaton_2)
     }
 
     /// Compute whether the current term is a subset of the given term.
@@ -446,6 +446,11 @@ impl Term {
         })
     }
 
+    /// Converts the current `Term` to a regular expression pattern. Returns `None` if the automaton cannot be converted.
+    pub fn to_pattern(&self) -> Option<String> {
+        Some(self.to_regex()?.to_string())
+    }
+
     fn determinize_subtrahend<'a>(
         minuend: &FastAutomaton,
         subtrahend: &'a FastAutomaton,
@@ -522,9 +527,9 @@ mod tests {
 
         let result = regex1.subtraction(&regex2);
         assert!(result.is_ok());
-        let result = result.unwrap();
+        let result = result.unwrap().to_pattern().unwrap();
         assert_eq!(
-            Term::RegularExpression(RegularExpression::new("a+").unwrap()),
+            "a+",
             result
         );
 
@@ -538,10 +543,10 @@ mod tests {
 
         let result = regex1.subtraction(&regex2);
         assert!(result.is_ok());
-        let result = result.unwrap();
+        let result = result.unwrap().to_regex().unwrap().into_owned();
         assert_eq!(
             Term::RegularExpression(RegularExpression::new("(xxx)*(x|xx)").unwrap()),
-            result
+            Term::RegularExpression(result)
         );
 
         Ok(())
@@ -554,8 +559,8 @@ mod tests {
 
         let result = regex1.intersection(&vec![regex2]);
         assert!(result.is_ok());
-        let result = result.unwrap();
-        assert_eq!(Term::from_pattern("").unwrap(), result);
+        let result = result.unwrap().to_pattern().unwrap();
+        assert_eq!("", result);
 
         Ok(())
     }
@@ -567,9 +572,9 @@ mod tests {
 
         let result = regex1.intersection(&vec![regex2]);
         assert!(result.is_ok());
-        let result = result.unwrap();
+        let result = result.unwrap().to_pattern().unwrap();
         assert_eq!(
-            Term::RegularExpression(RegularExpression::new("(x{3})*").unwrap()),
+            "(x{3})*",
             result
         );
 
@@ -584,32 +589,32 @@ mod tests {
 
         // Concatenate
         let concat = t1.concat(&[t2]).unwrap();
-        assert_eq!(concat.to_string(), "abc.*xyz");
+        assert_eq!(concat.to_pattern().unwrap(), "abc.*xyz");
 
         // Union
         let union = t1.union(&[Term::from_pattern("fgh").unwrap()]).unwrap(); // (abc.*|fgh)
-        assert_eq!(union.to_string(), "(abc.*|fgh)");
+        assert_eq!(union.to_pattern().unwrap(), "(abc.*|fgh)");
 
         // Intersection
         let inter = Term::from_pattern("(ab|xy){2}")
             .unwrap()
             .intersection(&[Term::from_pattern(".*xy").unwrap()])
             .unwrap(); // (ab|xy)xy
-        assert_eq!(inter.to_string(), "(ab|xy)xy");
+        assert_eq!(inter.to_pattern().unwrap(), "(ab|xy)xy");
 
         // Subtraction
         let diff = Term::from_pattern("a*")
             .unwrap()
             .subtraction(&Term::from_pattern("").unwrap())
             .unwrap();
-        assert_eq!(diff.to_string(), "a+");
+        assert_eq!(diff.to_pattern().unwrap(), "a+");
 
         // Repetition
         let rep = Term::from_pattern("abc")
             .unwrap()
             .repeat(2, Some(4))
             .unwrap(); // (abc){2,4}
-        assert_eq!(rep.to_string(), "(abc){2,4}");
+        assert_eq!(rep.to_pattern().unwrap(), "(abc){2,4}");
 
         // Analyze
         assert_eq!(rep.get_length(), (Some(6), Some(12)));
@@ -625,7 +630,7 @@ mod tests {
         // Equivalence & subset
         let a = Term::from_pattern("a+").unwrap();
         let b = Term::from_pattern("a*").unwrap();
-        assert!(!a.is_equivalent_of(&b).unwrap());
+        assert!(!a.are_equivalent(&b).unwrap());
         assert!(a.is_subset_of(&b).unwrap());
 
         Ok(())

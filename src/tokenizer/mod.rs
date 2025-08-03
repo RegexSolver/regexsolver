@@ -11,7 +11,6 @@ use self::{range_tokenizer::RangeTokenizer, token::automaton_token::AutomatonTok
 
 mod embed_automaton;
 mod embed_regex;
-mod embed_regex_operations;
 pub mod range_tokenizer;
 pub mod token;
 

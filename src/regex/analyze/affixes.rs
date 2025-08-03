@@ -285,6 +285,7 @@ mod tests {
         assert_regex_affix(true, "(ab|cd)x", "(ab|cd)y", "(ab|cd)", "x", "y");
 
         assert_regex_affix(true, "a+", "a+b", "a+", "", "b");
+        assert_regex_affix(true, "(ab|cd)", "(ab|cd)", "(ab|cd)", "", "");
 
         Ok(())
     }

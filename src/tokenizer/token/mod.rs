@@ -4,7 +4,6 @@ use super::*;
 
 pub mod automaton_token;
 pub mod range_token;
-pub mod regex_operations_token;
 pub mod regex_token;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -28,21 +27,6 @@ impl Display for TokenError {
 }
 
 pub trait Token {
-    fn from_ai_token(token: u8) -> Self;
-
-    fn to_ai_token(&self) -> Result<u8, TokenError>;
-
-    fn to_ai_tokens(tokens: &[Self]) -> Result<Vec<u8>, TokenError>
-    where
-        Self: Sized,
-    {
-        let mut vec = Vec::with_capacity(tokens.len());
-        for token in tokens {
-            vec.push(token.to_ai_token()?);
-        }
-        Ok(vec)
-    }
-
     fn from_fair_token(token: u16) -> Self;
 
     fn to_fair_token(&self) -> Result<u16, TokenError>;

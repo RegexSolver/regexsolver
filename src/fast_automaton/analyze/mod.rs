@@ -10,11 +10,13 @@ mod length;
 mod subset;
 
 impl FastAutomaton {
+    /// Checks if the current `FastAutomaton` matches the empty language.
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.accept_states.is_empty()
     }
 
+    /// Checks if the current `FastAutomaton` matches all possible strings.
     #[inline]
     pub fn is_total(&self) -> bool {
         if self.accept_states.contains(&self.start_state) {
@@ -25,9 +27,12 @@ impl FastAutomaton {
         false
     }
 
+    /// Checks if the current `FastAutomaton` only match the empty string `""`.
     #[inline]
     pub fn is_empty_string(&self) -> bool {
-        self.accept_states.len() == 1 && self.accept_states.contains(&self.start_state) && self.state_in_degree(self.start_state) == 0
+        self.accept_states.len() == 1
+            && self.accept_states.contains(&self.start_state)
+            && self.state_in_degree(self.start_state) == 0
     }
 
     /// Get a set of all reacheable states from the start state.
@@ -68,8 +73,42 @@ impl FastAutomaton {
     }
 
     pub(crate) fn get_ranges(&self) -> Result<Vec<Condition>, EngineError> {
-        self.spanning_set.get_spanning_ranges().map(|range| {
-            Condition::from_range(range, &self.spanning_set)
-        }).collect()
+        self.spanning_set
+            .get_spanning_ranges()
+            .map(|range| Condition::from_range(range, &self.spanning_set))
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use crate::fast_automaton::FastAutomaton;
+
+    #[test]
+    fn test_empty() -> Result<(), String> {
+        assert!(!FastAutomaton::new_total().is_empty());
+        assert!(!FastAutomaton::new_empty_string().is_empty());
+        assert!(FastAutomaton::new_empty().is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_empty_string() -> Result<(), String> {
+        assert!(!FastAutomaton::new_total().is_empty_string());
+        assert!(FastAutomaton::new_empty_string().is_empty_string());
+        assert!(!FastAutomaton::new_empty().is_empty_string());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_total() -> Result<(), String> {
+        assert!(FastAutomaton::new_total().is_total());
+        assert!(!FastAutomaton::new_empty_string().is_total());
+        assert!(!FastAutomaton::new_empty().is_total());
+
+        Ok(())
     }
 }

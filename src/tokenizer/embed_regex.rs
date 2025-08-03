@@ -290,18 +290,5 @@ mod tests {
 
         let unembedded_regex = tokenizer.from_regex_embedding(&embedding).unwrap();
         assert_eq!(regex, unembedded_regex);
-
-        // AI
-        let embedding_u8 = RegexToken::to_ai_tokens(&embedding).unwrap();
-        assert_eq!(
-            embedding,
-            embedding_u8
-                .iter()
-                .map(|&t| RegexToken::from_ai_token(t))
-                .collect::<Vec<_>>()
-        );
-
-        let unembedded_regex = tokenizer.from_regex_embedding(&embedding).unwrap();
-        assert_eq!(regex, unembedded_regex);
     }
 }

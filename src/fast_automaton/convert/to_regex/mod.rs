@@ -252,7 +252,7 @@ impl FastAutomaton {
             if let Ok(regex) = graph?.convert_to_regex(&execution_profile) {
                 let regex = regex?;
                 match regex.to_automaton() {
-                    Ok(automaton) => match self.is_equivalent_of(&automaton) {
+                    Ok(automaton) => match self.are_equivalent(&automaton) {
                         Ok(result) => {
                             if !result {
                                 warn!(
@@ -337,7 +337,7 @@ mod tests {
         println!("OUT (non deterministic): {}", output_regex);
         let output_automaton = output_regex.to_automaton().unwrap();
 
-        assert!(input_automaton.is_equivalent_of(&output_automaton).unwrap());
+        assert!(input_automaton.are_equivalent(&output_automaton).unwrap());
 
         let input_automaton = input_automaton.determinize().unwrap();
 
@@ -347,7 +347,7 @@ mod tests {
         println!("OUT (deterministic)    : {}", output_regex);
         let output_automaton = output_regex.to_automaton().unwrap();
 
-        assert!(input_automaton.is_equivalent_of(&output_automaton).unwrap());
+        assert!(input_automaton.are_equivalent(&output_automaton).unwrap());
     }
 
     #[test]

@@ -137,13 +137,13 @@ mod tests {
 
     #[test]
     fn test_tokenize() -> Result<(), String> {
-        assert_embedding_convertion_for_fair_and_ai("(a|b)");
-        assert_embedding_convertion_for_fair_and_ai("(|a)");
-        assert_embedding_convertion_for_fair_and_ai(".*ab");
-        assert_embedding_convertion_for_fair_and_ai("toto");
-        assert_embedding_convertion_for_fair_and_ai(".{2,3}");
-        assert_embedding_convertion_for_fair_and_ai("q(ab|ca|ab|abc)x");
-        assert_embedding_convertion_for_fair_and_ai(".*q(ab|ca|ab|abc)x");
+        assert_embedding_convertion_for_fair("(a|b)");
+        assert_embedding_convertion_for_fair("(|a)");
+        assert_embedding_convertion_for_fair(".*ab");
+        assert_embedding_convertion_for_fair("toto");
+        assert_embedding_convertion_for_fair(".{2,3}");
+        assert_embedding_convertion_for_fair("q(ab|ca|ab|abc)x");
+        assert_embedding_convertion_for_fair(".*q(ab|ca|ab|abc)x");
         assert_embedding_convertion_for_fair(
             "((aad|ads|a)*abc.*def.*uif(aad|ads|x)*abc.*oxs.*def(aad|ads|ax)*abc.*def.*ksd|q)",
         );
@@ -155,14 +155,10 @@ mod tests {
     }
 
     fn assert_embedding_convertion_for_fair(regex: &str) {
-        assert_embedding_convertion(regex, true);
+        assert_embedding_convertion(regex);
     }
 
-    fn assert_embedding_convertion_for_fair_and_ai(regex: &str) {
-        assert_embedding_convertion(regex, false);
-    }
-
-    fn assert_embedding_convertion(regex: &str, ignore_ai: bool) {
+    fn assert_embedding_convertion(regex: &str) {
         let regex = RegularExpression::new(regex).unwrap();
         println!("{}", regex);
 
@@ -192,29 +188,5 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-
-        if !ignore_ai {
-            // AI
-            let embedding_u8 = AutomatonToken::to_ai_tokens(&embedding).unwrap();
-            let embedding: Vec<AutomatonToken> = embedding_u8
-                .iter()
-                .map(|&t| AutomatonToken::from_ai_token(t))
-                .collect();
-
-            let unembedded_automaton = tokenizer.from_embedding(&embedding).unwrap();
-
-            assert!(
-                automaton
-                    .subtraction(&unembedded_automaton)
-                    .unwrap()
-                    .is_empty()
-            );
-            assert!(
-                unembedded_automaton
-                    .subtraction(&automaton)
-                    .unwrap()
-                    .is_empty()
-            );
-        }
     }
 }

@@ -29,11 +29,11 @@ fn assert_regex(regex: &str) {
 
     assert!(automaton.is_subset_of(&determinized_automaton).unwrap());
     assert!(determinized_automaton.is_subset_of(&automaton).unwrap());
-    assert!(automaton.is_equivalent_of(&determinized_automaton).unwrap());
+    assert!(automaton.are_equivalent(&determinized_automaton).unwrap());
 
     let regex_from_automaton = automaton.to_regex().unwrap();
     let automaton_from_regex = regex_from_automaton.to_automaton().unwrap();
-    assert!(automaton.is_equivalent_of(&automaton_from_regex).unwrap());
+    assert!(automaton.are_equivalent(&automaton_from_regex).unwrap());
 }
 
 #[test]

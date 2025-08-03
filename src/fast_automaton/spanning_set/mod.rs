@@ -63,6 +63,7 @@ impl SpanningSet {
         &self.1
     }
 
+    /// Compute a new minimal spanning set by merging the provided spanning set.
     pub fn merge(&self, other: &Self) -> Self {
         let mut ranges = Vec::with_capacity(self.0.len() + other.0.len());
         ranges.extend_from_slice(&self.0);
@@ -71,6 +72,7 @@ impl SpanningSet {
         Self::compute_spanning_set(&ranges)
     }
 
+    /// Compute a new minimal spanning set for the provided ranges.
     pub fn compute_spanning_set(ranges: &[CharRange]) -> Self {
         let mut spanning_ranges: Vec<CharRange> = ranges.to_vec();
         spanning_ranges.sort_unstable();

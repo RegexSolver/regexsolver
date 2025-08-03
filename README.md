@@ -12,7 +12,6 @@
     - [Term](#term)
     - [FastAutomaton](#fastautomaton)
     - [RegularExpression](#regularexpression)
- - [Error Handling](#error-handling)
  - [Bound Execution](#bound-execution)
  - [Cross-Language Support](#cross-language-support)
  - [License](#license)
@@ -37,29 +36,32 @@ let t2 = Term::from_pattern(".*xyz").unwrap();
 
 // Concatenate
 let concat = t1.concat(&[t2]).unwrap();
-assert_eq!(concat.to_string(), "abc.*xyz");
+assert_eq!(concat.to_pattern().unwrap(), "abc.*xyz");
 
 // Union
 let union = t1.union(&[Term::from_pattern("fgh").unwrap()]).unwrap();
-assert_eq!(union.to_string(), "(abc.*|fgh)");
+assert_eq!(union.to_pattern().unwrap(), "(abc.*|fgh)");
 
 // Intersection
 let inter = Term::from_pattern("(ab|xy){2}")
     .unwrap()
     .intersection(&[Term::from_pattern(".*xy").unwrap()])
     .unwrap(); // (ab|xy)xy
-assert_eq!(inter.to_string(), "(ab|xy)xy");
+assert_eq!(inter.to_pattern().unwrap(), "(ab|xy)xy");
 
 // Subtraction
 let diff = Term::from_pattern("a*")
     .unwrap()
     .subtraction(&Term::from_pattern("").unwrap())
     .unwrap();
-assert_eq!(diff.to_string(), "a+");
+assert_eq!(diff.to_pattern().unwrap(), "a+");
 
 // Repetition
-let rep = Term::from_pattern("abc").unwrap().repeat(2, Some(4)).unwrap();
-assert_eq!(rep.to_string(), "(abc){2,4}");
+let rep = Term::from_pattern("abc")
+    .unwrap()
+    .repeat(2, Some(4))
+    .unwrap();
+assert_eq!(rep.to_pattern().unwrap(), "(abc){2,4}");
 
 // Analyze
 assert_eq!(rep.get_length(), (Some(6), Some(12)));
@@ -75,7 +77,7 @@ println!("Some matches: {:?}", samples);
 // Equivalence & subset
 let a = Term::from_pattern("a+").unwrap();
 let b = Term::from_pattern("a*").unwrap();
-assert!(!a.is_equivalent_of(&b).unwrap());
+assert!(!a.are_equivalent(&b).unwrap());
 assert!(a.is_subset_of(&b).unwrap());
 ```
 
@@ -121,7 +123,7 @@ RegexSolver is based on the [regex-syntax](https://docs.rs/regex-syntax/0.8.5/re
 | Method | Return | Description |
 | -------- | ------- | ------- |
 | `generate_strings(&self, count: usize)` | `Result<Vec<String>, EngineError>` | Generates the given count of strings matched by the given term. |
-| `is_equivalent_of(&self, term: &Term)` | `Result<bool, EngineError>` | Computes whether the current term and the given term are equivalent. Returns `true` if both terms accept the same language. |
+| `are_equivalent(&self, term: &Term)` | `Result<bool, EngineError>` | Computes whether the current term and the given term are equivalent. Returns `true` if both terms accept the same language. |
 | `is_subset_of(&self, term: &Term)` | `Result<bool, EngineError>` | Computes whether the current term is a subset of the given term. Returns `true` if all strings matched by the current term are also matched by the given term. |
 | `is_empty(&self)` | `bool` | Checks if the current term matches the empty language. |
 | `is_total(&self)` | `bool` | Checks if the current term matches all possible strings. |
@@ -220,7 +222,7 @@ This design allows us to perform unions, intersections, and complements of trans
 | `has_state(&self, state: State)` | `bool` | Returns `true` if the automaton contains at least one cycle. |
 | `to_regex(&self)` | `Option<RegularExpression>` | Try to convert the automaton to a `RegularExpression`. If it cannot find an equivalent pattern returns `None`. |
 | `has_intersection(&self, other: &FastAutomaton)` | `Result<bool, EngineError>` | Returns `true` if the two automatons have a non-empty intersection. |
-| `is_equivalent_of(&self, other: &FastAutomaton)` | `Result<bool, EngineError>` | Computes whether the current `FastAutomaton` and the given `FastAutomaton` are equivalent. Returns `true` if both automata accept the same language. |
+| `are_equivalent(&self, other: &FastAutomaton)` | `Result<bool, EngineError>` | Computes whether the current `FastAutomaton` and the given `FastAutomaton` are equivalent. Returns `true` if both automata accept the same language. |
 | `is_subset_of(&self, other: &FastAutomaton)` | `Result<bool, EngineError>` | Computes whether the current `FastAutomaton` is a subset of the given `FastAutomaton`. Returns `true` if all strings matched by the current `FastAutomaton` are also matched by the given `FastAutomaton`. |
 | `get_length(&self)` | `(Option<u32>, Option<u32>)` | Returns the minimum and maximum length of the possible matched strings. |
 | `get_cardinality(&self)` | `Cardinality<u32>` | Returns the cardinality of the provided term (i.e. the number of the possible matched strings). |
@@ -252,8 +254,6 @@ This design allows us to perform unions, intersections, and complements of trans
 | `to_automaton(&self)` | `Result<FastAutomaton, EngineError>` | Convert the current `RegularExpression` to an equivalent `FastAutomaton`. |
 | `get_length(&self)` | `(Option<u32>, Option<u32>)` | Returns the minimum and maximum length of the possible matched strings. |
 | `get_cardinality(&self)` | `Cardinality<u32>` | Returns the cardinality of the provided term (i.e. the number of the possible matched strings). |
-
-## Error Handling
 
 ## Bound Execution
 
