@@ -30,6 +30,60 @@ pub type CharRange = RangeSet<Char>;
 
 /// Represents a term that can be either a regular expression or a finite automaton. This term can be manipulated with a wide range of operations.
 ///
+/// ```rust
+/// use regexsolver::Term;
+///
+/// // Create terms from regex
+/// let t1 = Term::from_pattern("abc.*").unwrap();
+/// let t2 = Term::from_pattern(".*xyz").unwrap();
+///
+/// // Concatenate
+/// let concat = t1.concat(&[t2]).unwrap();
+/// assert_eq!(concat.to_pattern().unwrap(), "abc.*xyz");
+///
+/// // Union
+/// let union = t1.union(&[Term::from_pattern("fgh").unwrap()]).unwrap();
+/// assert_eq!(union.to_pattern().unwrap(), "(abc.*|fgh)");
+///
+/// // Intersection
+/// let inter = Term::from_pattern("(ab|xy){2}")
+///     .unwrap()
+///     .intersection(&[Term::from_pattern(".*xy").unwrap()])
+///     .unwrap(); // (ab|xy)xy
+/// assert_eq!(inter.to_pattern().unwrap(), "(ab|xy)xy");
+///
+/// // Subtraction
+/// let diff = Term::from_pattern("a*")
+///     .unwrap()
+///     .subtraction(&Term::from_pattern("").unwrap())
+///     .unwrap();
+/// assert_eq!(diff.to_pattern().unwrap(), "a+");
+///
+/// // Repetition
+/// let rep = Term::from_pattern("abc")
+///     .unwrap()
+///     .repeat(2, Some(4))
+///     .unwrap();
+/// assert_eq!(rep.to_pattern().unwrap(), "(abc){2,4}");
+///
+/// // Analyze
+/// assert_eq!(rep.get_length(), (Some(6), Some(12)));
+/// assert!(!rep.is_empty());
+///
+/// // Generate examples
+/// let samples = Term::from_pattern("(x|y){1,3}")
+///     .unwrap()
+///     .generate_strings(5)
+///     .unwrap();
+/// println!("Some matches: {:?}", samples);
+///
+/// // Equivalence & subset
+/// let a = Term::from_pattern("a+").unwrap();
+/// let b = Term::from_pattern("a*").unwrap();
+/// assert!(!a.are_equivalent(&b).unwrap());
+/// assert!(a.is_subset_of(&b).unwrap());
+/// ```
+///
 /// To put constraint and limitation on the execution of operations please refer to [`execution_profile::ExecutionProfile`].
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -447,7 +501,12 @@ impl Term {
         if subtrahend.is_determinitic() {
             Ok(Cow::Borrowed(subtrahend))
         } else if !minuend.is_cyclic() && subtrahend.is_cyclic() {
-            Ok(Cow::Owned(minuend.intersection(subtrahend)?.determinize()?.into_owned()))
+            Ok(Cow::Owned(
+                minuend
+                    .intersection(subtrahend)?
+                    .determinize()?
+                    .into_owned(),
+            ))
         } else {
             Ok(subtrahend.determinize()?)
         }
@@ -494,7 +553,7 @@ impl Term {
 
 #[cfg(test)]
 mod tests {
-    use crate::{execution_profile::ExecutionProfileBuilder, regex::RegularExpression};
+    use crate::regex::RegularExpression;
 
     use super::*;
 
@@ -560,100 +619,6 @@ mod tests {
         assert!(result.is_ok());
         let result = result.unwrap().to_pattern().unwrap();
         assert_eq!("(x{3})*", result);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_readme_code_1() -> Result<(), String> {
-        // Create terms from regex
-        let t1 = Term::from_pattern("abc.*").unwrap();
-        let t2 = Term::from_pattern(".*xyz").unwrap();
-
-        // Concatenate
-        let concat = t1.concat(&[t2]).unwrap();
-        assert_eq!(concat.to_pattern().unwrap(), "abc.*xyz");
-
-        // Union
-        let union = t1.union(&[Term::from_pattern("fgh").unwrap()]).unwrap(); // (abc.*|fgh)
-        assert_eq!(union.to_pattern().unwrap(), "(abc.*|fgh)");
-
-        // Intersection
-        let inter = Term::from_pattern("(ab|xy){2}")
-            .unwrap()
-            .intersection(&[Term::from_pattern(".*xy").unwrap()])
-            .unwrap(); // (ab|xy)xy
-        assert_eq!(inter.to_pattern().unwrap(), "(ab|xy)xy");
-
-        // Subtraction
-        let diff = Term::from_pattern("a*")
-            .unwrap()
-            .subtraction(&Term::from_pattern("").unwrap())
-            .unwrap();
-        assert_eq!(diff.to_pattern().unwrap(), "a+");
-
-        // Repetition
-        let rep = Term::from_pattern("abc")
-            .unwrap()
-            .repeat(2, Some(4))
-            .unwrap(); // (abc){2,4}
-        assert_eq!(rep.to_pattern().unwrap(), "(abc){2,4}");
-
-        // Analyze
-        assert_eq!(rep.get_length(), (Some(6), Some(12)));
-        assert!(!rep.is_empty());
-
-        // Generate examples
-        let samples = Term::from_pattern("(x|y){1,3}")
-            .unwrap()
-            .generate_strings(5)
-            .unwrap();
-        println!("Some matches: {:?}", samples);
-
-        // Equivalence & subset
-        let a = Term::from_pattern("a+").unwrap();
-        let b = Term::from_pattern("a*").unwrap();
-        assert!(!a.are_equivalent(&b).unwrap());
-        assert!(a.is_subset_of(&b).unwrap());
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_readme_code_2() -> Result<(), String> {
-        let term = Term::from_pattern(".*abc.*cdef.*sqdsqf.*").unwrap();
-
-        let execution_profile = ExecutionProfileBuilder::new()
-            .execution_timeout(5) // We set the limit (5ms)
-            .build();
-
-        // We run the operation with the defined limitation
-        execution_profile.run(|| {
-            assert_eq!(
-                EngineError::OperationTimeOutError,
-                term.generate_strings(1000).unwrap_err()
-            );
-        });
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_readme_code_3() -> Result<(), String> {
-        let term1 = Term::from_pattern(".*abcdef.*").unwrap();
-        let term2 = Term::from_pattern(".*defabc.*").unwrap();
-
-        let execution_profile = ExecutionProfileBuilder::new()
-            .max_number_of_states(5) // We set the limit
-            .build();
-
-        // We run the operation with the defined limitation
-        execution_profile.run(|| {
-            assert_eq!(
-                EngineError::AutomatonHasTooManyStates,
-                term1.intersection(&[term2]).unwrap_err()
-            );
-        });
 
         Ok(())
     }
