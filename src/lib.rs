@@ -552,12 +552,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_details() -> Result<(), String> {
+    fn test_intersection() -> Result<(), String> {
         let regex1 = Term::from_pattern("a").unwrap();
         let regex2 = Term::from_pattern("b").unwrap();
 
-        let details = regex1.intersection(&vec![regex2]);
-        assert!(details.is_ok());
+        let intersection = regex1.intersection(&vec![regex2]).unwrap();
+        assert!(intersection.is_empty());
+        assert_eq!("[]", intersection.to_pattern().unwrap());
 
         Ok(())
     }
