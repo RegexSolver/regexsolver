@@ -12,12 +12,12 @@ use crate::{
 use super::*;
 
 impl FastAutomaton {
-    /// Returns a new `FastAutomaton` representing the intersection of `self` and `other`.
+    /// Computes the intersection between `self` and `other`.
     pub fn intersection(&self, other: &FastAutomaton) -> Result<Self, EngineError> {
         FastAutomaton::intersection_all([self, other])
     }
 
-    /// Returns a new `FastAutomaton` that is the intersection of all automatons in the given iterator.
+    /// Computes the intersection of all automatons in the given iterator.
     pub fn intersection_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(automatons: I) -> Result<Self, EngineError>
     {
         let mut result: Cow<'a, FastAutomaton> = Cow::Owned(FastAutomaton::new_total());
@@ -33,7 +33,7 @@ impl FastAutomaton {
         Ok(result.into_owned())
     }
 
-    /// Returns a new `FastAutomaton` that is the intersection of all automatons in the given parallel iterator.
+    /// Computes in parallel the intersection of all automatons in the given iterator.
     pub fn intersection_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(automatons: I) -> Result<Self, EngineError>
     {
         let execution_profile = ExecutionProfile::get();

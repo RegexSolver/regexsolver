@@ -240,7 +240,7 @@ impl StateEliminationAutomaton<CharRange> {
 }
 
 impl FastAutomaton {
-    /// Attempts to convert the automaton to a `RegularExpression`; returns `None` if no equivalent pattern are found.
+    /// Attempts to convert the automaton to a [`RegularExpression`]; returns `None` if no equivalent pattern are found.
     pub fn to_regex(&self) -> Option<RegularExpression> {
         if self.is_empty() {
             return Some(RegularExpression::new_empty());
@@ -360,7 +360,7 @@ mod tests {
             .unwrap();
         let automaton2 = automaton2.determinize().unwrap();
 
-        let result = automaton1.subtraction(&automaton2).unwrap();
+        let result = automaton1.difference(&automaton2).unwrap();
 
         result.to_dot();
 
@@ -403,7 +403,7 @@ mod tests {
             .unwrap();
         let automaton2 = automaton2.determinize().unwrap();
 
-        let result = automaton1.subtraction(&automaton2).unwrap();
+        let result = automaton1.difference(&automaton2).unwrap();
         result.to_dot();
 
         let result = result.to_regex().unwrap();
@@ -451,7 +451,7 @@ mod tests {
             .determinize()
             .unwrap();
 
-        let result = automaton1.subtraction(&automaton2).unwrap();
+        let result = automaton1.difference(&automaton2).unwrap();
         result.to_dot();
 
         let result = result.to_regex().unwrap();

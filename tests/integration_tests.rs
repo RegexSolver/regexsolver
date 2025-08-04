@@ -16,11 +16,6 @@ fn assert_regex(regex: &str) {
         assert!(re.is_match(&string), "'{string}'");
     }
 
-    assert_eq!(
-        automaton.get_number_of_states(),
-        regex.get_number_of_states_in_nfa()
-    );
-
     let determinized_automaton = automaton.determinize().unwrap();
     let strings = determinized_automaton.generate_strings(500).unwrap();
     for string in strings {

@@ -11,7 +11,7 @@ lazy_static! {
 }
 
 impl RegularExpression {
-    /// Parses the provided pattern and returns the resulting `RegularExpression`.
+    /// Parses the provided pattern and returns the resulting [`RegularExpression`].
     pub fn new(pattern: &str) -> Result<Self, EngineError> {
         if pattern.is_empty() {
             return Ok(RegularExpression::new_empty_string());

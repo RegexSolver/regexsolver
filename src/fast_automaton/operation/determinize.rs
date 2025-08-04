@@ -5,7 +5,7 @@ use crate::{EngineError, execution_profile::ExecutionProfile};
 use super::*;
 
 impl FastAutomaton {
-    /// Determinizes the automaton and returns the result as a new `FastAutomaton`.
+    /// Determinizes the automaton and returns the result.
     pub fn determinize(&self) -> Result<Cow<Self>, EngineError> {
         if self.deterministic {
             return Ok(Cow::Borrowed(self));
@@ -128,7 +128,7 @@ mod tests {
         assert!(deterministic_automaton.is_determinitic());
         assert!(
             automaton
-                .subtraction(&deterministic_automaton)
+                .difference(&deterministic_automaton)
                 .unwrap()
                 .is_empty()
         );

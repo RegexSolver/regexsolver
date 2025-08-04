@@ -26,7 +26,7 @@ pub mod condition;
 mod convert;
 mod generate;
 mod operation;
-#[cfg(feature = "serde")]
+#[cfg(feature = "serializable")]
 mod serializer;
 pub mod spanning_set;
 

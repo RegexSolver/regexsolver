@@ -179,13 +179,13 @@ mod tests {
 
         assert!(
             automaton
-                .subtraction(&unembedded_automaton)
+                .difference(&unembedded_automaton)
                 .unwrap()
                 .is_empty()
         );
         assert!(
             unembedded_automaton
-                .subtraction(&automaton)
+                .difference(&automaton)
                 .unwrap()
                 .is_empty()
         );

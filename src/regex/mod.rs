@@ -11,7 +11,7 @@ use super::*;
 mod analyze;
 mod builder;
 mod operation;
-#[cfg(feature = "serde")]
+#[cfg(feature = "serializable")]
 mod serializer;
 
 /// Represent a regular expression.
@@ -124,7 +124,7 @@ impl RegularExpression {
         }
     }
 
-    /// Converts the regular expression to an equivalent `FastAutomaton`.
+    /// Converts the regular expression to an equivalent [`FastAutomaton`].
     pub fn to_automaton(&self) -> Result<FastAutomaton, EngineError> {
         ExecutionProfile::get().assert_max_number_of_states(self.get_number_of_states_in_nfa())?;
 

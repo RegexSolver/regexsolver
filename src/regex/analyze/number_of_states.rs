@@ -162,7 +162,7 @@ impl AbstractNFAMetadata {
 }
 
 impl RegularExpression {
-    pub fn get_number_of_states_in_nfa(&self) -> usize {
+    pub(crate) fn get_number_of_states_in_nfa(&self) -> usize {
         self.evaluate_number_of_states_in_nfa().number_of_states
     }
 

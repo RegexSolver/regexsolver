@@ -59,8 +59,8 @@ impl FastAutomaton {
         Ok(())
     }
 
-    /// Returns a new `FastAutomaton` representing the substraction of `self` and `other`.
-    pub fn subtraction(&self, other: &FastAutomaton) -> Result<FastAutomaton, EngineError> {
+    /// Computes the difference between `self` and `other`.
+    pub fn difference(&self, other: &FastAutomaton) -> Result<FastAutomaton, EngineError> {
         let mut complement = other.clone();
         match complement.complement() {
             Ok(()) => self.intersection(&complement),

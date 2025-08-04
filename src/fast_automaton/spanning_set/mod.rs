@@ -2,13 +2,13 @@ use std::slice::Iter;
 
 use ahash::AHashSet;
 
-#[cfg(feature = "serde")]
+#[cfg(feature = "serializable")]
 use serde::{Deserialize, Serialize};
 
 use crate::CharRange;
 
 /// Contains a set of [`CharRange`] that span all the transition of a [`crate::FastAutomaton`].
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serializable", derive(Serialize, Deserialize))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SpanningSet(Vec<CharRange>, CharRange);
 
@@ -91,13 +91,13 @@ impl SpanningSet {
                     let other_set = spanning_ranges.swap_remove(index);
                     let intersection_set = set.intersection(&other_set);
                     new_spanning_ranges.insert(intersection_set);
-                    let subtraction_set = set.difference(&other_set);
-                    if !subtraction_set.is_empty() {
-                        new_spanning_ranges.insert(subtraction_set);
+                    let difference_set = set.difference(&other_set);
+                    if !difference_set.is_empty() {
+                        new_spanning_ranges.insert(difference_set);
                     }
-                    let subtraction_set = other_set.difference(&set);
-                    if !subtraction_set.is_empty() {
-                        new_spanning_ranges.insert(subtraction_set);
+                    let difference_set = other_set.difference(&set);
+                    if !difference_set.is_empty() {
+                        new_spanning_ranges.insert(difference_set);
                     }
                     changed = true;
                 } else if !set.is_empty() {

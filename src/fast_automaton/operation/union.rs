@@ -8,12 +8,12 @@ use crate::{error::EngineError, execution_profile::ExecutionProfile};
 use super::*;
 
 impl FastAutomaton {
-    /// Returns a new `FastAutomaton` representing the union of `self` and `other`.
+    /// Computes the union between `self` and `other`.
     pub fn union(&self, other: &FastAutomaton) -> Result<Self, EngineError> {
         Self::union_all([self, other])
     }
 
-    /// Returns a new `FastAutomaton` that is the union of all automatons in the given iterator.
+    /// Computes the union of all automatons in the given iterator.
     pub fn union_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(automatons: I) -> Result<Self, EngineError>
     {
         let mut new_automaton = FastAutomaton::new_empty();
@@ -23,7 +23,7 @@ impl FastAutomaton {
         Ok(new_automaton)
     }
 
-    /// Returns a new `FastAutomaton` that is the union of all automatons in the given parallel iterator.
+    /// Computes in parallel the union of all automatons in the given iterator.
     pub fn union_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(automatons: I) -> Result<Self, EngineError>
     {
         let execution_profile = ExecutionProfile::get();

@@ -131,7 +131,7 @@ impl ExecutionProfile {
         result
     }
 
-    /// Like [`run`], but does *not* reset its start time. Useful if you want to pass a profile state to a new thread.
+    /// Like [`ExecutionProfile::run`], but does *not* reset its start time. Useful if you want to pass a profile state to a new thread.
     pub fn apply<F, R>(&self, f: F) -> R
     where
         F: FnOnce() -> R,

@@ -38,7 +38,7 @@ impl FastAutomaton {
         automaton
     }
 
-    /// Creates an automaton that matches one of the characters in the given `CharRange`.
+    /// Creates an automaton that matches one of the characters in the given [`CharRange`].
     pub fn new_from_range(range: &CharRange) -> Result<Self, EngineError> {
         let mut automaton = Self::new_empty();
         if range.is_empty() {
@@ -75,7 +75,7 @@ impl FastAutomaton {
 
     /// Creates a new transition with the given condition; the condition must follow the automaton’s current spanning set.
     ///
-    /// This method accepts a `Condition` rather than a raw character set. To build a `Condition`, call:
+    /// This method accepts a [`Condition`] rather than a raw character set. To build a [`Condition`], call:
     /// ```rust
     /// # use regexsolver::CharRange;
     /// # use regexsolver::fast_automaton::{condition::Condition, spanning_set::SpanningSet};
@@ -83,7 +83,7 @@ impl FastAutomaton {
     /// # let spanning_set = SpanningSet::new_total();
     /// Condition::from_range(&range, &spanning_set);
     /// ```
-    /// where `spanning_set` is the automaton's current `SpanningSet`. The `CharRange` you pass must be fully covered by that spanning set. If it isn't, you have two options:
+    /// where `spanning_set` is the automaton's current [`SpanningSet`]. The [`CharRange`] you pass must be fully covered by that spanning set. If it isn't, you have two options:
     ///
     /// 1. Merge an existing spanning set with another:
     /// ```rust

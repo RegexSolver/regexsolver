@@ -1,5 +1,6 @@
 use std::fmt::{self};
 
+#[cfg(feature = "serializable")]
 use crate::tokenizer::token::TokenError;
 
 /// An error thrown by the engine.
@@ -19,6 +20,7 @@ pub enum EngineError {
     ConditionInvalidRange,
     /// The provided index is out of bound of the condition.
     ConditionIndexOutOfBound,
+    #[cfg(feature = "serializable")]
     /// There is an error with one of the token.
     TokenError(TokenError),
     /// Computing the cardinality of the provided automaton failed.
@@ -37,6 +39,7 @@ impl fmt::Display for EngineError {
                 write!(f, "The automaton has too many states.")
             }
             EngineError::RegexSyntaxError(err) => write!(f, "{err}."),
+            #[cfg(feature = "serializable")]
             EngineError::TokenError(err) => write!(f, "{err}."),
             EngineError::ConditionInvalidRange => write!(
                 f,

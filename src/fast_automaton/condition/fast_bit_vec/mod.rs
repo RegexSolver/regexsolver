@@ -124,10 +124,10 @@ impl FastBitVec {
     }
 
     pub fn get_bits(&self) -> Vec<bool> {
-        let mut hot_bits = Vec::with_capacity(self.n);
+        let mut bits = Vec::with_capacity(self.n);
         for i in 0..self.n {
-            hot_bits.push(self.get(i).unwrap());
+            bits.push(self.get(i).unwrap());
         }
-        hot_bits
+        bits
     }
 }

@@ -1,10 +1,10 @@
-#[cfg(feature = "serde")]
+#[cfg(feature = "serializable")]
 use serde::{Deserialize, Serialize};
 
 /// Represent a number.
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serializable", derive(Serialize, Deserialize))]
 #[derive(PartialEq, Eq, Debug, Clone)]
-#[cfg_attr(feature = "serde", serde(tag = "type", content = "value"))]
+#[cfg_attr(feature = "serializable", serde(tag = "type", content = "value"))]
 pub enum Cardinality<U> {
     /// An infinite number.
     Infinite,

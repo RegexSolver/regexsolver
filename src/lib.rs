@@ -12,7 +12,7 @@ use nohash_hasher::NoHashHasher;
 use rayon::prelude::*;
 use regex::RegularExpression;
 use regex_charclass::{char::Char, irange::RangeSet};
-#[cfg(feature = "serde")]
+#[cfg(feature = "serializable")]
 use serde::{Deserialize, Serialize};
 
 use crate::execution_profile::ExecutionProfile;
@@ -22,6 +22,7 @@ pub mod error;
 pub mod execution_profile;
 pub mod fast_automaton;
 pub mod regex;
+#[cfg(feature = "serializable")]
 pub mod tokenizer;
 
 pub type IntMap<Key, Value> = HashMap<Key, Value, BuildHasherDefault<NoHashHasher<Key>>>;
@@ -30,68 +31,67 @@ pub type CharRange = RangeSet<Char>;
 
 /// Represents a term that can be either a regular expression or a finite automaton. This term can be manipulated with a wide range of operations.
 ///
+/// # Example
 /// ```rust
 /// use regexsolver::Term;
+/// use regexsolver::error::EngineError;
 ///
-/// // Create terms from regex
-/// let t1 = Term::from_pattern("abc.*").unwrap();
-/// let t2 = Term::from_pattern(".*xyz").unwrap();
+/// fn main() -> Result<(), EngineError> {
+///     // Create terms from regex
+///     let t1 = Term::from_pattern("abc.*")?;
+///     let t2 = Term::from_pattern(".*xyz")?;
 ///
-/// // Concatenate
-/// let concat = t1.concat(&[t2]).unwrap();
-/// assert_eq!(concat.to_pattern().unwrap(), "abc.*xyz");
+///     // Concatenate
+///     let concat = t1.concat(&[t2])?;
+///     assert_eq!(concat.to_pattern().unwrap(), "abc.*xyz");
 ///
-/// // Union
-/// let union = t1.union(&[Term::from_pattern("fgh").unwrap()]).unwrap();
-/// assert_eq!(union.to_pattern().unwrap(), "(abc.*|fgh)");
+///     // Union
+///     let union = t1.union(&[Term::from_pattern("fgh")?])?;
+///     assert_eq!(union.to_pattern().unwrap(), "(abc.*|fgh)");
 ///
-/// // Intersection
-/// let inter = Term::from_pattern("(ab|xy){2}")
-///     .unwrap()
-///     .intersection(&[Term::from_pattern(".*xy").unwrap()])
-///     .unwrap(); // (ab|xy)xy
-/// assert_eq!(inter.to_pattern().unwrap(), "(ab|xy)xy");
+///     // Intersection
+///     let inter = Term::from_pattern("(ab|xy){2}")?
+///         .intersection(&[Term::from_pattern(".*xy")?])?;
+///     assert_eq!(inter.to_pattern().unwrap(), "(ab|xy)xy");
 ///
-/// // Subtraction
-/// let diff = Term::from_pattern("a*")
-///     .unwrap()
-///     .subtraction(&Term::from_pattern("").unwrap())
-///     .unwrap();
-/// assert_eq!(diff.to_pattern().unwrap(), "a+");
+///     // Difference
+///     let diff = Term::from_pattern("a*")?
+///         .difference(&Term::from_pattern("")?)?;
+///     assert_eq!(diff.to_pattern().unwrap(), "a+");
 ///
-/// // Repetition
-/// let rep = Term::from_pattern("abc")
-///     .unwrap()
-///     .repeat(2, Some(4))
-///     .unwrap();
-/// assert_eq!(rep.to_pattern().unwrap(), "(abc){2,4}");
+///     // Repetition
+///     let rep = Term::from_pattern("abc")?
+///         .repeat(2, Some(4))?;
+///     assert_eq!(rep.to_pattern().unwrap(), "(abc){2,4}");
 ///
-/// // Analyze
-/// assert_eq!(rep.get_length(), (Some(6), Some(12)));
-/// assert!(!rep.is_empty());
+///     // Analyze
+///     assert_eq!(rep.get_length(), (Some(6), Some(12)));
+///     assert!(!rep.is_empty());
 ///
-/// // Generate examples
-/// let samples = Term::from_pattern("(x|y){1,3}")
-///     .unwrap()
-///     .generate_strings(5)
-///     .unwrap();
-/// println!("Some matches: {:?}", samples);
+///     // Generate examples
+///     let samples = Term::from_pattern("(x|y){1,3}")?
+///         .generate_strings(5)?;
+///     println!("Some matches: {:?}", samples);
 ///
-/// // Equivalence & subset
-/// let a = Term::from_pattern("a+").unwrap();
-/// let b = Term::from_pattern("a*").unwrap();
-/// assert!(!a.are_equivalent(&b).unwrap());
-/// assert!(a.is_subset_of(&b).unwrap());
+///     // Equivalence & subset
+///     let a = Term::from_pattern("a+")?;
+///     let b = Term::from_pattern("a*")?;
+///     assert!(!a.are_equivalent(&b)?);
+///     assert!(a.is_subset_of(&b)?);
+///
+///     Ok(())
+/// }
+/// # main();
 /// ```
 ///
-/// To put constraint and limitation on the execution of operations please refer to [`execution_profile::ExecutionProfile`].
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+/// To put constraint and limitation on the execution of operations please refer to [`ExecutionProfile`].
+#[cfg_attr(feature = "serializable", derive(Serialize, Deserialize))]
 #[derive(Clone, PartialEq, Eq, Debug)]
-#[cfg_attr(feature = "serde", serde(tag = "type", content = "value"))]
+#[cfg_attr(feature = "serializable", serde(tag = "type", content = "value"))]
 pub enum Term {
-    #[cfg_attr(feature = "serde", serde(rename = "regex"))]
+    #[cfg_attr(feature = "serializable", serde(rename = "regex"))]
     RegularExpression(RegularExpression),
-    #[cfg_attr(feature = "serde", serde(rename = "fair"))]
+    #[cfg_attr(feature = "serializable", serde(rename = "fair"))]
     Automaton(FastAutomaton),
 }
 
@@ -120,7 +120,7 @@ impl Term {
         Term::RegularExpression(RegularExpression::new_empty_string())
     }
 
-    /// Parses the provided pattern and returns a new `Term` holding the resulting `RegularExpression`.
+    /// Parses the provided pattern and returns a new `Term` holding the resulting [`RegularExpression`].
     ///
     /// # Example:
     ///
@@ -133,12 +133,12 @@ impl Term {
         Ok(Term::RegularExpression(RegularExpression::new(pattern)?))
     }
 
-    /// Creates a new `Term` holding the provided `RegularExpression`.
+    /// Creates a new `Term` holding the provided [`RegularExpression`].
     pub fn from_regex(regex: RegularExpression) -> Self {
         Term::RegularExpression(regex)
     }
 
-    /// Creates a new `Term` holding the provided `FastAutomaton`.
+    /// Creates a new `Term` holding the provided [`FastAutomaton`].
     pub fn from_automaton(automaton: FastAutomaton) -> Self {
         Term::Automaton(automaton)
     }
@@ -295,7 +295,7 @@ impl Term {
         Ok(Term::Automaton(return_automaton))
     }
 
-    /// Computes the difference between `self` and the given subtrahend.
+    /// Computes the difference between `self` and `other`.
     ///
     /// # Example:
     ///
@@ -305,26 +305,20 @@ impl Term {
     /// let term1 = Term::from_pattern("(abc|de)").unwrap();
     /// let term2 = Term::from_pattern("de").unwrap();
     ///
-    /// let subtraction = term1.subtraction(&term2).unwrap();
+    /// let difference = term1.difference(&term2).unwrap();
     ///
-    /// if let Term::RegularExpression(regex) = subtraction {
+    /// if let Term::RegularExpression(regex) = difference {
     ///     assert_eq!("abc", regex.to_string());
     /// }
     /// ```
-    pub fn subtraction(&self, subtrahend: &Term) -> Result<Term, EngineError> {
+    pub fn difference(&self, other: &Term) -> Result<Term, EngineError> {
         let minuend_automaton = self.to_automaton()?;
-        let subtrahend_automaton = subtrahend.to_automaton()?;
+        let subtrahend_automaton = other.to_automaton()?;
         let subtrahend_automaton =
             Self::determinize_subtrahend(&minuend_automaton, &subtrahend_automaton)?;
-        let return_automaton = minuend_automaton.subtraction(&subtrahend_automaton)?;
+        let return_automaton = minuend_automaton.difference(&subtrahend_automaton)?;
 
         Ok(Term::Automaton(return_automaton))
-    }
-
-    /// See [`Self::subtraction`].
-    #[inline]
-    pub fn difference(&self, subtrahend: &Term) -> Result<Term, EngineError> {
-        self.subtraction(subtrahend)
     }
 
     /// Computes the repetition of the current term between `min` and `max_opt` times; if `max_opt` is `None`, the repetition is unbounded.
@@ -473,7 +467,7 @@ impl Term {
         }
     }
 
-    /// Converts the term to a `FastAutomaton`.
+    /// Converts the term to a [`FastAutomaton`].
     pub fn to_automaton(&self) -> Result<Cow<FastAutomaton>, EngineError> {
         Ok(match self {
             Term::RegularExpression(regex) => Cow::Owned(regex.to_automaton()?),
@@ -569,11 +563,11 @@ mod tests {
     }
 
     #[test]
-    fn test_subtraction_1() -> Result<(), String> {
+    fn test_difference_1() -> Result<(), String> {
         let regex1 = Term::from_pattern("a*").unwrap();
         let regex2 = Term::from_pattern("").unwrap();
 
-        let result = regex1.subtraction(&regex2);
+        let result = regex1.difference(&regex2);
         assert!(result.is_ok());
         let result = result.unwrap().to_pattern().unwrap();
         assert_eq!("a+", result);
@@ -582,11 +576,11 @@ mod tests {
     }
 
     #[test]
-    fn test_subtraction_2() -> Result<(), String> {
+    fn test_difference_2() -> Result<(), String> {
         let regex1 = Term::from_pattern("x*").unwrap();
         let regex2 = Term::from_pattern("(xxx)*").unwrap();
 
-        let result = regex1.subtraction(&regex2);
+        let result = regex1.difference(&regex2);
         assert!(result.is_ok());
         let result = result.unwrap().to_regex().unwrap().into_owned();
         assert_eq!(

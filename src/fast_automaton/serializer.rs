@@ -1,52 +1,16 @@
 use super::*;
 use crate::tokenizer::Tokenizer;
-use lazy_static::lazy_static;
-use rand::Rng;
 use serde::{Deserialize, Serialize};
 use serde::{Deserializer, Serializer, de, ser};
-use std::env;
+
 use z85::{decode, encode};
 
-use sha2::{Digest, Sha256};
-
-use aes_gcm_siv::{
-    Aes256GcmSiv, Nonce,
-    aead::{Aead, KeyInit},
-};
 use flate2::Compression;
 use flate2::read::ZlibDecoder;
 use flate2::write::ZlibEncoder;
 use std::io::prelude::*;
 
 use crate::tokenizer::token::{Token, automaton_token::AutomatonToken};
-
-pub struct FastAutomatonReader {
-    cipher: Aes256GcmSiv,
-}
-
-impl FastAutomatonReader {
-    pub fn new() -> Self {
-        let env_var = env::var("RS_FAIR_SECRET_KEY").unwrap_or("DEFAULT PASSKEY".to_string());
-        let key = Sha256::digest(env_var.as_bytes());
-        FastAutomatonReader {
-            cipher: Aes256GcmSiv::new(&key),
-        }
-    }
-
-    pub fn random_nonce() -> [u8; 12] {
-        let mut nonce = [0u8; 12];
-        rand::thread_rng().fill(&mut nonce);
-        nonce
-    }
-}
-
-lazy_static! {
-    static ref SINGLETON_INSTANCE: FastAutomatonReader = FastAutomatonReader::new();
-}
-
-fn get_fast_automaton_reader() -> &'static FastAutomatonReader {
-    &SINGLETON_INSTANCE
-}
 
 #[derive(Serialize, Deserialize, Debug)]
 struct SerializedAutomaton(Vec<u16>, SpanningSet);
@@ -67,22 +31,7 @@ impl serde::Serialize for FastAutomaton {
                     return Err(ser::Error::custom(err.to_string()));
                 }
 
-                serialized = compress_data(&serialized);
-
-                let nonce = FastAutomatonReader::random_nonce();
-
-                match get_fast_automaton_reader()
-                    .cipher
-                    .encrypt(Nonce::from_slice(&nonce), serialized.as_ref())
-                {
-                    Ok(ciphertext) => {
-                        let mut encrypted = Vec::from_iter(nonce);
-                        encrypted.extend(ciphertext);
-
-                        serializer.serialize_str(&encode(&encrypted))
-                    }
-                    Err(err) => Err(ser::Error::custom(err.to_string())),
-                }
+                serializer.serialize_str(&encode(compress_data(&serialized)))
             }
             Err(err) => Err(ser::Error::custom(err.to_string())),
         }
@@ -96,38 +45,27 @@ impl<'de> serde::Deserialize<'de> for FastAutomaton {
     {
         match String::deserialize(deserializer) {
             Ok(decoded) => match decode(decoded) {
-                Ok(encrypted) => {
-                    let nonce = &encrypted[0..12];
-                    let payload = encrypted[12..].to_vec();
-                    let cipher_result = get_fast_automaton_reader()
-                        .cipher
-                        .decrypt(Nonce::from_slice(nonce), payload.as_ref());
+                Ok(compressed) => {
+                    let payload = decompress_data(&compressed);
 
-                    match cipher_result {
-                        Ok(cipher_result) => {
-                            let decrypted = decompress_data(&cipher_result);
+                    let automaton: Result<
+                        SerializedAutomaton,
+                        ciborium::de::Error<std::io::Error>,
+                    > = ciborium::from_reader(&payload[..]);
+                    match automaton {
+                        Ok(automaton) => {
+                            let mut temp_automaton = FastAutomaton::new_empty();
+                            temp_automaton.spanning_set = automaton.1;
+                            let tokenizer = Tokenizer::new(&temp_automaton);
 
-                            let automaton: Result<
-                                SerializedAutomaton,
-                                ciborium::de::Error<std::io::Error>,
-                            > = ciborium::from_reader(&decrypted[..]);
-                            match automaton {
-                                Ok(automaton) => {
-                                    let mut temp_automaton = FastAutomaton::new_empty();
-                                    temp_automaton.spanning_set = automaton.1;
-                                    let tokenizer = Tokenizer::new(&temp_automaton);
-
-                                    match tokenizer.from_embedding(
-                                        &automaton
-                                            .0
-                                            .into_iter()
-                                            .map(AutomatonToken::from_fair_token)
-                                            .collect::<Vec<AutomatonToken>>(),
-                                    ) {
-                                        Ok(res) => Ok(res),
-                                        Err(err) => Err(de::Error::custom(err.to_string())),
-                                    }
-                                }
+                            match tokenizer.from_embedding(
+                                &automaton
+                                    .0
+                                    .into_iter()
+                                    .map(AutomatonToken::from_fair_token)
+                                    .collect::<Vec<AutomatonToken>>(),
+                            ) {
+                                Ok(res) => Ok(res),
                                 Err(err) => Err(de::Error::custom(err.to_string())),
                             }
                         }
@@ -192,8 +130,8 @@ mod tests {
         let unserialized = unserialized.determinize().unwrap();
         let automaton = automaton.determinize().unwrap();
 
-        assert!(automaton.subtraction(&unserialized).unwrap().is_empty());
-        assert!(unserialized.subtraction(&automaton).unwrap().is_empty());
+        assert!(automaton.difference(&unserialized).unwrap().is_empty());
+        assert!(unserialized.difference(&automaton).unwrap().is_empty());
     }
 
     #[test]
@@ -208,18 +146,18 @@ mod tests {
             .unwrap();
         let automaton2 = automaton2.determinize().unwrap();
 
-        let subtraction = automaton1.subtraction(&automaton2).unwrap();
+        let difference = automaton1.difference(&automaton2).unwrap();
 
-        let serialized = serde_json::to_string(&subtraction).unwrap();
+        let serialized = serde_json::to_string(&difference).unwrap();
         println!("{serialized}");
 
         let unserialized: FastAutomaton = serde_json::from_str(&serialized).unwrap();
 
         let unserialized = unserialized.determinize().unwrap();
-        let automaton = subtraction.determinize().unwrap();
+        let automaton = difference.determinize().unwrap();
 
-        assert!(automaton.subtraction(&unserialized).unwrap().is_empty());
-        assert!(unserialized.subtraction(&automaton).unwrap().is_empty());
+        assert!(automaton.difference(&unserialized).unwrap().is_empty());
+        assert!(unserialized.difference(&automaton).unwrap().is_empty());
 
         Ok(())
     }

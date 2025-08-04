@@ -8,7 +8,7 @@ mod union;
 mod concat;
 mod determinize;
 mod intersection;
-mod subtraction;
+mod difference;
 mod repeat;
 
 impl FastAutomaton {
