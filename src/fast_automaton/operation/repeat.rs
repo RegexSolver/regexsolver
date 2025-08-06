@@ -27,9 +27,7 @@ impl FastAutomaton {
                 self.accept(new_state);
             }
 
-            for to_state in self.direct_states_vec(&self.start_state) {
-                self.add_epsilon_transition(new_state, to_state);
-            }
+            self.add_epsilon_transition(new_state, self.start_state);
             self.start_state = new_state;
 
             if max_opt.is_none() {
@@ -63,7 +61,8 @@ impl FastAutomaton {
                 && automaton_to_repeat.state_out_degree(accept_state) == 0
                 && automaton_to_repeat.state_in_degree(automaton_to_repeat.start_state) == 0
             {
-                automaton_to_repeat.add_epsilon_transition(accept_state, automaton_to_repeat.start_state);
+                automaton_to_repeat
+                    .add_epsilon_transition(accept_state, automaton_to_repeat.start_state);
                 let old_start_state = automaton_to_repeat.start_state;
                 automaton_to_repeat.start_state = accept_state;
                 automaton_to_repeat.remove_state(old_start_state);
@@ -103,6 +102,26 @@ impl FastAutomaton {
         if min == 0 {
             self.accept(self.start_state);
         }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::regex::RegularExpression;
+
+    #[test]
+    fn test_repeat_1() -> Result<(), String> {
+        let automaton = RegularExpression::new("(a*,a*)?")
+            .unwrap()
+            .to_automaton()
+            .unwrap();
+        assert!(automaton.match_string(""));
+        assert!(automaton.match_string(","));
+        assert!(automaton.match_string("aaa,"));
+        assert!(automaton.match_string("aaaa,aa"));
+        assert!(!automaton.match_string("a"));
+        assert!(!automaton.match_string("aa"));
         Ok(())
     }
 }
