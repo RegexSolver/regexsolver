@@ -1,6 +1,6 @@
 use token::TokenError;
 
-use crate::{CharRange, error::EngineError, fast_automaton::condition::Condition};
+use crate::{error::EngineError, fast_automaton::{condition::Condition, serializer::tokenizer::token::automaton_token::AutomatonToken}, CharRange};
 
 use self::token::range_token::RangeToken;
 
@@ -77,7 +77,7 @@ impl Tokenizer<'_> {
                     range = range.union(self.range_tokenizer.token_to_range(r).unwrap());
                 }
                 AutomatonToken::State(s) => {
-                    while !automaton.has_state((*s).into()) {
+                    while !automaton.has_state(*s) {
                         automaton.new_state();
                     }
                     if let Some(fs) = from_state {
@@ -85,9 +85,9 @@ impl Tokenizer<'_> {
                             Self::apply_transition(&mut automaton, fs, ts, &range)?;
                             range = CharRange::empty();
                         }
-                        to_state = Some((*s).into());
+                        to_state = Some(*s);
                     } else {
-                        from_state = Some((*s).into());
+                        from_state = Some(*s);
                     }
                 }
                 AutomatonToken::AcceptState => {
@@ -129,8 +129,6 @@ impl Tokenizer<'_> {
 
 #[cfg(test)]
 mod tests {
-    use embed_automaton::token::Token;
-
     use crate::regex::RegularExpression;
 
     use super::*;
@@ -168,11 +166,14 @@ mod tests {
         let tokenizer = Tokenizer::new(&automaton);
         let embedding = tokenizer.to_embedding();
 
-        // FAIR
-        let embedding_u16 = AutomatonToken::to_fair_tokens(&embedding).unwrap();
-        let embedding: Vec<AutomatonToken> = embedding_u16
+        let number_of_bases = automaton.get_spanning_set().get_number_of_spanning_ranges();
+        let number_of_states = automaton.get_number_of_states();
+
+        let embedding_usize =
+            AutomatonToken::to_tokens(&embedding, number_of_bases, number_of_states).unwrap();
+        let embedding: Vec<AutomatonToken> = embedding_usize
             .iter()
-            .map(|&t| AutomatonToken::from_fair_token(t))
+            .map(|&t| AutomatonToken::from_token(t, number_of_bases, number_of_states))
             .collect();
 
         let unembedded_automaton = tokenizer.from_embedding(&embedding).unwrap();

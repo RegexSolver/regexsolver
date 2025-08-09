@@ -22,8 +22,6 @@ pub mod error;
 pub mod execution_profile;
 pub mod fast_automaton;
 pub mod regex;
-#[cfg(feature = "serializable")]
-pub mod tokenizer;
 
 pub type IntMap<Key, Value> = HashMap<Key, Value, BuildHasherDefault<NoHashHasher<Key>>>;
 pub type IntSet<Key> = HashSet<Key, BuildHasherDefault<NoHashHasher<Key>>>;

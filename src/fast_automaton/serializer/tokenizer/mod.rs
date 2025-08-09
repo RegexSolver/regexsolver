@@ -1,16 +1,15 @@
 use std::{cmp::Ordering, collections::VecDeque, vec};
 
-use ahash::HashMapExt;
+use crate::fast_automaton::serializer::tokenizer::range_tokenizer::RangeTokenizer;
 use crate::fast_automaton::spanning_set::SpanningSet;
 use crate::{
-    fast_automaton::{FastAutomaton, State},
     IntMap, IntSet,
+    fast_automaton::{FastAutomaton, State},
 };
+use ahash::HashMapExt;
 
-use self::{range_tokenizer::RangeTokenizer, token::automaton_token::AutomatonToken};
 
 mod embed_automaton;
-mod embed_regex;
 pub mod range_tokenizer;
 pub mod token;
 
@@ -18,7 +17,7 @@ pub mod token;
 pub struct Tokenizer<'a> {
     range_tokenizer: RangeTokenizer<'a>,
     automaton: &'a FastAutomaton,
-    state_to_token: IntMap<usize, u16>,
+    state_to_token: IntMap<usize, usize>,
 }
 
 impl Tokenizer<'_> {
@@ -28,7 +27,7 @@ impl Tokenizer<'_> {
 
         worklist.push_front(automaton.get_start_state());
 
-        let mut state_counter: u16 = 0;
+        let mut state_counter = 0;
         let mut state_to_token = IntMap::with_capacity(automaton.get_number_of_states());
 
         while let Some(current_state) = worklist.pop_back() {

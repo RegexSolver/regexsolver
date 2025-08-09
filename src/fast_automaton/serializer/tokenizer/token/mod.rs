@@ -4,7 +4,6 @@ use super::*;
 
 pub mod automaton_token;
 pub mod range_token;
-pub mod regex_token;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum TokenError {
@@ -23,22 +22,5 @@ impl Display for TokenError {
             TokenError::UnknownToken => write!(f, "UnknownToken"),
             TokenError::SyntaxError => write!(f, "SyntaxError"),
         }
-    }
-}
-
-pub trait Token {
-    fn from_fair_token(token: u16) -> Self;
-
-    fn to_fair_token(&self) -> Result<u16, TokenError>;
-
-    fn to_fair_tokens(tokens: &[Self]) -> Result<Vec<u16>, TokenError>
-    where
-        Self: Sized,
-    {
-        let mut vec = Vec::with_capacity(tokens.len());
-        for token in tokens {
-            vec.push(token.to_fair_token()?);
-        }
-        Ok(vec)
     }
 }

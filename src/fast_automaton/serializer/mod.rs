@@ -1,5 +1,7 @@
+use crate::fast_automaton::serializer::tokenizer::token::automaton_token::AutomatonToken;
+use crate::fast_automaton::serializer::tokenizer::Tokenizer;
+
 use super::*;
-use crate::tokenizer::Tokenizer;
 use serde::{Deserialize, Serialize};
 use serde::{Deserializer, Serializer, de, ser};
 
@@ -10,10 +12,11 @@ use flate2::read::ZlibDecoder;
 use flate2::write::ZlibEncoder;
 use std::io::prelude::*;
 
-use crate::tokenizer::token::{Token, automaton_token::AutomatonToken};
+#[cfg(feature = "serializable")]
+pub mod tokenizer;
 
 #[derive(Serialize, Deserialize, Debug)]
-struct SerializedAutomaton(Vec<u16>, SpanningSet);
+struct SerializedAutomaton(Vec<usize>, SpanningSet, usize);
 
 impl serde::Serialize for FastAutomaton {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -21,12 +24,17 @@ impl serde::Serialize for FastAutomaton {
         S: Serializer,
     {
         let tokenizer = Tokenizer::new(self);
-        match AutomatonToken::to_fair_tokens(&tokenizer.to_embedding()) {
+        let number_of_states = self.get_number_of_states();
+        match AutomatonToken::to_tokens(
+            &tokenizer.to_embedding(),
+            self.get_spanning_set().get_number_of_spanning_ranges(),
+            number_of_states,
+        ) {
             Ok(tokens) => {
                 let serialized_automaton =
-                    SerializedAutomaton(tokens, self.get_spanning_set().clone());
+                    SerializedAutomaton(tokens, self.get_spanning_set().clone(), number_of_states);
 
-                let mut serialized = Vec::with_capacity(self.get_number_of_states() * 8);
+                let mut serialized = Vec::with_capacity(number_of_states * 8);
                 if let Err(err) = ciborium::into_writer(&serialized_automaton, &mut serialized) {
                     return Err(ser::Error::custom(err.to_string()));
                 }
@@ -56,13 +64,22 @@ impl<'de> serde::Deserialize<'de> for FastAutomaton {
                         Ok(automaton) => {
                             let mut temp_automaton = FastAutomaton::new_empty();
                             temp_automaton.spanning_set = automaton.1;
+                            let number_of_states = automaton.2;
+                            let number_of_bases =
+                                temp_automaton.spanning_set.get_number_of_spanning_ranges();
                             let tokenizer = Tokenizer::new(&temp_automaton);
 
                             match tokenizer.from_embedding(
                                 &automaton
                                     .0
                                     .into_iter()
-                                    .map(AutomatonToken::from_fair_token)
+                                    .map(|t| {
+                                        AutomatonToken::from_token(
+                                            t,
+                                            number_of_bases,
+                                            number_of_states,
+                                        )
+                                    })
                                     .collect::<Vec<AutomatonToken>>(),
                             ) {
                                 Ok(res) => Ok(res),

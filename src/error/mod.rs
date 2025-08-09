@@ -1,7 +1,7 @@
 use std::fmt::{self};
 
 #[cfg(feature = "serializable")]
-use crate::tokenizer::token::TokenError;
+use crate::fast_automaton::serializer::tokenizer::token::TokenError;
 
 /// An error thrown by the engine.
 #[derive(Debug, PartialEq, Eq)]

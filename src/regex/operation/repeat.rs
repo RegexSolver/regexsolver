@@ -39,6 +39,7 @@ impl RegularExpression {
         }
     }
 
+    /// Evaluate if the repetition `(r{i_min,i_max_opt}){o_min,o_max_opt}` can be simplified to `r{i_min*o_min,i_max_opt*o_max_opt}`.
     fn can_simplify_nested_repetition(
         i_min: u32,
         i_max_opt: Option<u32>,
@@ -56,8 +57,10 @@ impl RegularExpression {
             // o_min * i_max >= (o_min + 1) * i_min - 1
             // <=> o_min * (i_max - i_min) >= i_min - 1
             o_min.saturating_mul(i_max.saturating_sub(i_min)) >= i_min.saturating_sub(1)
+        } else if o_min > 0 {
+            true
         } else {
-            if o_min > 0 { true } else { i_min <= 1 }
+            i_min <= 1
         }
     }
 }
