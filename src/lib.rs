@@ -449,19 +449,11 @@ impl Term {
     pub fn get_cardinality(&self) -> Result<Cardinality<u32>, EngineError> {
         match self {
             Term::RegularExpression(regex) => Ok(regex.get_cardinality()),
-            Term::Automaton(automaton) => {
-                let cardinality = if !automaton.is_determinitic() {
-                    automaton.determinize()?.get_cardinality()
-                } else {
-                    automaton.get_cardinality()
-                };
-
-                if let Some(cardinality) = cardinality {
-                    Ok(cardinality)
-                } else {
-                    Err(EngineError::CannotComputeAutomatonCardinality)
-                }
-            }
+            Term::Automaton(automaton) => Ok(if !automaton.is_determinitic() {
+                automaton.determinize()?.get_cardinality()
+            } else {
+                automaton.get_cardinality()
+            }),
         }
     }
 

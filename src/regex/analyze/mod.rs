@@ -232,7 +232,7 @@ mod tests {
 
         //automaton.to_dot();
 
-        let expected = automaton.get_cardinality().unwrap();
+        let expected = automaton.get_cardinality();
 
         assert_eq!(expected, cardinality);
     }

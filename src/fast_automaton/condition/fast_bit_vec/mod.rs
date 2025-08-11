@@ -7,7 +7,7 @@ pub struct FastBitVec {
 impl std::fmt::Display for FastBitVec {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         for i in 0..self.n {
-            let bit = if self.get(i).unwrap() { 1 } else { 0 };
+            let bit = if self.get(i) { 1 } else { 0 };
             write!(f, "{bit}")?;
         }
         Ok(())
@@ -48,13 +48,11 @@ impl FastBitVec {
     }
 
     #[inline]
-    pub fn get(&self, i: usize) -> Option<bool> {
-        if i >= self.n {
-            return None;
-        }
+    pub fn get(&self, i: usize) -> bool {
+        assert!(i < self.n, "The provided bit index is out of bound.");
         let w = i / 64;
         let b = i % 64;
-        self.bits.get(w).map(|&block| (block & (1 << b)) != 0)
+        (self.bits[w] & (1 << b)) != 0
     }
 
     #[inline]
@@ -126,7 +124,7 @@ impl FastBitVec {
     pub fn get_bits(&self) -> Vec<bool> {
         let mut bits = Vec::with_capacity(self.n);
         for i in 0..self.n {
-            bits.push(self.get(i).unwrap());
+            bits.push(self.get(i));
         }
         bits
     }

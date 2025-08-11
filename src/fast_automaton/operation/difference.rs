@@ -6,9 +6,8 @@ use super::*;
 
 impl FastAutomaton {
     fn totalize(&mut self) -> Result<(), EngineError> {
-        if !self.is_determinitic() {
-            return Err(EngineError::AutomatonShouldBeDeterministic);
-        }
+        assert!(self.is_determinitic(), "The automaton should be deterministic.");
+
         let crash_state = self.new_state();
         let mut transitions_to_crash_state: IntMap<State, Condition> =
             IntMap::with_capacity_and_hasher(

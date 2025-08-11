@@ -4,18 +4,17 @@ use super::*;
 
 impl FastAutomaton {
     /// Returns the cardinality of the automaton (i.e., the number of possible matched strings).
-    pub fn get_cardinality(&self) -> Option<Cardinality<u32>> {
+    pub fn get_cardinality(&self) -> Cardinality<u32> {
         if self.is_empty() {
-            return Some(Cardinality::Integer(0));
+            return Cardinality::Integer(0);
         } else if self.cyclic || self.is_total() {
-            return Some(Cardinality::Infinite);
-        } else if !self.deterministic {
-            return None;
+            return Cardinality::Infinite;
         }
+        assert!(self.is_determinitic(), "The automaton should be deterministic.");
 
         let topologically_sorted_states = self.topological_sorted_states();
         if topologically_sorted_states.is_none() {
-            return Some(Cardinality::Infinite);
+            return Cardinality::Infinite;
         }
         let topologically_sorted_states = topologically_sorted_states.unwrap();
 
@@ -41,7 +40,7 @@ impl FastAutomaton {
                         }
                     }
 
-                    return Some(Cardinality::BigInteger);
+                    return Cardinality::BigInteger;
                 }
             }
         }
@@ -53,10 +52,10 @@ impl FastAutomaton {
                     temp_cardinality = add;
                     continue;
                 }
-                return Some(Cardinality::BigInteger);
+                return Cardinality::BigInteger;
             }
         }
-        Some(Cardinality::Integer(temp_cardinality))
+        Cardinality::Integer(temp_cardinality)
     }
 
     fn topological_sorted_states(&self) -> Option<Vec<usize>> {

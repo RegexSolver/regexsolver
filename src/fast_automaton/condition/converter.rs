@@ -59,14 +59,10 @@ impl<'a, 'b> ConditionConverter<'a, 'b> {
     pub fn convert(&self, condition: &Condition) -> Result<Condition, EngineError> {
         let mut new_condition = Condition::empty(self.to_spanning_set);
         for (from_index, to_indexes) in self.equivalence_map.iter().enumerate() {
-            if let Some(has) = condition.0.get(from_index) {
-                if has && !to_indexes.is_empty() {
-                    to_indexes.iter().for_each(|&to_index| {
-                        new_condition.0.set(to_index, true);
-                    });
-                }
-            } else {
-                return Err(EngineError::ConditionIndexOutOfBound);
+            if condition.0.get(from_index) && !to_indexes.is_empty() {
+                to_indexes.iter().for_each(|&to_index| {
+                    new_condition.0.set(to_index, true);
+                });
             }
         }
 
@@ -86,8 +82,8 @@ impl<'a, 'b> ConditionConverter<'a, 'b> {
 
 #[cfg(test)]
 mod tests {
-    use regex_charclass::{char::Char, irange::{range::AnyRange}};
     use crate::CharRange;
+    use regex_charclass::{char::Char, irange::range::AnyRange};
 
     use super::*;
 

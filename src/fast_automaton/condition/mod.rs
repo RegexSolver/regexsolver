@@ -1,9 +1,9 @@
 use std::hash::Hash;
 
 use fast_bit_vec::FastBitVec;
-use regex_charclass::{char::Char, CharacterClass};
+use regex_charclass::{CharacterClass, char::Char};
 
-use crate::{error::EngineError, CharRange};
+use crate::{CharRange, error::EngineError};
 
 use super::spanning_set::SpanningSet;
 pub mod converter;
@@ -76,12 +76,8 @@ impl Condition {
             .iter()
             .enumerate()
         {
-            if let Some(has) = self.0.get(i) {
-                if has {
-                    range = range.union(base);
-                }
-            } else {
-                return Err(EngineError::ConditionIndexOutOfBound);
+            if self.0.get(i) {
+                range = range.union(base);
             }
         }
 
@@ -193,11 +189,17 @@ mod tests {
         let empty = Condition::empty(&spanning_set);
         //println!("{empty}");
         assert!(empty.is_empty());
-        assert_eq!(vec![false, false, false, false], empty.get_binary_representation());
+        assert_eq!(
+            vec![false, false, false, false],
+            empty.get_binary_representation()
+        );
         let total = Condition::total(&spanning_set);
         //println!("{total}");
         assert!(total.is_total());
-        assert_eq!(vec![true, true, true, true], total.get_binary_representation());
+        assert_eq!(
+            vec![true, true, true, true],
+            total.get_binary_representation()
+        );
 
         assert_eq!(CharRange::empty(), empty.to_range(&spanning_set).unwrap());
         assert_eq!(CharRange::total(), total.to_range(&spanning_set).unwrap());
