@@ -74,8 +74,8 @@ pub type CharRange = RangeSet<Char>;
 ///     // Equivalence & subset
 ///     let a = Term::from_pattern("a+")?;
 ///     let b = Term::from_pattern("a*")?;
-///     assert!(!a.are_equivalent(&b)?);
-///     assert!(a.is_subset_of(&b)?);
+///     assert!(!a.equivalent(&b)?);
+///     assert!(a.subset(&b)?);
 ///
 ///     Ok(())
 /// }
@@ -379,9 +379,9 @@ impl Term {
     /// let term1 = Term::from_pattern("(abc|de)").unwrap();
     /// let term2 = Term::from_pattern("(abc|de)*").unwrap();
     ///
-    /// assert!(!term1.are_equivalent(&term2).unwrap());
+    /// assert!(!term1.equivalent(&term2).unwrap());
     /// ```
-    pub fn are_equivalent(&self, that: &Term) -> Result<bool, EngineError> {
+    pub fn equivalent(&self, that: &Term) -> Result<bool, EngineError> {
         if self == that {
             return Ok(true);
         }
@@ -401,9 +401,9 @@ impl Term {
     /// let term1 = Term::from_pattern("de").unwrap();
     /// let term2 = Term::from_pattern("(abc|de)").unwrap();
     ///
-    /// assert!(term1.is_subset_of(&term2).unwrap());
+    /// assert!(term1.subset(&term2).unwrap());
     /// ```
-    pub fn is_subset_of(&self, that: &Term) -> Result<bool, EngineError> {
+    pub fn subset(&self, that: &Term) -> Result<bool, EngineError> {
         if self == that {
             return Ok(true);
         }

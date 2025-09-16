@@ -38,26 +38,26 @@ fn main() -> Result<(), EngineError> {
 
     // Concatenate
     let concat = t1.concat(&[t2])?;
-    assert_eq!(concat.to_pattern().unwrap(), "abc.*xyz");
+    assert_eq!(concat.to_pattern(), "abc.*xyz");
 
     // Union
     let union = t1.union(&[Term::from_pattern("fgh")?])?;
-    assert_eq!(union.to_pattern().unwrap(), "(abc.*|fgh)");
+    assert_eq!(union.to_pattern(), "(abc.*|fgh)");
 
     // Intersection
     let inter = Term::from_pattern("(ab|xy){2}")?
         .intersection(&[Term::from_pattern(".*xy")?])?;
-    assert_eq!(inter.to_pattern().unwrap(), "(ab|xy)xy");
+    assert_eq!(inter.to_pattern(), "(ab|xy)xy");
 
     // Difference
     let diff = Term::from_pattern("a*")?
         .difference(&Term::from_pattern("")?)?;
-    assert_eq!(diff.to_pattern().unwrap(), "a+");
+    assert_eq!(diff.to_pattern(), "a+");
 
     // Repetition
     let rep = Term::from_pattern("abc")?
         .repeat(2, Some(4))?;
-    assert_eq!(rep.to_pattern().unwrap(), "(abc){2,4}");
+    assert_eq!(rep.to_pattern(), "(abc){2,4}");
 
     // Analyze
     assert_eq!(rep.get_length(), (Some(6), Some(12)));
@@ -71,8 +71,8 @@ fn main() -> Result<(), EngineError> {
     // Equivalence & subset
     let a = Term::from_pattern("a+")?;
     let b = Term::from_pattern("a*")?;
-    assert!(!a.are_equivalent(&b)?);
-    assert!(a.is_subset_of(&b)?);
+    assert!(!a.equivalent(&b)?);
+    assert!(a.subset(&b)?);
 
     Ok(())
 }
@@ -118,17 +118,17 @@ RegexSolver is based on the [regex-syntax](https://docs.rs/regex-syntax/0.8.5/re
 #### Analyze
 | Method | Return | Description |
 | -------- | ------- | ------- |
-| `are_equivalent(&self, term: &Term)` | `Result<bool, EngineError>` | Returns `true` if both terms accept the same language. |
+| `equivalent(&self, term: &Term)` | `Result<bool, EngineError>` | Returns `true` if both terms accept the same language. |
 | `generate_strings(&self, count: usize)` | `Result<Vec<String>, EngineError>` | Generates `count` strings matched by the term. |
 | `get_cardinality()` | `Result<Cardinality<u32>, EngineError>` | Returns the cardinality of the term (i.e., the number of possible matched strings). |
 | `get_length(&self)` | `(Option<u32>, Option<u32>)` | Returns the minimum and maximum length of matched strings. |
 | `is_empty(&self)` | `bool` | Checks if the term matches the empty language. |
 | `is_empty_string(&self)` | `bool` | Checks if the term matches only the empty string `""`. |
-| `is_subset_of(&self, term: &Term)` | `Result<bool, EngineError>` | Returns `true` if all strings matched by the current term are also matched by the given term. |
 | `is_total(&self)` | `bool` | Checks if the term matches all possible strings. |
+| `subset(&self, term: &Term)` | `Result<bool, EngineError>` | Returns `true` if all strings matched by the current term are also matched by the given term. |
 | `to_automaton(&self)` | `Result<Cow<FastAutomaton>, EngineError>` | Converts the term to a `FastAutomaton`. |
-| `to_pattern(&self)` | `Option<String>` | Converts the term to a regular expression pattern; returns `None` if conversion isn’t possible. |
-| `to_regex(&self)` | `Option<Cow<RegularExpression>>` | Converts the term to a RegularExpression; returns `None` if conversion isn’t possible. |
+| `to_pattern(&self)` | `String` | Converts the term to a regular expression pattern. |
+| `to_regex(&self)` | `Cow<RegularExpression>` | Converts the term to a RegularExpression. |
 
 
 ### FastAutomaton
@@ -192,17 +192,16 @@ This design allows us to perform unions, intersections, and complements of trans
 #### Analyze
 | Method | Return | Description |
 | -------- | ------- | ------- |
-| `all_states_iter(&self)` | `impl Iterator<Item = State>` | Returns an iterator over the automaton’s states. |
-| `all_states_vec(&self)` | `Vec<State>` | Returns a vector containing the automaton’s states. |
-| `are_equivalent(&self, other: &FastAutomaton)` | `Result<bool, EngineError>` | Returns `true` if both automata accept the same language. |
-| `direct_states_iter(&self, state: &State)` | `impl Iterator<Item = State>` | Returns an iterator over states directly reachable from the given state in one transition. |
+| `states(&self)` | `impl Iterator<Item = State>` | Returns an iterator over the automaton’s states. |
+| `states_vec(&self)` | `Vec<State>` | Returns a vector containing the automaton’s states. |
+| `direct_states(&self, state: &State)` | `impl Iterator<Item = State>` | Returns an iterator over states directly reachable from the given state in one transition. |
 | `direct_states_vec(&self, state: &State)` | `Vec<State>` | Returns a vector of states directly reachable from the given state in one transition. |
 | `does_transition_exists(&self, from_state: State, to_state: State)` | `bool` | Returns `true` if there is a directed transition from `from_state` to `to_state`. |
+| `equivalent(&self, other: &FastAutomaton)` | `Result<bool, EngineError>` | Returns `true` if both automata accept the same language. |
 | `generate_strings(&self, count: usize)` | `Result<AHashSet<String>, EngineError>` | Generates `count` strings matched by the automaton. |
 | `get_accept_states(&self)` | `&IntSet<State>` | Returns a reference to the set of accept (final) states. |
 | `get_cardinality(&self)` | `Cardinality<u32>` | Returns the cardinality of the automaton (i.e., the number of possible matched strings). |
 | `get_condition(&self, from_state: State, to_state: State)` | `Option<&Condition>` | Returns a reference to the condition of the directed transition between the two states, if any. |
-| `get_condition_mut(&mut self, from_state: State, to_state: State)` | `Option<&Condition>` | Returns a mutable reference to the condition of the directed transition between the two states, if any. |
 | `get_length(&self)` | `(Option<u32>, Option<u32>)` | Returns the minimum and maximum length of matched strings. |
 | `get_reachable_states(&self)` | `IntSet<State>` | Returns the set of all states reachable from the start state. |
 | `get_spanning_set(&self)` | `&SpanningSet` | Returns a reference to the automaton's spanning set. |
@@ -214,14 +213,12 @@ This design allows us to perform unions, intersections, and complements of trans
 | `is_deterministic(&self)` | `bool` | Returns `true` if the automaton is deterministic. |
 | `is_empty(&self)` | `bool` | Checks if the automaton matches the empty language. |
 | `is_empty_string(&self)` | `bool` | Checks if the automaton only matches the empty string `""`. |
-| `is_subset_of(&self, other: &FastAutomaton)` | `Result<bool, EngineError>` | Returns `true` if all strings accepted by `self` are also accepted by `other`. |
 | `is_total(&self)` | `bool` | Checks if the automaton matches all possible strings. |
-| `state_in_degree(&self, state: State)` | `usize` | Returns the number of transitions to the provided state. |
-| `state_out_degree(&self, state: State)` | `usize` | Returns the number of transitions from the provided state. |
-| `to_regex(&self)` | `Option<RegularExpression>` | Attempts to convert the automaton to a `RegularExpression`; returns `None` if no equivalent pattern are found. |
-| `transitions_from_into_iter(&self, state: State)` | `impl Iterator<Item = TransitionTo>` | Returns an owned iterator over transitions from the given state. |
-| `transitions_from_iter(&self, state: State)` | `impl Iterator<Item = (&Condition, &State)>` | Returns an iterator over transitions from the given state. |
-| `transitions_from_iter_mut(&mut self, state: State)` | `impl Iterator<Item = (&mut Condition, &State)>` | Returns a mutable iterator over transitions from the given state. |
+| `in_degree(&self, state: State)` | `usize` | Returns the number of transitions to the provided state. |
+| `out_degree(&self, state: State)` | `usize` | Returns the number of transitions from the provided state. |
+| `to_regex(&self)` | `RegularExpression` | Convert the automaton to a `RegularExpression`. |
+| `subset(&self, other: &FastAutomaton)` | `Result<bool, EngineError>` | Returns `true` if all strings accepted by `self` are also accepted by `other`. |
+| `transitions_from(&self, state: State)` | `impl Iterator<Item = (&Condition, &State)>` | Returns an iterator over transitions from the given state. |
 | `transitions_from_vec(&self, state: State)` | `Vec<TransitionTo>` | Returns a vector of transitions from the given state. |
 | `transitions_to_vec(&self, state: State)` | `Vec<TransitionFrom>` | Returns a vector of transitions to the given state. |
 
@@ -234,10 +231,11 @@ This design allows us to perform unions, intersections, and complements of trans
 | Method | Return | Description |
 | -------- | ------- | ------- |
 | `concat(&self, other: &RegularExpression, append_back: bool)` | `RegularExpression` | Returns a new regular expression representing the concatenation of `self` and `other`; `append_back` determines their order. |
-| `new(pattern: &str)` | `Result<RegularExpression, EngineError>` | Parses the provided pattern and returns the resulting `RegularExpression`. |
+| `new(pattern: &str)` | `Result<RegularExpression, EngineError>` | Parses and simplifies the provided pattern and returns the resulting `RegularExpression`. |
 | `new_empty()` | `RegularExpression` | Creates a regular expression that matches the empty language. |
 | `new_empty_string()` | `RegularExpression` | Creates a regular expression that matches only the empty string `""`. |
 | `new_total()` | `RegularExpression` | Creates a regular expression that matches all possible strings. |
+| `parse(pattern: &str, simplify: bool)` | `Result<RegularExpression, EngineError>` | Parses the given regular expression pattern and returns a corresponding `RegularExpression`. If simplify is `true`, the expression is simplified during parsing. |
 | `repeat(&self, min: u32, max_opt: Option<u32>)` | `RegularExpression` | Returns the repetition of the expression between `min` and `max_opt` times; if `max_opt` is `None`, the repetition is unbounded. |
 | `simplify(&self)` | `RegularExpression` | Returns a simplified version by eliminating redundant constructs and applying canonical reductions. |
 | `union(&self, other: &RegularExpression)` | `RegularExpression` | Returns a regular expression matching the union of `self` and `other`. |
