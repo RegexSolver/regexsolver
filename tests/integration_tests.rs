@@ -9,7 +9,7 @@ use regexsolver::regex::RegularExpression;
 fn assert_regex(regex: &str) {
     let re = Regex::new(&format!("(?s)^{}$", regex)).unwrap();
 
-    let regex = RegularExpression::new(regex).unwrap();
+    let regex = RegularExpression::parse(regex, true).unwrap();
     let automaton = regex.to_automaton().unwrap();
     let strings = automaton.generate_strings(500).unwrap();
     for string in strings {

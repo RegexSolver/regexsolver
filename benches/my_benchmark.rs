@@ -6,7 +6,7 @@ fn parse_regex(regex: &str) -> RegularExpression {
 }
 
 fn to_regex(automaton: &FastAutomaton) -> RegularExpression {
-    automaton.to_regex().unwrap()
+    automaton.to_regex()
 }
 
 fn determinize(automaton: &FastAutomaton) -> FastAutomaton {
