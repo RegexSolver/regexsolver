@@ -70,7 +70,7 @@ fn dot_star_component(automaton: &mut FastAutomaton, component: &IntSet<State>) 
                 has_transition_to_start_state = true;
             }
 
-            this_condition = this_condition.union(&condition);
+            this_condition = this_condition.union(condition);
         }
         if !has_transition_to_start_state {
             // Some state(s) do not have transition to the start state.
