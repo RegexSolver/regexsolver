@@ -167,7 +167,7 @@ This design allows us to perform unions, intersections, and complements of trans
 | `apply_new_spanning_set(&mut self, new_spanning_set: &SpanningSet)` | `Result<(), EngineError>` | Applies the provided spanning set and projects all existing conditions onto it. |
 | `new_empty()` | `FastAutomaton` | Creates an automaton that matches the empty language. |
 | `new_empty_string()` | `FastAutomaton` | Creates an automaton that only matches the empty string `""`. |
-| `new_from_range(range: &CharRange)` | `Result<FastAutomaton, EngineError>` | Creates an automaton that matches one of the characters in the given `CharRange`. |
+| `new_from_range(range: &CharRange)` | `FastAutomaton` | Creates an automaton that matches one of the characters in the given `CharRange`. |
 | `new_state(&mut self)` | `State` | Creates a new state and returns its identifier. |
 | `new_total()` | `FastAutomaton` | Creates an automaton that matches all possible strings. |
 | `remove_state(&mut self, state: State)` | `()` | Removes the state and all its connected transitions; panics if it's a start state. |

@@ -39,19 +39,19 @@ impl FastAutomaton {
     }
 
     /// Creates an automaton that matches one of the characters in the given [`CharRange`].
-    pub fn new_from_range(range: &CharRange) -> Result<Self, EngineError> {
+    pub fn new_from_range(range: &CharRange) -> Self {
         let mut automaton = Self::new_empty();
         if range.is_empty() {
-            return Ok(automaton);
+            return automaton;
         }
         let new_state = automaton.new_state();
 
         let spanning_set = SpanningSet::compute_spanning_set(&[range.clone()]);
-        let condition = Condition::from_range(range, &spanning_set)?;
+        let condition = Condition::from_range(range, &spanning_set).expect("The spanning set should be valid");
         automaton.spanning_set = spanning_set;
         automaton.add_transition(0, new_state, &condition);
         automaton.accept(new_state);
-        Ok(automaton)
+        automaton
     }
 
     /// Creates a new state and returns its identifier.
