@@ -94,13 +94,13 @@ RegexSolver is based on the [regex-syntax](https://docs.rs/regex-syntax/0.8.5/re
 
 ### Term
 
-`Term` is an enum designed to represent either a regular expression or a compiled automaton. This unified representation enables seamless and efficient execution of set operations across multiple instances. It's particularly valuable when working with both regular expressions and automata, allowing operations to be performed transparently regardless of the underlying representation.
+`Term` is an enum designed to represent either a regular expression or an automaton. Used when working with both regular expressions and automata, allowing operations to be performed transparently regardless of the underlying representation.
 
 #### Build
 | Method | Return | Description |
 | -------- | ------- | ------- |
 | `from_automaton(automaton: FastAutomaton)` | `Term` | Creates a new `Term` holding the provided `FastAutomaton`. |
-| `from_pattern(pattern: &str)` | `Result<Term, EngineError>` | Parses the provided pattern and returns a new `Term` holding the resulting `RegularExpression`. |
+| `from_pattern(pattern: &str)` | `Result<Term, EngineError>` | Parses and simplifies the provided pattern and returns a new `Term` holding the resulting `RegularExpression`. |
 | `from_regex(regex: RegularExpression)` | `Term` | Creates a new `Term` holding the provided `RegularExpression`. |
 | `new_empty()` | `Term` | Creates a term that matches the empty language. |
 | `new_empty_string()` | `Term` | Creates a term that only matches the empty string `""`. |
@@ -133,7 +133,7 @@ RegexSolver is based on the [regex-syntax](https://docs.rs/regex-syntax/0.8.5/re
 
 ### FastAutomaton
 
-`FastAutomaton` is used to directly build, manipulate and analyze automata. To convert an automaton to a `RegularExpression` the method `to_regex()` can be used. Not all automata can be converted to a regular expression.
+`FastAutomaton` is used to directly build, manipulate and analyze automata. To convert an automaton to a `RegularExpression` the method `to_regex()` can be used.
 
 When building or modifying an automaton you might come to use the method `add_transition(&mut self, from_state: State, to_state: State, new_cond: &Condition)`. This method accepts a `Condition` rather than a raw character set. To build a `Condition`, call:
 ```rust
@@ -192,8 +192,6 @@ This design allows us to perform unions, intersections, and complements of trans
 #### Analyze
 | Method | Return | Description |
 | -------- | ------- | ------- |
-| `states(&self)` | `impl Iterator<Item = State>` | Returns an iterator over the automaton’s states. |
-| `states_vec(&self)` | `Vec<State>` | Returns a vector containing the automaton’s states. |
 | `direct_states(&self, state: &State)` | `impl Iterator<Item = State>` | Returns an iterator over states directly reachable from the given state in one transition. |
 | `direct_states_vec(&self, state: &State)` | `Vec<State>` | Returns a vector of states directly reachable from the given state in one transition. |
 | `does_transition_exists(&self, from_state: State, to_state: State)` | `bool` | Returns `true` if there is a directed transition from `from_state` to `to_state`. |
@@ -216,8 +214,10 @@ This design allows us to perform unions, intersections, and complements of trans
 | `is_total(&self)` | `bool` | Checks if the automaton matches all possible strings. |
 | `in_degree(&self, state: State)` | `usize` | Returns the number of transitions to the provided state. |
 | `out_degree(&self, state: State)` | `usize` | Returns the number of transitions from the provided state. |
-| `to_regex(&self)` | `RegularExpression` | Convert the automaton to a `RegularExpression`. |
+| `states(&self)` | `impl Iterator<Item = State>` | Returns an iterator over the automaton’s states. |
+| `states_vec(&self)` | `Vec<State>` | Returns a vector containing the automaton’s states. |
 | `subset(&self, other: &FastAutomaton)` | `Result<bool, EngineError>` | Returns `true` if all strings accepted by `self` are also accepted by `other`. |
+| `to_regex(&self)` | `RegularExpression` | Convert the automaton to a `RegularExpression`. |
 | `transitions_from(&self, state: State)` | `impl Iterator<Item = (&Condition, &State)>` | Returns an iterator over transitions from the given state. |
 | `transitions_from_vec(&self, state: State)` | `Vec<TransitionTo>` | Returns a vector of transitions from the given state. |
 | `transitions_to_vec(&self, state: State)` | `Vec<TransitionFrom>` | Returns a vector of transitions to the given state. |
