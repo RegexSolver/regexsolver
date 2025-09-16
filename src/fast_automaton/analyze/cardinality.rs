@@ -65,9 +65,9 @@ impl FastAutomaton {
         let mut queue = VecDeque::with_capacity(len);
         let mut order = Vec::with_capacity(len);
 
-        for from_state in &self.all_states_vec() {
+        for from_state in &self.states_vec() {
             in_degree.entry(*from_state).or_insert(0);
-            for to_state in self.direct_states_iter(from_state) {
+            for to_state in self.direct_states(from_state) {
                 *in_degree.entry(to_state).or_insert(0) += 1;
             }
         }
@@ -80,7 +80,7 @@ impl FastAutomaton {
 
         while let Some(from_state) = queue.pop_front() {
             order.push(from_state);
-            for to_state in self.direct_states_iter(&from_state) {
+            for to_state in self.direct_states(&from_state) {
                 *in_degree.entry(to_state).or_default() -= 1;
 
                 if in_degree[&to_state] == 0 {

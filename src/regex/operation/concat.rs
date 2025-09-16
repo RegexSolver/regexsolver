@@ -179,17 +179,9 @@ impl RegularExpression {
                     } else {
                         None
                     };
-                Some(RegularExpression::Repetition(
-                    this_regex.clone(),
-                    new_min,
-                    new_max_opt,
-                ))
+                Some(this_regex.repeat(new_min, new_max_opt))
             } else {
-                Some(RegularExpression::Repetition(
-                    Box::new(this.clone()),
-                    2,
-                    Some(2),
-                ))
+                Some(this.repeat(2, Some(2)))
             }
         } else if let (
             RegularExpression::Repetition(this_regex, this_min, this_max_opt),
@@ -204,11 +196,8 @@ impl RegularExpression {
                     } else {
                         None
                     };
-                Some(RegularExpression::Repetition(
-                    this_regex.clone(),
-                    new_min,
-                    new_max_opt,
-                ))
+
+                Some(this_regex.repeat(new_min, new_max_opt))
             } else if let (
                 RegularExpression::Character(this_range),
                 RegularExpression::Character(that_range),
@@ -227,11 +216,7 @@ impl RegularExpression {
             if **this_regex == *that {
                 let new_min = this_min + 1;
                 let new_max_opt = this_max_opt.as_ref().map(|this_max| this_max + 1);
-                Some(RegularExpression::Repetition(
-                    this_regex.clone(),
-                    new_min,
-                    new_max_opt,
-                ))
+                Some(this_regex.repeat(new_min, new_max_opt))
             } else {
                 None
             }
@@ -239,11 +224,7 @@ impl RegularExpression {
             if **that_regex == *this {
                 let new_min = that_min + 1;
                 let new_max_opt = that_max_opt.as_ref().map(|this_max| this_max + 1);
-                Some(RegularExpression::Repetition(
-                    that_regex.clone(),
-                    new_min,
-                    new_max_opt,
-                ))
+                Some(that_regex.repeat(new_min, new_max_opt))
             } else {
                 None
             }

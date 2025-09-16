@@ -17,7 +17,7 @@ impl FastAutomaton {
             let reacheable_states = self.get_reacheable_states();
 
             let mut dead_states = IntSet::default();
-            for from_state in self.all_states_iter() {
+            for from_state in self.states() {
                 if !reacheable_states.contains(&from_state) {
                     dead_states.insert(from_state);
                 }
@@ -35,11 +35,11 @@ mod tests {
 
     #[test]
     fn test_remove_dead_states() -> Result<(), String> {
-        let automaton1 = RegularExpression::new("(abc|ac|aaa)")
+        let automaton1 = RegularExpression::parse("(abc|ac|aaa)", false)
             .unwrap()
             .to_automaton()
             .unwrap();
-        let automaton2 = RegularExpression::new("(abcd|ac|aba)")
+        let automaton2 = RegularExpression::parse("(abcd|ac|aba)", false)
             .unwrap()
             .to_automaton()
             .unwrap();

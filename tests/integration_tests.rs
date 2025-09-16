@@ -22,13 +22,13 @@ fn assert_regex(regex: &str) {
         assert!(re.is_match(&string), "'{string}'");
     }
 
-    assert!(automaton.is_subset_of(&determinized_automaton).unwrap());
-    assert!(determinized_automaton.is_subset_of(&automaton).unwrap());
-    assert!(automaton.are_equivalent(&determinized_automaton).unwrap());
+    assert!(automaton.subset(&determinized_automaton).unwrap());
+    assert!(determinized_automaton.subset(&automaton).unwrap());
+    assert!(automaton.equivalent(&determinized_automaton).unwrap());
 
-    let regex_from_automaton = automaton.to_regex().unwrap();
+    let regex_from_automaton = automaton.to_regex();
     let automaton_from_regex = regex_from_automaton.to_automaton().unwrap();
-    assert!(automaton.are_equivalent(&automaton_from_regex).unwrap());
+    assert!(automaton.equivalent(&automaton_from_regex).unwrap());
 }
 
 #[test]

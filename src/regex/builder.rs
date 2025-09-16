@@ -11,8 +11,13 @@ lazy_static! {
 }
 
 impl RegularExpression {
-    /// Parses the provided pattern and returns the resulting [`RegularExpression`].
+    /// Parses and simplify the provided pattern and returns the resulting [`RegularExpression`].
     pub fn new(pattern: &str) -> Result<Self, EngineError> {
+        Self::parse(pattern, true)
+    }
+
+    /// Parses the provided pattern and returns the resulting [`RegularExpression`].
+    pub fn parse(pattern: &str, simplify: bool) -> Result<Self, EngineError> {
         if pattern.is_empty() {
             return Ok(RegularExpression::new_empty_string());
         }
@@ -24,7 +29,7 @@ impl RegularExpression {
             .build()
             .parse(&Self::remove_flags(pattern))
         {
-            Ok(hir) => Self::convert_to_regex(&hir),
+            Ok(hir) => Self::convert_to_regex(&hir, simplify),
             Err(err) => Err(EngineError::RegexSyntaxError(err.to_string())),
         }
     }
@@ -52,7 +57,7 @@ impl RegularExpression {
         RegularExpression::Concat(VecDeque::new())
     }
 
-    fn convert_to_regex(hir: &Hir) -> Result<Self, EngineError> {
+    fn convert_to_regex(hir: &Hir, simplify: bool) -> Result<Self, EngineError> {
         match hir.kind() {
             HirKind::Empty => Ok(RegularExpression::new_empty_string()),
             HirKind::Literal(literal) => {
@@ -84,15 +89,26 @@ impl RegularExpression {
             HirKind::Look(_) => Ok(RegularExpression::new_empty_string()),
             HirKind::Repetition(repetition) => {
                 let (min, max) = (repetition.min, repetition.max);
-                Self::convert_to_regex(&repetition.sub).map(|v| v.repeat(min, max))
+                let regex = Self::convert_to_regex(&repetition.sub, simplify)?;
+                Ok(if simplify {
+                    regex.repeat(min, max)
+                } else {
+                    RegularExpression::Repetition(Box::new(regex), min, max)
+                })
             }
-            HirKind::Capture(capture) => Self::convert_to_regex(&capture.sub),
+            HirKind::Capture(capture) => Self::convert_to_regex(&capture.sub, simplify),
             HirKind::Concat(concat) => {
                 let mut concat_regex =
                     RegularExpression::Concat(VecDeque::with_capacity(concat.len()));
                 for c in concat {
-                    let concat_value = Self::convert_to_regex(c)?;
-                    concat_regex = concat_regex.concat(&concat_value, true);
+                    let concat_value = Self::convert_to_regex(c, simplify)?;
+                    if simplify {
+                        concat_regex = concat_regex.concat(&concat_value, true);
+                    } else if let RegularExpression::Concat(values) = concat_regex {
+                        let mut values = values.clone();
+                        values.push_back(concat_value);
+                        concat_regex = RegularExpression::Concat(values);
+                    }
                 }
                 Ok(concat_regex)
             }
@@ -100,8 +116,14 @@ impl RegularExpression {
                 let mut alternation_regex =
                     RegularExpression::Alternation(Vec::with_capacity(alternation.len()));
                 for a in alternation {
-                    let alternation_value = Self::convert_to_regex(a)?;
-                    alternation_regex = alternation_regex.union(&alternation_value);
+                    let alternation_value = Self::convert_to_regex(a, simplify)?;
+                    if simplify {
+                        alternation_regex = alternation_regex.union(&alternation_value);
+                    } else if let RegularExpression::Alternation(values) = alternation_regex {
+                        let mut values = values.clone();
+                        values.push(alternation_value);
+                        alternation_regex = RegularExpression::Alternation(values);
+                    }
                 }
                 Ok(alternation_regex)
             }

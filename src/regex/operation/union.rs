@@ -9,8 +9,9 @@ impl RegularExpression {
     }
 
     /// Returns a regular expression that is the union of all expressions in `patterns`.
-    pub fn union_all<'a, I: IntoIterator<Item = &'a RegularExpression>>(patterns: I) -> RegularExpression
-    {
+    pub fn union_all<'a, I: IntoIterator<Item = &'a RegularExpression>>(
+        patterns: I,
+    ) -> RegularExpression {
         let mut result: Cow<'a, RegularExpression> = Cow::Owned(RegularExpression::new_empty());
 
         for other in patterns {
@@ -104,11 +105,7 @@ impl RegularExpression {
         ) = (this_character, that_repetition)
         {
             if this_character == &**that_regex && *that_min <= 2 {
-                RegularExpression::Repetition(
-                    that_regex.clone(),
-                    cmp::min(1, *that_min),
-                    *that_max_opt,
-                )
+                that_regex.repeat(cmp::min(1, *that_min), *that_max_opt)
             } else {
                 let mut alternate = vec![this_character.clone(), that_repetition.clone()];
                 alternate.sort_unstable();
@@ -139,18 +136,10 @@ impl RegularExpression {
                     self_regex.union_(&other_regex)
                 }
             } else {
-                Cow::Owned(RegularExpression::Repetition(
-                    Box::new(self_regex),
-                    0,
-                    Some(1),
-                ))
+                Cow::Owned(self_regex.repeat(0, Some(1)))
             }
         } else if !other_regex.is_empty_string() {
-            Cow::Owned(RegularExpression::Repetition(
-                Box::new(other_regex),
-                0,
-                Some(1),
-            ))
+            Cow::Owned(other_regex.repeat(0, Some(1)))
         } else {
             Cow::Owned(RegularExpression::new_empty_string())
         };
@@ -228,11 +217,7 @@ impl RegularExpression {
         ) = (this_concat, that_repetition)
         {
             if this_concat == &**that_regex && *that_min <= 2 {
-                RegularExpression::Repetition(
-                    that_regex.clone(),
-                    cmp::min(1, *that_min),
-                    *that_max_opt,
-                )
+                that_regex.repeat(cmp::min(1, *that_min), *that_max_opt)
             } else {
                 Self::opunion_common_affixes(this_concat, that_repetition)
             }
@@ -288,18 +273,13 @@ impl RegularExpression {
                         || this_max + 1 == *that_min
                         || that_max + 1 == *this_min
                     {
-                        return RegularExpression::Repetition(
-                            this_regex.clone(),
+                        return this_regex.repeat(
                             cmp::min(*this_min, *that_min),
                             Some(cmp::max(*this_max, *that_max)),
                         );
                     }
                 } else {
-                    return RegularExpression::Repetition(
-                        this_regex.clone(),
-                        cmp::min(*this_min, *that_min),
-                        None,
-                    );
+                    return this_regex.repeat(cmp::min(*this_min, *that_min), None);
                 }
             }
 
@@ -321,11 +301,7 @@ impl RegularExpression {
         ) = (this_repetition, that_alternation)
         {
             if that_alternation == &**this_regex && *this_min <= 2 {
-                RegularExpression::Repetition(
-                    this_regex.clone(),
-                    cmp::min(1, *this_min),
-                    *this_max_opt,
-                )
+                this_regex.repeat(cmp::min(1, *this_min), *this_max_opt)
             } else {
                 let mut set = BTreeSet::new();
 

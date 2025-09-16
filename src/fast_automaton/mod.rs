@@ -47,7 +47,7 @@ impl Display for FastAutomaton {
     fn fmt(&self, sb: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(sb, "digraph Automaton {{")?;
         writeln!(sb, "\trankdir = LR;")?;
-        for from_state in self.all_states_iter() {
+        for from_state in self.states() {
             write!(sb, "\t{from_state}")?;
             if self.accept_states.contains(&from_state) {
                 writeln!(sb, "\t[shape=doublecircle,label=\"{from_state}\"];")?;
@@ -59,7 +59,7 @@ impl Display for FastAutomaton {
                 writeln!(sb, "\tinitial [shape=plaintext,label=\"\"];")?;
                 writeln!(sb, "\tinitial -> {from_state}")?;
             }
-            for (cond, to_state) in self.transitions_from_iter(from_state) {
+            for (cond, to_state) in self.transitions_from(from_state) {
                 writeln!(
                     sb,
                     "\t{from_state} -> {to_state} [label=\"{}\"]",
@@ -85,7 +85,7 @@ impl FastAutomaton {
 
     /// Returns the number of transitions to the provided state.
     #[inline]
-    pub fn state_in_degree(&self, state: State) -> usize {
+    pub fn in_degree(&self, state: State) -> usize {
         self.transitions_in
             .get(&state)
             .unwrap_or(&IntSet::new())
@@ -94,25 +94,25 @@ impl FastAutomaton {
 
     /// Returns the number of transitions from the provided state.
     #[inline]
-    pub fn state_out_degree(&self, state: State) -> usize {
+    pub fn out_degree(&self, state: State) -> usize {
         self.transitions[state].len()
     }
 
     /// Returns an iterator over the automaton’s states.
     #[inline]
-    pub fn all_states_iter(&self) -> impl Iterator<Item = State> + '_ {
+    pub fn states(&self) -> impl Iterator<Item = State> + '_ {
         (0..self.transitions.len()).filter(|s| !self.removed_states.contains(s))
     }
 
     /// Returns a vector containing the automaton’s states.
     #[inline]
-    pub fn all_states_vec(&self) -> Vec<State> {
-        self.all_states_iter().collect()
+    pub fn states_vec(&self) -> Vec<State> {
+        self.states().collect()
     }
 
     /// Returns an iterator over states directly reachable from the given state in one transition.
     #[inline]
-    pub fn direct_states_iter(&self, state: &State) -> impl Iterator<Item = State> + '_ {
+    pub fn direct_states(&self, state: &State) -> impl Iterator<Item = State> + '_ {
         self.transitions[*state]
             .keys()
             .cloned()
@@ -122,7 +122,7 @@ impl FastAutomaton {
     /// Returns a vector of states directly reachable from the given state in one transition.
     #[inline]
     pub fn direct_states_vec(&self, state: &State) -> Vec<State> {
-        self.direct_states_iter(state).collect()
+        self.direct_states(state).collect()
     }
 
     /// Returns a vector containing the transitions to the provided state.
@@ -151,7 +151,7 @@ impl FastAutomaton {
 
     /// Returns an iterator over transitions from the given state.
     #[inline]
-    pub fn transitions_from_iter(
+    pub fn transitions_from(
         &self,
         state: State,
     ) -> impl Iterator<Item = (&Condition, &State)> {
@@ -159,31 +159,6 @@ impl FastAutomaton {
             .iter()
             .map(|(s, c)| (c, s))
             .filter(|s| !self.removed_states.contains(s.1))
-    }
-
-    /// Returns a mutable iterator over transitions from the given state.
-    #[inline]
-    pub fn transitions_from_iter_mut(
-        &mut self,
-        state: &State,
-    ) -> impl Iterator<Item = (&mut Condition, &State)> {
-        self.transitions[*state]
-            .iter_mut()
-            .map(|(s, c)| (c, s))
-            .filter(|s| !self.removed_states.contains(s.1))
-    }
-
-    /// Returns an owned iterator over transitions from the given state.
-    #[inline]
-    pub fn transitions_from_into_iter(
-        &self,
-        state: &State,
-    ) -> impl Iterator<Item = TransitionTo> + '_ {
-        self.transitions[*state]
-            .clone()
-            .into_iter()
-            .map(|(s, c)| (c, s))
-            .filter(|(_, state)| !self.removed_states.contains(state))
     }
 
     /// Returns `true` if there is a directed transition from `from_state` to `to_state`.
@@ -219,16 +194,6 @@ impl FastAutomaton {
     #[inline]
     pub fn get_condition(&self, from_state: State, to_state: State) -> Option<&Condition> {
         self.transitions[from_state].get(&to_state)
-    }
-
-    // Returns a mutable reference to the condition of the directed transition between the two states, if any.
-    #[inline]
-    pub fn get_condition_mut(
-        &mut self,
-        from_state: State,
-        to_state: State,
-    ) -> Option<&mut Condition> {
-        self.transitions[from_state].get_mut(&to_state)
     }
 
     /// Returns the start state.
@@ -285,7 +250,7 @@ impl FastAutomaton {
                 continue;
             }
             let curr_char = input.chars().nth(position).unwrap() as u32;
-            for (cond, to_state) in self.transitions_from_iter(*current_state) {
+            for (cond, to_state) in self.transitions_from(*current_state) {
                 if cond.has_character(&curr_char, &self.spanning_set).unwrap() {
                     if position + 1 == input.len() {
                         if self.accept_states.contains(to_state) {
@@ -301,7 +266,12 @@ impl FastAutomaton {
     }
 
     #[inline]
-    pub fn to_dot(&self) {
+    pub fn as_dot(&self) -> String {
+        format!("{self}")
+    }
+
+    #[inline]
+    pub fn print_dot(&self) {
         println!("{self}");
     }
 }

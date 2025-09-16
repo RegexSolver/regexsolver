@@ -4,7 +4,7 @@ use super::*;
 
 impl FastAutomaton {
     /// Returns `true` if all strings accepted by `self` are also accepted by `other`.
-    pub fn is_subset_of(&self, other: &FastAutomaton) -> Result<bool, EngineError> {
+    pub fn subset(&self, other: &FastAutomaton) -> Result<bool, EngineError> {
         if self.is_empty() || other.is_total() || self == other {
             return Ok(true);
         } else if other.is_empty() || self.is_total() {
@@ -39,33 +39,33 @@ mod tests {
             true,
         );
 
-        let regex1 = RegularExpression::new("test.*other").unwrap();
-        let regex2 = RegularExpression::new("test.*othew").unwrap();
+        let regex1 = RegularExpression::parse("test.*other", false).unwrap();
+        let regex2 = RegularExpression::parse("test.*othew", false).unwrap();
 
         assert_subset(&regex1, &regex2, false, false);
 
-        let regex1 = RegularExpression::new("test.{0,50}other").unwrap();
-        let regex2 = RegularExpression::new("test.{0,49}other").unwrap();
+        let regex1 = RegularExpression::parse("test.{0,50}other", false).unwrap();
+        let regex2 = RegularExpression::parse("test.{0,49}other", false).unwrap();
 
         assert_subset(&regex1, &regex2, false, true);
 
-        let regex1 = RegularExpression::new("(abc|def)").unwrap();
-        let regex2 = RegularExpression::new("(abc|def|xyz)").unwrap();
+        let regex1 = RegularExpression::parse("(abc|def)", false).unwrap();
+        let regex2 = RegularExpression::parse("(abc|def|xyz)", false).unwrap();
 
         assert_subset(&regex1, &regex2, true, false);
 
-        let regex1 = RegularExpression::new("[0]").unwrap();
-        let regex2 = RegularExpression::new("[01]").unwrap();
+        let regex1 = RegularExpression::parse("[0]", false).unwrap();
+        let regex2 = RegularExpression::parse("[01]", false).unwrap();
 
         assert_subset(&regex1, &regex2, true, false);
 
-        let regex1 = RegularExpression::new("a.*b.*c.*").unwrap();
-        let regex2 = RegularExpression::new("a.*b.*").unwrap();
+        let regex1 = RegularExpression::parse("a.*b.*c.*", false).unwrap();
+        let regex2 = RegularExpression::parse("a.*b.*", false).unwrap();
 
         assert_subset(&regex1, &regex2, true, false);
 
-        let regex1 = RegularExpression::new("1..").unwrap();
-        let regex2 = RegularExpression::new("...").unwrap();
+        let regex1 = RegularExpression::parse("1..", false).unwrap();
+        let regex2 = RegularExpression::parse("...", false).unwrap();
 
         assert_subset(&regex1, &regex2, true, false);
 
@@ -80,18 +80,18 @@ mod tests {
     ) {
         println!("{regex_1} and {regex_2}");
         let automaton_1 = regex_1.to_automaton().unwrap();
-        assert_eq!(true, automaton_1.is_subset_of(&automaton_1).unwrap());
+        assert_eq!(true, automaton_1.subset(&automaton_1).unwrap());
 
         let automaton_2 = regex_2.to_automaton().unwrap();
-        assert_eq!(true, automaton_2.is_subset_of(&automaton_2).unwrap());
+        assert_eq!(true, automaton_2.subset(&automaton_2).unwrap());
 
         assert_eq!(
             expected_1_2,
-            automaton_1.is_subset_of(&automaton_2).unwrap()
+            automaton_1.subset(&automaton_2).unwrap()
         );
         assert_eq!(
             expected_2_1,
-            automaton_2.is_subset_of(&automaton_1).unwrap()
+            automaton_2.subset(&automaton_1).unwrap()
         );
     }
 }

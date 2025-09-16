@@ -58,7 +58,7 @@ impl FastAutomaton {
                     break;
                 }
             }
-            for (cond, to_state) in self.transitions_from_iter(state) {
+            for (cond, to_state) in self.transitions_from(state) {
                 execution_profile.assert_not_timed_out()?;
                 let range = match ranges_cache.entry(cond) {
                     Entry::Occupied(o) => o.get().clone(),
@@ -114,7 +114,7 @@ mod tests {
 
     fn assert_generate_strings(regex: &str, number: usize) {
         println!(":{}", regex);
-        let automaton = RegularExpression::new(regex)
+        let automaton = RegularExpression::parse(regex, false)
             .unwrap()
             .to_automaton()
             .unwrap();

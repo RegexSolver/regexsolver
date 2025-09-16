@@ -135,29 +135,25 @@ mod tests {
 
     #[test]
     fn test_tokenize() -> Result<(), String> {
-        assert_embedding_convertion_for_fair("(a|b)");
-        assert_embedding_convertion_for_fair("(|a)");
-        assert_embedding_convertion_for_fair(".*ab");
-        assert_embedding_convertion_for_fair("toto");
-        assert_embedding_convertion_for_fair(".{2,3}");
-        assert_embedding_convertion_for_fair("q(ab|ca|ab|abc)x");
-        assert_embedding_convertion_for_fair(".*q(ab|ca|ab|abc)x");
-        assert_embedding_convertion_for_fair(
+        assert_embedding_convertion("(a|b)");
+        assert_embedding_convertion("(|a)");
+        assert_embedding_convertion(".*ab");
+        assert_embedding_convertion("toto");
+        assert_embedding_convertion(".{2,3}");
+        assert_embedding_convertion("q(ab|ca|ab|abc)x");
+        assert_embedding_convertion(".*q(ab|ca|ab|abc)x");
+        assert_embedding_convertion(
             "((aad|ads|a)*abc.*def.*uif(aad|ads|x)*abc.*oxs.*def(aad|ads|ax)*abc.*def.*ksd|q)",
         );
-        assert_embedding_convertion_for_fair(
+        assert_embedding_convertion(
             "(?:[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*|\"(?:[\\x01-\\x08\\x0b\\x0c\\x0e-\\x1f\\x21\\x23-\\x5b\\x5d-\\x7f]|\\\\[\\x01-\\x09\\x0b\\x0c\\x0e-\\x7f])*\")@(?:(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?|\\[(?:(?:(2(5[0-5]|[0-4][0-9])|1[0-9][0-9]|[1-9]?[0-9]))\\.){3}(?:(2(5[0-5]|[0-4][0-9])|1[0-9][0-9]|[1-9]?[0-9])|[a-z0-9-]*[a-z0-9]:(?:[\\x01-\\x08\\x0b\\x0c\\x0e-\\x1f\\x21-\\x5a\\x53-\\x7f]|\\\\[\\x01-\\x09\\x0b\\x0c\\x0e-\\x7f])+)\\])",
         );
 
         Ok(())
     }
 
-    fn assert_embedding_convertion_for_fair(regex: &str) {
-        assert_embedding_convertion(regex);
-    }
-
     fn assert_embedding_convertion(regex: &str) {
-        let regex = RegularExpression::new(regex).unwrap();
+        let regex = RegularExpression::parse(regex, false).unwrap();
         println!("{}", regex);
 
         let automaton = regex.to_automaton().unwrap();

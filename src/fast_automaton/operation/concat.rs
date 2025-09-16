@@ -41,12 +41,12 @@ impl FastAutomaton {
             BuildHasherDefault::default(),
         );
 
-        let start_state_and_accept_states_not_mergeable = other.state_in_degree(other.start_state) > 0
+        let start_state_and_accept_states_not_mergeable = other.in_degree(other.start_state) > 0
             && self
                 .accept_states
                 .iter()
                 .cloned()
-                .any(|s| self.state_out_degree(s) > 0);
+                .any(|s| self.out_degree(s) > 0);
 
         let accept_states = self.accept_states.iter().cloned().collect::<Vec<usize>>();
 
@@ -67,7 +67,7 @@ impl FastAutomaton {
             }
         }
 
-        for from_state in other.all_states_iter() {
+        for from_state in other.states() {
             let new_from_states = match new_states.entry(from_state) {
                 Entry::Occupied(o) => {
                     vec![*o.get()]
@@ -86,7 +86,7 @@ impl FastAutomaton {
                 }
             };
 
-            for (condition, to_state) in other.transitions_from_iter(from_state) {
+            for (condition, to_state) in other.transitions_from(from_state) {
                 let new_to_states = match new_states.entry(*to_state) {
                     Entry::Occupied(o) => {
                         vec![*o.get()]
@@ -135,12 +135,12 @@ mod tests {
 
     #[test]
     fn test_simple_concatenation_regex() -> Result<(), String> {
-        let automaton = RegularExpression::new("abc")
+        let automaton = RegularExpression::parse("abc", false)
             .unwrap()
             .to_automaton()
             .unwrap();
 
-        automaton.to_dot();
+        automaton.print_dot();
         assert!(automaton.match_string("abc"));
         assert!(!automaton.match_string("abcd"));
         assert!(!automaton.match_string("ab"));
@@ -150,7 +150,7 @@ mod tests {
 
     #[test]
     fn test_simple_concat_alternation_regex() -> Result<(), String> {
-        let automaton = RegularExpression::new("0101(abc|ac|aaa)")
+        let automaton = RegularExpression::parse("0101(abc|ac|aaa)", false)
             .unwrap()
             .to_automaton()
             .unwrap();
@@ -170,7 +170,7 @@ mod tests {
 
     #[test]
     fn test_simple_concat_repeat_regex() -> Result<(), String> {
-        let automaton = RegularExpression::new("A+B*")
+        let automaton = RegularExpression::parse("A+B*", false)
             .unwrap()
             .to_automaton()
             .unwrap();
@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn test_simple_repeat_regex_01() -> Result<(), String> {
-        let automaton = RegularExpression::new("a+")
+        let automaton = RegularExpression::parse("a+", false)
             .unwrap()
             .to_automaton()
             .unwrap();
@@ -200,7 +200,7 @@ mod tests {
 
     #[test]
     fn test_simple_repeat_regex_02() -> Result<(), String> {
-        let automaton = RegularExpression::new("a*c")
+        let automaton = RegularExpression::parse("a*c", false)
             .unwrap()
             .to_automaton()
             .unwrap();
@@ -214,11 +214,11 @@ mod tests {
 
     #[test]
     fn test_simple_repeat_regex_03() -> Result<(), String> {
-        let automaton = RegularExpression::new("(ab){3,4}")
+        let automaton = RegularExpression::parse("(ab){3,4}", false)
             .unwrap()
             .to_automaton()
             .unwrap();
-        automaton.to_dot();
+        automaton.print_dot();
         assert!(automaton.match_string("ababab"));
         assert!(automaton.match_string("abababab"));
         assert!(!automaton.match_string("ab"));
@@ -229,11 +229,11 @@ mod tests {
 
     #[test]
     fn test_simple_repeat_regex_04() -> Result<(), String> {
-        let automaton = RegularExpression::new("a{3,}")
+        let automaton = RegularExpression::parse("a{3,}", false)
             .unwrap()
             .to_automaton()
             .unwrap();
-        automaton.to_dot();
+        automaton.print_dot();
         assert!(automaton.match_string("aaa"));
         assert!(automaton.match_string("aaaaa"));
         assert!(!automaton.match_string("a"));
@@ -243,11 +243,11 @@ mod tests {
 
     #[test]
     fn test_simple_repeat_regex_05() -> Result<(), String> {
-        let automaton = RegularExpression::new("a?")
+        let automaton = RegularExpression::parse("a?", false)
             .unwrap()
             .to_automaton()
             .unwrap();
-        automaton.to_dot();
+        automaton.print_dot();
         assert!(automaton.match_string(""));
         assert!(automaton.match_string("a"));
         assert!(!automaton.match_string("aa"));
@@ -257,11 +257,11 @@ mod tests {
 
     #[test]
     fn test_simple_repeat_regex_06() -> Result<(), String> {
-        let automaton = RegularExpression::new("a{0,2}")
+        let automaton = RegularExpression::parse("a{0,2}", false)
             .unwrap()
             .to_automaton()
             .unwrap();
-        automaton.to_dot();
+        automaton.print_dot();
         assert!(automaton.match_string(""));
         assert!(automaton.match_string("a"));
         assert!(automaton.match_string("aa"));
@@ -272,11 +272,11 @@ mod tests {
 
     #[test]
     fn test_simple_repeat_regex_07() -> Result<(), String> {
-        let automaton = RegularExpression::new("a{1,3}")
+        let automaton = RegularExpression::parse("a{1,3}", false)
             .unwrap()
             .to_automaton()
             .unwrap();
-        automaton.to_dot();
+        automaton.print_dot();
         assert!(!automaton.match_string(""));
         assert!(automaton.match_string("a"));
         assert!(automaton.match_string("aa"));
@@ -287,11 +287,11 @@ mod tests {
 
     #[test]
     fn test_simple_repeat_regex_08() -> Result<(), String> {
-        let automaton = RegularExpression::new("a+(ba+)*")
+        let automaton = RegularExpression::parse("a+(ba+)*", false)
             .unwrap()
             .to_automaton()
             .unwrap();
-        automaton.to_dot();
+        automaton.print_dot();
         assert!(!automaton.match_string(""));
         assert!(!automaton.match_string("aab"));
         assert!(automaton.match_string("a"));
@@ -306,11 +306,11 @@ mod tests {
 
     #[test]
     fn test_simple_repeat_regex_09() -> Result<(), String> {
-        let automaton = RegularExpression::new("(ac|ads|a)*")
+        let automaton = RegularExpression::parse("(ac|ads|a)*", false)
             .unwrap()
             .to_automaton()
             .unwrap();
-        automaton.to_dot();
+        automaton.print_dot();
         assert!(automaton.match_string(""));
         assert!(automaton.match_string("ac"));
         assert!(automaton.match_string("ads"));
@@ -328,11 +328,11 @@ mod tests {
 
     #[test]
     fn test_simple_repeat_regex_10() -> Result<(), String> {
-        let automaton = RegularExpression::new("(ef|ads|a)+")
+        let automaton = RegularExpression::parse("(ef|ads|a)+", false)
             .unwrap()
             .to_automaton()
             .unwrap();
-        automaton.to_dot();
+        automaton.print_dot();
         assert!(!automaton.match_string(""));
         assert!(automaton.match_string("ef"));
         assert!(automaton.match_string("ads"));
@@ -350,11 +350,11 @@ mod tests {
 
     #[test]
     fn test_simple_repeat_regex_11() -> Result<(), String> {
-        let automaton = RegularExpression::new("(a|bc)*")
+        let automaton = RegularExpression::parse("(a|bc)*", false)
             .unwrap()
             .to_automaton()
             .unwrap();
-        automaton.to_dot();
+        automaton.print_dot();
         assert!(automaton.match_string(""));
         assert!(automaton.match_string("a"));
         assert!(automaton.match_string("bc"));
@@ -367,11 +367,11 @@ mod tests {
 
     #[test]
     fn test_simple_repeat_regex_12() -> Result<(), String> {
-        let automaton = RegularExpression::new("([ab]*a)?")
+        let automaton = RegularExpression::parse("([ab]*a)?", false)
             .unwrap()
             .to_automaton()
             .unwrap();
-        automaton.to_dot();
+        automaton.print_dot();
         assert!(automaton.match_string(""));
         assert!(automaton.match_string("a"));
         assert!(automaton.match_string("aa"));
@@ -385,11 +385,11 @@ mod tests {
 
     #[test]
     fn test_simple_repeat_regex_13() -> Result<(), String> {
-        let automaton = RegularExpression::new("([ab]*a)*")
+        let automaton = RegularExpression::parse("([ab]*a)*", false)
             .unwrap()
             .to_automaton()
             .unwrap();
-        automaton.to_dot();
+        automaton.print_dot();
         assert!(automaton.match_string(""));
         assert!(automaton.match_string("a"));
         assert!(automaton.match_string("aa"));
@@ -403,22 +403,22 @@ mod tests {
 
     #[test]
     fn test_simple_repeat_right_number_of_states_1() -> Result<(), String> {
-        let automaton = RegularExpression::new("a*")
+        let automaton = RegularExpression::parse("a*", false)
             .unwrap()
             .to_automaton()
             .unwrap();
-        automaton.to_dot();
+        automaton.print_dot();
         assert_eq!(1, automaton.get_number_of_states());
         Ok(())
     }
 
     #[test]
     fn test_simple_concat_right_number_of_states_2() -> Result<(), String> {
-        let automaton = RegularExpression::new("(a*bc)")
+        let automaton = RegularExpression::parse("(a*bc)", false)
             .unwrap()
             .to_automaton()
             .unwrap();
-        automaton.to_dot();
+        automaton.print_dot();
         assert_eq!(3, automaton.get_number_of_states());
         Ok(())
     }

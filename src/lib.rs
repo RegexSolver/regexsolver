@@ -41,26 +41,26 @@ pub type CharRange = RangeSet<Char>;
 ///
 ///     // Concatenate
 ///     let concat = t1.concat(&[t2])?;
-///     assert_eq!(concat.to_pattern().unwrap(), "abc.*xyz");
+///     assert_eq!(concat.to_pattern(), "abc.*xyz");
 ///
 ///     // Union
 ///     let union = t1.union(&[Term::from_pattern("fgh")?])?;
-///     assert_eq!(union.to_pattern().unwrap(), "(abc.*|fgh)");
+///     assert_eq!(union.to_pattern(), "(abc.*|fgh)");
 ///
 ///     // Intersection
 ///     let inter = Term::from_pattern("(ab|xy){2}")?
 ///         .intersection(&[Term::from_pattern(".*xy")?])?;
-///     assert_eq!(inter.to_pattern().unwrap(), "(ab|xy)xy");
+///     assert_eq!(inter.to_pattern(), "(ab|xy)xy");
 ///
 ///     // Difference
 ///     let diff = Term::from_pattern("a*")?
 ///         .difference(&Term::from_pattern("")?)?;
-///     assert_eq!(diff.to_pattern().unwrap(), "a+");
+///     assert_eq!(diff.to_pattern(), "a+");
 ///
 ///     // Repetition
 ///     let rep = Term::from_pattern("abc")?
 ///         .repeat(2, Some(4))?;
-///     assert_eq!(rep.to_pattern().unwrap(), "(abc){2,4}");
+///     assert_eq!(rep.to_pattern(), "(abc){2,4}");
 ///
 ///     // Analyze
 ///     assert_eq!(rep.get_length(), (Some(6), Some(12)));
@@ -388,7 +388,7 @@ impl Term {
 
         let automaton_1 = self.to_automaton()?;
         let automaton_2 = that.to_automaton()?;
-        automaton_1.are_equivalent(&automaton_2)
+        automaton_1.equivalent(&automaton_2)
     }
 
     /// Returns `true` if all strings matched by the current term are also matched by the given term.
@@ -410,7 +410,7 @@ impl Term {
 
         let automaton_1 = self.to_automaton()?;
         let automaton_2 = that.to_automaton()?;
-        automaton_1.is_subset_of(&automaton_2)
+        automaton_1.subset(&automaton_2)
     }
 
     /// Checks if the term matches the empty language.
@@ -465,17 +465,17 @@ impl Term {
         })
     }
 
-    /// Converts the term to a RegularExpression; returns `None` if conversion isn’t possible.
-    pub fn to_regex(&self) -> Option<Cow<RegularExpression>> {
-        Some(match self {
+    /// Converts the term to a RegularExpression.
+    pub fn to_regex(&self) -> Cow<RegularExpression> {
+        match self {
             Term::RegularExpression(regex) => Cow::Borrowed(regex),
-            Term::Automaton(automaton) => Cow::Owned(automaton.to_regex()?),
-        })
+            Term::Automaton(automaton) => Cow::Owned(automaton.to_regex()),
+        }
     }
 
-    /// Converts the term to a regular expression pattern; returns `None` if conversion isn’t possible.
-    pub fn to_pattern(&self) -> Option<String> {
-        Some(self.to_regex()?.to_string())
+    /// Converts the term to a regular expression pattern.
+    pub fn to_pattern(&self) -> String {
+        self.to_regex().to_string()
     }
 
     fn determinize_subtrahend<'a>(
@@ -523,12 +523,12 @@ impl Term {
 
     fn get_regexes<'a>(&'a self, terms: &'a [Term]) -> Option<Vec<Cow<'a, RegularExpression>>> {
         let mut regex_list = Vec::with_capacity(terms.len() + 1);
-        regex_list.push(self.to_regex()?);
+        regex_list.push(self.to_regex());
 
         let mut terms_regexes = terms
             .iter()
             .map(Term::to_regex)
-            .collect::<Option<Vec<_>>>()?;
+            .collect::<Vec<_>>();
         regex_list.append(&mut terms_regexes);
 
         Some(regex_list)
@@ -548,7 +548,7 @@ mod tests {
 
         let intersection = regex1.intersection(&vec![regex2]).unwrap();
         assert!(intersection.is_empty());
-        assert_eq!("[]", intersection.to_pattern().unwrap());
+        assert_eq!("[]", intersection.to_pattern());
 
         Ok(())
     }
@@ -560,7 +560,7 @@ mod tests {
 
         let result = regex1.difference(&regex2);
         assert!(result.is_ok());
-        let result = result.unwrap().to_pattern().unwrap();
+        let result = result.unwrap().to_pattern();
         assert_eq!("a+", result);
 
         Ok(())
@@ -573,9 +573,9 @@ mod tests {
 
         let result = regex1.difference(&regex2);
         assert!(result.is_ok());
-        let result = result.unwrap().to_regex().unwrap().into_owned();
+        let result = result.unwrap().to_regex().into_owned();
         assert_eq!(
-            Term::RegularExpression(RegularExpression::new("(xxx)*(x|xx)").unwrap()),
+            Term::RegularExpression(RegularExpression::new("x(x{3})*x?").unwrap()),
             Term::RegularExpression(result)
         );
 
@@ -589,7 +589,7 @@ mod tests {
 
         let result = regex1.intersection(&vec![regex2]);
         assert!(result.is_ok());
-        let result = result.unwrap().to_pattern().unwrap();
+        let result = result.unwrap().to_pattern();
         assert_eq!("", result);
 
         Ok(())
@@ -602,7 +602,7 @@ mod tests {
 
         let result = regex1.intersection(&vec![regex2]);
         assert!(result.is_ok());
-        let result = result.unwrap().to_pattern().unwrap();
+        let result = result.unwrap().to_pattern();
         assert_eq!("(x{3})*", result);
 
         Ok(())

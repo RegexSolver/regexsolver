@@ -32,15 +32,15 @@ impl FastAutomaton {
     pub fn is_empty_string(&self) -> bool {
         self.accept_states.len() == 1
             && self.accept_states.contains(&self.start_state)
-            && self.state_in_degree(self.start_state) == 0
+            && self.in_degree(self.start_state) == 0
     }
 
     /// Returns the set of all states reachable from the start state.
     pub fn get_reacheable_states(&self) -> IntSet<State> {
         let mut states_map: IntMap<usize, IntSet<usize>> =
             IntMap::with_capacity_and_hasher(self.transitions.len(), BuildHasherDefault::default());
-        for from_state in self.all_states_iter() {
-            for (condition, to_state) in self.transitions_from_iter(from_state) {
+        for from_state in self.states() {
+            for (condition, to_state) in self.transitions_from(from_state) {
                 if condition.is_empty() {
                     continue;
                 }

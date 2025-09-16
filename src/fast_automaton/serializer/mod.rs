@@ -134,7 +134,7 @@ mod tests {
     }
 
     fn assert_serialization(regex: &str) {
-        let regex = RegularExpression::new(regex).unwrap();
+        let regex = RegularExpression::parse(regex, false).unwrap();
         println!("{regex}");
 
         let automaton = regex.to_automaton().unwrap();
@@ -153,11 +153,11 @@ mod tests {
 
     #[test]
     fn test_serialization_case_1() -> Result<(), String> {
-        let automaton1 = RegularExpression::new(".*")
+        let automaton1 = RegularExpression::parse(".*", false)
             .unwrap()
             .to_automaton()
             .unwrap();
-        let automaton2 = RegularExpression::new("\\d+")
+        let automaton2 = RegularExpression::parse("\\d+", false)
             .unwrap()
             .to_automaton()
             .unwrap();

@@ -27,7 +27,7 @@ impl FastAutomaton {
             }
             seen.insert(state);
 
-            for to_state in self.direct_states_iter(&state) {
+            for to_state in self.direct_states(&state) {
                 if to_state == state || seen.contains(&to_state) {
                     is_infinite = true;
                     continue;
@@ -54,7 +54,7 @@ impl FastAutomaton {
             }
             seen.insert(state);
 
-            for to_state in self.direct_states_iter(&state) {
+            for to_state in self.direct_states(&state) {
                 if to_state == state || seen.contains(&to_state) {
                     max = None;
                     break;

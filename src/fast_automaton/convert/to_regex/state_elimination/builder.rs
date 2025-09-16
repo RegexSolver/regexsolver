@@ -1,48 +1,64 @@
+use ahash::HashMapExt;
+
 use super::*;
 
-mod scc;
-
-impl StateEliminationAutomaton<CharRange> {
-    pub fn new(automaton: &FastAutomaton) -> Result<Option<Self>, EngineError> {
-        if automaton.is_empty() {
-            return Ok(None);
-        }
-
-        let mut state_elimination_automaton = StateEliminationAutomaton {
+impl Gnfa {
+    pub(super) fn from_automaton(automaton: &FastAutomaton) -> Gnfa {
+        let mut state_elimination_automaton = Gnfa {
             start_state: 0,  // start_state is not set yet
             accept_state: 0, // accept_state is not set yet
             transitions: Vec::with_capacity(automaton.get_number_of_states()),
             transitions_in: IntMap::with_capacity(automaton.get_number_of_states()),
-            removed_states: IntSet::new(),
-            cyclic: false,
+            removed_states: IntSet::with_capacity(automaton.get_number_of_states()),
+            empty: false
         };
+
+        if automaton.is_empty() {
+            state_elimination_automaton.empty = true;
+            return state_elimination_automaton;
+        }
 
         let mut states_map = IntMap::with_capacity(automaton.get_number_of_states());
 
-        for from_state in automaton.all_states_iter() {
+        for from_state in automaton.states() {
             let new_from_state = *states_map
                 .entry(from_state)
                 .or_insert_with(|| state_elimination_automaton.new_state());
-            for (condition, to_state) in
-                automaton.transitions_from_iter(from_state)
-            {
+            for (condition, to_state) in automaton.transitions_from(from_state) {
                 let new_to_state = *states_map
                     .entry(*to_state)
                     .or_insert_with(|| state_elimination_automaton.new_state());
 
-                state_elimination_automaton.add_transition_to(
+                state_elimination_automaton.add_transition(
                     new_from_state,
                     new_to_state,
-                    GraphTransition::Weight(condition.to_range(automaton.get_spanning_set())?),
+                    RegularExpression::Character(
+                        condition.to_range(automaton.get_spanning_set()).unwrap(),
+                    ),
                 );
             }
         }
 
-        state_elimination_automaton.start_state =
-            *states_map.get(&automaton.get_start_state()).unwrap(); // We finally set start_state
+        if automaton.in_degree(automaton.get_start_state()) == 0 {
+            // If the start state does not have any incoming state we just set it
+            state_elimination_automaton.start_state =
+                *states_map.get(&automaton.get_start_state()).unwrap();
+        } else {
+            // If not we create a new state that will be the new start state
+            state_elimination_automaton.start_state = state_elimination_automaton.new_state();
 
-        if automaton.get_accept_states().len() == 1 {
-            // If there is only one accept state with just set it
+            let previous_start_state = *states_map.get(&automaton.get_start_state()).unwrap();
+            // We add an empty string transition to the new start state
+            state_elimination_automaton.add_transition(
+                state_elimination_automaton.start_state,
+                previous_start_state,
+                RegularExpression::new_empty_string(),
+            );
+        }
+
+        let accept_state = *automaton.get_accept_states().iter().next().unwrap();
+        if automaton.get_accept_states().len() == 1 && automaton.out_degree(accept_state) == 0 {
+            // If there is only one accept state we just set it
             state_elimination_automaton.accept_state = *states_map
                 .get(automaton.get_accept_states().iter().next().unwrap())
                 .unwrap();
@@ -52,19 +68,18 @@ impl StateEliminationAutomaton<CharRange> {
             for accept_state in automaton.get_accept_states() {
                 let accept_state = *states_map.get(accept_state).unwrap();
                 // We add an empty string transition to the new accept state
-                state_elimination_automaton.add_transition_to(
+                state_elimination_automaton.add_transition(
                     accept_state,
                     state_elimination_automaton.accept_state,
-                    GraphTransition::Epsilon,
+                    RegularExpression::new_empty_string(),
                 );
             }
         }
-        state_elimination_automaton.identify_and_apply_components()?;
-        //state_elimination_automaton.to_dot();
-        Ok(Some(state_elimination_automaton))
+
+        state_elimination_automaton
     }
 
-    pub fn new_state(&mut self) -> usize {
+    fn new_state(&mut self) -> usize {
         if let Some(new_state) = self.removed_states.clone().iter().next() {
             self.removed_states.remove(new_state);
             self.transitions_in.insert(*new_state, IntSet::new());
@@ -78,7 +93,7 @@ impl StateEliminationAutomaton<CharRange> {
     }
 
     #[inline]
-    pub fn has_state(&self, state: State) -> bool {
+    pub(super) fn has_state(&self, state: State) -> bool {
         !(state >= self.transitions.len() || self.removed_states.contains(&state))
     }
 
@@ -89,11 +104,11 @@ impl StateEliminationAutomaton<CharRange> {
         }
     }
 
-    pub fn add_transition_to(
+    pub(crate) fn add_transition(
         &mut self,
         from_state: State,
         to_state: State,
-        transition: GraphTransition<CharRange>,
+        transition: RegularExpression,
     ) {
         self.assert_state_exists(from_state);
         if from_state != to_state {
@@ -106,13 +121,8 @@ impl StateEliminationAutomaton<CharRange> {
             .insert(from_state);
         match self.transitions[from_state].entry(to_state) {
             Entry::Occupied(mut o) => {
-                if let (GraphTransition::Weight(current_regex), GraphTransition::Weight(regex)) =
-                    (o.get(), transition)
-                {
-                    o.insert(GraphTransition::Weight(current_regex.union(&regex)));
-                } else {
-                    panic!("Cannot add transition");
-                }
+                //o.insert(RegularExpression::Alternation(vec![transition, o.get().clone()]));
+                o.insert(transition.union(o.get()));
             }
             Entry::Vacant(v) => {
                 v.insert(transition);
@@ -120,7 +130,7 @@ impl StateEliminationAutomaton<CharRange> {
         };
     }
 
-    pub fn remove_state(&mut self, state: State) {
+    pub(super) fn remove_state(&mut self, state: State) {
         self.assert_state_exists(state);
         if self.start_state == state || self.accept_state == state {
             panic!(
@@ -148,22 +158,5 @@ impl StateEliminationAutomaton<CharRange> {
         for (_, transitions) in self.transitions_in.iter_mut() {
             transitions.remove(&state);
         }
-    }
-
-    pub fn remove_transition(&mut self, from_state: State, to_state: State) {
-        self.assert_state_exists(from_state);
-        if from_state != to_state {
-            self.assert_state_exists(to_state);
-        }
-
-        if let Some(from_states) = self.transitions_in.get_mut(&to_state) {
-            from_states.remove(&from_state);
-        }
-
-        self.transitions[from_state].remove(&to_state);
-    }
-
-    pub fn get_transition(&self, from_state: State, to_state: State) -> Option<&GraphTransition<CharRange>> {
-        self.transitions.get(from_state)?.get(&to_state)
     }
 }

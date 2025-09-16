@@ -151,6 +151,96 @@ impl RegularExpression {
             }
         }
     }
+
+    pub fn evaluate_complexity(&self) -> f64 {
+        let (score, depth, _) = self.eval_inner();
+        score + Self::depth_penalty(depth)
+    }
+
+    // returns: (score, max_depth, contains_repetition)
+    fn eval_inner(&self) -> (f64, usize, bool) {
+        match self {
+            RegularExpression::Character(range) => {
+                let len = range.to_regex().len() as f64;
+                // small, capped cost for raw length
+                let base = 1.0 + 0.05 * len.min(40.0);
+                (base, 1, false)
+            }
+
+            RegularExpression::Repetition(inner, min, max_opt) => {
+                let (inner_score, inner_depth, inner_has_rep) = inner.eval_inner();
+
+                // multipliers tuned for readability impact
+                let mut m = match max_opt {
+                    None => 1.6,                                // open upper bound like a+ or a{m,}
+                    Some(max) if max > min => 1.3,              // variable upper bound a{m,n}
+                    Some(max) if max == min && *min > 1 => 1.1, // exact count a{n}
+                    _ => 1.0,                                   // a{1} or degenerate
+                };
+
+                // nested quantifiers like (?:...+)+ are harder
+                if inner_has_rep {
+                    m *= 1.5;
+                }
+
+                (inner_score * m, inner_depth + 1, true)
+            }
+
+            RegularExpression::Concat(items) => {
+                let mut sum = 0.0;
+                let mut max_depth = 0usize;
+                let mut has_rep = false;
+
+                for (i, it) in items.iter().enumerate() {
+                    let (s, d, h) = it.eval_inner();
+                    sum += s;
+                    if i > 0 {
+                        // tiny discount: linear sequences are relatively easy to read
+                        sum *= 0.98;
+                    }
+                    if d > max_depth {
+                        max_depth = d;
+                    }
+                    has_rep |= h;
+                }
+
+                (sum, max_depth + 1, has_rep)
+            }
+
+            RegularExpression::Alternation(branches) => {
+                if branches.is_empty() {
+                    return (0.0, 1, false);
+                }
+                let mut sum = 0.0;
+                let mut max_depth = 0usize;
+                let mut has_rep = false;
+
+                for b in branches {
+                    let (s, d, h) = b.eval_inner();
+                    sum += s;
+                    if d > max_depth {
+                        max_depth = d;
+                    }
+                    has_rep |= h;
+                }
+
+                // branching cost: more alternatives = harder to scan
+                let k = branches.len() as f64;
+                let multiplier = 1.0 + 0.15 * (k - 1.0);
+
+                (sum * multiplier, max_depth + 1, has_rep)
+            }
+        }
+    }
+
+    fn depth_penalty(depth: usize) -> f64 {
+        // no penalty up to depth 2, then quadratic growth
+        if depth <= 2 {
+            0.0
+        } else {
+            ((depth - 2) as f64).powi(2) * 0.8
+        }
+    }
 }
 
 #[cfg(test)]

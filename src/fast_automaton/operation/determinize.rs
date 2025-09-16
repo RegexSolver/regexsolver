@@ -40,7 +40,7 @@ impl FastAutomaton {
 
             for base in &ranges {
                 for from_state in &states {
-                    for (cond, to_state) in self.transitions_from_iter(*from_state) {
+                    for (cond, to_state) in self.transitions_from(*from_state) {
                         if cond.has_intersection(base) {
                             match new_states_to_add.binary_search(to_state) {
                                 Ok(_) => {} // element already in vector @ `pos`
@@ -84,7 +84,7 @@ mod tests {
 
     #[test]
     fn test_determinize_1() -> Result<(), String> {
-        let automaton = RegularExpression::new(".*ab")
+        let automaton = RegularExpression::parse(".*ab", false)
             .unwrap()
             .to_automaton()
             .unwrap();
@@ -113,7 +113,7 @@ mod tests {
 
     fn assert_determinization(regex: &str) {
         println!(":{}", regex);
-        let automaton = RegularExpression::new(regex)
+        let automaton = RegularExpression::parse(regex, false)
             .unwrap()
             .to_automaton()
             .unwrap();

@@ -4,7 +4,7 @@ use super::*;
 
 impl FastAutomaton {
     /// Returns `true` if both automata accept the same language.
-    pub fn are_equivalent(&self, other: &FastAutomaton) -> Result<bool, EngineError> {
+    pub fn equivalent(&self, other: &FastAutomaton) -> Result<bool, EngineError> {
         if self.is_empty() != other.is_empty() && self.is_total() != other.is_total() {
             return Ok(false);
         } else if self == other {
@@ -44,26 +44,26 @@ mod tests {
             false,
         );
 
-        let regex_1 = RegularExpression::new("cd").unwrap();
-        let regex_2 = RegularExpression::new("cd").unwrap();
+        let regex_1 = RegularExpression::parse("cd", false).unwrap();
+        let regex_2 = RegularExpression::parse("cd", false).unwrap();
         assert_equivalent(&regex_1, &regex_2, true);
 
-        let regex_1 = RegularExpression::new("test.*other").unwrap();
-        let regex_2 = RegularExpression::new("test.*othew").unwrap();
+        let regex_1 = RegularExpression::parse("test.*other", false).unwrap();
+        let regex_2 = RegularExpression::parse("test.*othew", false).unwrap();
 
         assert_equivalent(&regex_1, &regex_2, false);
 
-        let regex_1 = RegularExpression::new("test.{0,50}other").unwrap();
-        let regex_2 = RegularExpression::new("test.{0,49}other").unwrap();
+        let regex_1 = RegularExpression::parse("test.{0,50}other", false).unwrap();
+        let regex_2 = RegularExpression::parse("test.{0,49}other", false).unwrap();
 
         assert_equivalent(&regex_1, &regex_2, false);
 
-        let regex_1 = RegularExpression::new("[0]").unwrap();
-        let regex_2 = RegularExpression::new("[01]").unwrap();
+        let regex_1 = RegularExpression::parse("[0]", false).unwrap();
+        let regex_2 = RegularExpression::parse("[01]", false).unwrap();
         assert_equivalent(&regex_1, &regex_2, false);
 
-        let regex_1 = RegularExpression::new("(b+a+)*").unwrap();
-        let regex_2 = RegularExpression::new("(b[a-b]*a)?").unwrap();
+        let regex_1 = RegularExpression::parse("(b+a+)*", false).unwrap();
+        let regex_2 = RegularExpression::parse("(b[a-b]*a)?", false).unwrap();
         assert_equivalent(&regex_1, &regex_2, true);
 
         Ok(())
@@ -72,14 +72,14 @@ mod tests {
     fn assert_equivalent(regex_1: &RegularExpression, regex_2: &RegularExpression, expected: bool) {
         println!("{regex_1} and {regex_2}");
         let automaton_1 = regex_1.to_automaton().unwrap();
-        assert_eq!(true, automaton_1.are_equivalent(&automaton_1).unwrap());
+        assert_eq!(true, automaton_1.equivalent(&automaton_1).unwrap());
 
         let automaton_2 = regex_2.to_automaton().unwrap();
-        assert_eq!(true, automaton_2.are_equivalent(&automaton_2).unwrap());
+        assert_eq!(true, automaton_2.equivalent(&automaton_2).unwrap());
 
         assert_eq!(
             expected,
-            automaton_1.are_equivalent(&automaton_2).unwrap()
+            automaton_1.equivalent(&automaton_2).unwrap()
         );
     }
 }

@@ -122,7 +122,7 @@ impl FastAutomaton {
 
         if self.deterministic {
             let mut deterministic = true;
-            for (condition, state) in self.transitions_from_iter(from_state) {
+            for (condition, state) in self.transitions_from(from_state) {
                 if state == &to_state {
                     continue;
                 }
@@ -159,12 +159,15 @@ impl FastAutomaton {
             self.accept_states.insert(from_state);
         }
 
-        let transitions_to: Vec<_> = self.transitions_from_into_iter(&to_state).collect();
+        let transitions_to: Vec<_> = self
+            .transitions_from(to_state)
+            .map(|(cond, to_state)| (cond.clone(), *to_state))
+            .collect();
 
         for (cond, state) in transitions_to {
             if self.deterministic {
                 let mut deterministic = true;
-                for (c, s) in self.transitions_from_iter(from_state) {
+                for (c, s) in self.transitions_from(from_state) {
                     if state == *s {
                         continue;
                     }
@@ -188,6 +191,19 @@ impl FastAutomaton {
                 }
             };
         }
+    }
+
+    pub fn remove_transition(&mut self, from_state: State, to_state: State) {
+        self.assert_state_exists(from_state);
+        if from_state != to_state {
+            self.assert_state_exists(to_state);
+        }
+
+        self.transitions_in
+            .entry(to_state)
+            .or_default()
+            .remove(&from_state);
+        self.transitions[from_state].remove(&to_state);
     }
 
     /// Removes the state and all its connected transitions; panics if it's a start state.
@@ -269,7 +285,7 @@ impl FastAutomaton {
             return Ok(());
         }
         let condition_converter = ConditionConverter::new(&self.spanning_set, new_spanning_set)?;
-        for from_state in &self.all_states_vec() {
+        for from_state in &self.states_vec() {
             for to_state in self.direct_states_vec(from_state) {
                 match self.transitions[*from_state].entry(to_state) {
                     Entry::Occupied(mut o) => {
@@ -296,6 +312,7 @@ impl FastAutomaton {
     #[inline]
     pub(crate) fn apply_model(&mut self, model: &FastAutomaton) {
         self.transitions = model.transitions.clone();
+        self.transitions_in = model.transitions_in.clone();
         self.start_state = model.start_state;
         self.accept_states = model.accept_states.clone();
         self.removed_states = model.removed_states.clone();
@@ -320,7 +337,7 @@ mod tests {
     }
 
     fn assert_regex_build_deterministic_automaton(regex: &str, deterministic: bool) {
-        let automaton = RegularExpression::new(regex)
+        let automaton = RegularExpression::parse(regex, false)
             .unwrap()
             .to_automaton()
             .unwrap();

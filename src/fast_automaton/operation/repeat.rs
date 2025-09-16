@@ -21,7 +21,7 @@ impl FastAutomaton {
 
         let automaton_to_repeat = self.clone();
 
-        if min == 0 && self.state_in_degree(self.start_state) != 0 {
+        if min == 0 && self.in_degree(self.start_state) != 0 {
             let new_state = self.new_state();
             if self.is_accepted(&self.start_state) {
                 self.accept(new_state);
@@ -58,8 +58,8 @@ impl FastAutomaton {
 
             let accept_state = *automaton_to_repeat.accept_states.iter().next().unwrap();
             if automaton_to_repeat.accept_states.len() == 1
-                && automaton_to_repeat.state_out_degree(accept_state) == 0
-                && automaton_to_repeat.state_in_degree(automaton_to_repeat.start_state) == 0
+                && automaton_to_repeat.out_degree(accept_state) == 0
+                && automaton_to_repeat.in_degree(automaton_to_repeat.start_state) == 0
             {
                 automaton_to_repeat
                     .add_epsilon_transition(accept_state, automaton_to_repeat.start_state);
@@ -112,7 +112,7 @@ mod tests {
 
     #[test]
     fn test_repeat_1() -> Result<(), String> {
-        let automaton = RegularExpression::new("(a*,a*)?")
+        let automaton = RegularExpression::parse("(a*,a*)?", false)
             .unwrap()
             .to_automaton()
             .unwrap();

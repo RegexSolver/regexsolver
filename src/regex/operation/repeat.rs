@@ -248,6 +248,6 @@ mod tests {
 
         let result = got.to_automaton().unwrap();
 
-        assert!(repeat.are_equivalent(&result).unwrap());
+        assert!(repeat.equivalent(&result).unwrap());
     }
 }

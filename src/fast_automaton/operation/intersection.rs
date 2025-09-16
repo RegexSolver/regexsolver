@@ -4,10 +4,7 @@ use rayon::prelude::*;
 
 use condition::converter::ConditionConverter;
 
-use crate::{
-    error::EngineError,
-    execution_profile::{ExecutionProfile},
-};
+use crate::{error::EngineError, execution_profile::ExecutionProfile};
 
 use super::*;
 
@@ -18,8 +15,9 @@ impl FastAutomaton {
     }
 
     /// Computes the intersection of all automatons in the given iterator.
-    pub fn intersection_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(automatons: I) -> Result<Self, EngineError>
-    {
+    pub fn intersection_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(
+        automatons: I,
+    ) -> Result<Self, EngineError> {
         let mut result: Cow<'a, FastAutomaton> = Cow::Owned(FastAutomaton::new_total());
 
         for automaton in automatons {
@@ -34,25 +32,27 @@ impl FastAutomaton {
     }
 
     /// Computes in parallel the intersection of all automatons in the given iterator.
-    pub fn intersection_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(automatons: I) -> Result<Self, EngineError>
-    {
+    pub fn intersection_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(
+        automatons: I,
+    ) -> Result<Self, EngineError> {
         let execution_profile = ExecutionProfile::get();
 
         let total = FastAutomaton::new_total();
 
-        automatons.into_par_iter()
-        .try_fold(
-            || total.clone(),
-            |acc, next| {
-                execution_profile.apply(|| Ok(acc.intersection_internal(next)?.into_owned()))
-            },
-        )
-        .try_reduce(
-            || total.clone(),
-            |acc, next| {
-                execution_profile.apply(|| Ok(acc.intersection_internal(&next)?.into_owned()))
-            },
-        )
+        automatons
+            .into_par_iter()
+            .try_fold(
+                || total.clone(),
+                |acc, next| {
+                    execution_profile.apply(|| Ok(acc.intersection_internal(next)?.into_owned()))
+                },
+            )
+            .try_reduce(
+                || total.clone(),
+                |acc, next| {
+                    execution_profile.apply(|| Ok(acc.intersection_internal(&next)?.into_owned()))
+                },
+            )
     }
 
     fn intersection_internal<'a>(
@@ -197,7 +197,7 @@ impl FastAutomaton {
         condition_converter: &ConditionConverter,
     ) -> Result<Vec<TransitionTo>, EngineError> {
         let transitions_1: Result<Vec<_>, EngineError> = self
-            .transitions_from_iter(state)
+            .transitions_from(state)
             .map(|(c, &s)| match condition_converter.convert(c) {
                 Ok(condition) => Ok((condition, s)),
                 Err(err) => Err(err),
@@ -210,15 +210,15 @@ impl FastAutomaton {
 
 #[cfg(test)]
 mod tests {
-    use crate::{fast_automaton::FastAutomaton, regex::RegularExpression};
+    use crate::regex::RegularExpression;
 
     #[test]
     fn test_simple_intersection_regex_1() -> Result<(), String> {
-        let automaton1 = RegularExpression::new("(abc|ac|aaa)")
+        let automaton1 = RegularExpression::parse("(abc|ac|aaa)", false)
             .unwrap()
             .to_automaton()
             .unwrap();
-        let automaton2 = RegularExpression::new("(abcd|ac|aba)")
+        let automaton2 = RegularExpression::parse("(abcd|ac|aba)", false)
             .unwrap()
             .to_automaton()
             .unwrap();
@@ -234,11 +234,11 @@ mod tests {
 
     #[test]
     fn test_simple_intersection_regex_2() -> Result<(), String> {
-        let automaton1 = RegularExpression::new("a*")
+        let automaton1 = RegularExpression::parse("a*", false)
             .unwrap()
             .to_automaton()
             .unwrap();
-        let automaton2 = RegularExpression::new("b*")
+        let automaton2 = RegularExpression::parse("b*", false)
             .unwrap()
             .to_automaton()
             .unwrap();
@@ -252,11 +252,11 @@ mod tests {
 
     #[test]
     fn test_simple_intersection_regex_3() -> Result<(), String> {
-        let automaton1 = RegularExpression::new("x*")
+        let automaton1 = RegularExpression::parse("x*", false)
             .unwrap()
             .to_automaton()
             .unwrap();
-        let automaton2 = RegularExpression::new("(xxx)*")
+        let automaton2 = RegularExpression::parse("(xxx)*", false)
             .unwrap()
             .to_automaton()
             .unwrap();
@@ -272,11 +272,11 @@ mod tests {
 
     #[test]
     fn test_complex_intersection_regex_1() -> Result<(), String> {
-        let automaton1 = RegularExpression::new(".*(abc|ac|aaa)")
+        let automaton1 = RegularExpression::parse(".*(abc|ac|aaa)", false)
             .unwrap()
             .to_automaton()
             .unwrap();
-        let automaton2 = RegularExpression::new("(abcd|ac|aba)")
+        let automaton2 = RegularExpression::parse("(abcd|ac|aba)", false)
             .unwrap()
             .to_automaton()
             .unwrap();
@@ -293,50 +293,21 @@ mod tests {
 
     #[test]
     fn test_complex_intersection_regex_2() -> Result<(), String> {
-        let automaton1 = RegularExpression::new("(?:[a-z0-9]+(?:\\.[a-z0-9]+)*|\"(?:[\\x01-\\x08\\x0b\\x0c\\x0e-\\x1f\\x21\\x23-\\x5b\\x5d-\\x7f]|\\\\[\\x01-\\x09\\x0b\\x0c\\x0e-\\x7f])*\")@(?:(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?|\\[(?:(?:(2(5[0-5]|[0-4][0-9])|1[0-9][0-9]|[1-9]?[0-9]))\\.){3}(?:(2(5[0-5]|[0-4][0-9])|1[0-9][0-9]|[1-9]?[0-9])|[a-z0-9-]*[a-z0-9]:(?:[\\x01-\\x08\\x0b\\x0c\\x0e-\\x1f\\x21-\\x5a\\x53-\\x7f]|\\\\[\\x01-\\x09\\x0b\\x0c\\x0e-\\x7f])+)\\])")
+        let automaton1 = RegularExpression::parse("(?:[a-z0-9]+(?:\\.[a-z0-9]+)*|\"(?:[\\x01-\\x08\\x0b\\x0c\\x0e-\\x1f\\x21\\x23-\\x5b\\x5d-\\x7f]|\\\\[\\x01-\\x09\\x0b\\x0c\\x0e-\\x7f])*\")@(?:(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?|\\[(?:(?:(2(5[0-5]|[0-4][0-9])|1[0-9][0-9]|[1-9]?[0-9]))\\.){3}(?:(2(5[0-5]|[0-4][0-9])|1[0-9][0-9]|[1-9]?[0-9])|[a-z0-9-]*[a-z0-9]:(?:[\\x01-\\x08\\x0b\\x0c\\x0e-\\x1f\\x21-\\x5a\\x53-\\x7f]|\\\\[\\x01-\\x09\\x0b\\x0c\\x0e-\\x7f])+)\\])", false)
             .unwrap()
             .to_automaton().unwrap();
-        let automaton2 = RegularExpression::new("avb@.*")
+        let automaton2 = RegularExpression::parse("avb@.*", false)
             .unwrap()
             .to_automaton()
             .unwrap();
 
-        automaton1.to_dot();
-        automaton2.to_dot();
+        automaton1.print_dot();
+        automaton2.print_dot();
         let intersection = automaton1.intersection(&automaton2).unwrap();
 
         assert!(!intersection.is_empty());
 
         assert!(intersection.match_string("avb@gmail.com"));
-        Ok(())
-    }
-
-    #[test]
-    fn test_intersection_par() -> Result<(), String> {
-        let c = 14;
-        let mut automaton_list = Vec::with_capacity(c);
-
-        for i in 0..c {
-            automaton_list.push(
-                RegularExpression::new(&format!(".*{i}.*"))
-                    .unwrap()
-                    .to_automaton()
-                    .unwrap(),
-            )
-        }
-
-        // FastAutomaton::intersection_all(automaton_list.iter().collect::<Vec<_>>());
-
-        // 3.76
-        // 4.47
-        // 3.84
-
-        let _ = FastAutomaton::intersection_all_par(automaton_list.iter().collect::<Vec<_>>());
-
-        // 0.59
-        // 0.55
-        // 0.53
-
         Ok(())
     }
 }

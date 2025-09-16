@@ -16,9 +16,9 @@ impl FastAutomaton {
             );
 
         let mut ranges = Vec::with_capacity(self.get_number_of_states());
-        for from_state in self.all_states_iter() {
+        for from_state in self.states() {
             let mut new_condition = Condition::empty(&self.spanning_set);
-            for (condition, _) in self.transitions_from_iter(from_state) {
+            for (condition, _) in self.transitions_from(from_state) {
                 new_condition = new_condition.union(condition);
                 ranges.push(condition.to_range(self.get_spanning_set())?);
             }
@@ -36,7 +36,7 @@ impl FastAutomaton {
         let new_spanning_set = SpanningSet::compute_spanning_set(&ranges);
         self.apply_new_spanning_set(&new_spanning_set)?;
 
-        if self.state_in_degree(crash_state) == 1 {
+        if self.in_degree(crash_state) == 1 {
             self.remove_state(crash_state);
         }
         Ok(())
@@ -47,7 +47,7 @@ impl FastAutomaton {
         self.totalize()?;
 
         let mut new_accept_states = IntSet::default();
-        for state in self.all_states_iter() {
+        for state in self.states() {
             if self.accept_states.contains(&state) {
                 continue;
             }
