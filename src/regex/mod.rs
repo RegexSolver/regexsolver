@@ -172,13 +172,13 @@ impl RegularExpression {
 
                 // multipliers tuned for readability impact
                 let mut m = match max_opt {
-                    None => 1.6,                                // open upper bound like a+ or a{m,}
-                    Some(max) if max > min => 1.3,              // variable upper bound a{m,n}
-                    Some(max) if max == min && *min > 1 => 1.1, // exact count a{n}
-                    _ => 1.0,                                   // a{1} or degenerate
+                    None => 1.6,
+                    Some(max) if max > min => 1.3,
+                    Some(max) if max == min && *min > 1 => 1.1,
+                    _ => 1.0,
                 };
 
-                // nested quantifiers like (?:...+)+ are harder
+                // nested quantifiers like (...+)+ are harder
                 if inner_has_rep {
                     m *= 1.5;
                 }

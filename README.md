@@ -227,10 +227,11 @@ This design allows us to perform unions, intersections, and complements of trans
 
 `RegularExpression` is used to directly build, manipulate and analyze regular expression patterns. Not all the set operations are available, for more advanced operation such as intersection, subtraction/difference and complement it is necessary to convert into a `FastAutomaton` with the method `to_automaton()`.
 
-#### Build
+#### Build/Manipulate
 | Method | Return | Description |
 | -------- | ------- | ------- |
 | `concat(&self, other: &RegularExpression, append_back: bool)` | `RegularExpression` | Returns a new regular expression representing the concatenation of `self` and `other`; `append_back` determines their order. |
+| `concat_all<'a, I: IntoIterator<Item = &'a RegularExpression>>(patterns: I)` | `RegularExpression` | Returns a regular expression that is the concatenation of all expressions in `patterns`. |
 | `new(pattern: &str)` | `Result<RegularExpression, EngineError>` | Parses and simplifies the provided pattern and returns the resulting `RegularExpression`. |
 | `new_empty()` | `RegularExpression` | Creates a regular expression that matches the empty language. |
 | `new_empty_string()` | `RegularExpression` | Creates a regular expression that matches only the empty string `""`. |
@@ -291,7 +292,6 @@ execution_profile.run(|| {
 ```
 
 ## Cross-Language Support
-
 
 If you want to use this library with other programming languages, we provide a wide range of wrappers:
 - [regexsolver-java](https://github.com/RegexSolver/regexsolver-java)

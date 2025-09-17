@@ -1,6 +1,19 @@
 use super::*;
 
 impl RegularExpression {
+     /// Returns a regular expression that is the concatenation of all expressions in `patterns`.
+    pub fn concat_all<'a, I: IntoIterator<Item = &'a RegularExpression>>(
+        patterns: I,
+    ) -> RegularExpression {
+        let mut result = RegularExpression::new_empty_string();
+
+        for other in patterns {
+            result = result.concat(other, true);
+        }
+
+        result
+    }
+    
     /// Returns a new regular expression representing the concatenation of `self` and `other`; `append_back` determines their order.
     pub fn concat(&self, other: &RegularExpression, append_back: bool) -> RegularExpression {
         if self.is_empty() || other.is_empty() {
@@ -11,35 +24,19 @@ impl RegularExpression {
             return self.clone();
         }
 
-        match (self, other) {
+        let (front, back) = if append_back {
+            (self, other)
+        } else {
+            (other, self)
+        };
+
+        match (front, back) {
             (RegularExpression::Concat(_), RegularExpression::Concat(_)) => {
-                if append_back {
-                    Self::opconcat_concat_and_concat(self, other)
-                } else {
-                    Self::opconcat_concat_and_concat(other, self)
-                }
+                Self::opconcat_concat_and_concat(front, back)
             }
-            (RegularExpression::Concat(_), _) => {
-                if append_back {
-                    Self::opconcat_concat_and_other(self, other)
-                } else {
-                    Self::opconcat_other_and_concat(other, self)
-                }
-            }
-            (_, RegularExpression::Concat(_)) => {
-                if append_back {
-                    Self::opconcat_other_and_concat(self, other)
-                } else {
-                    Self::opconcat_concat_and_other(other, self)
-                }
-            }
-            (_, _) => {
-                if append_back {
-                    Self::opconcat_other_and_other(self, other)
-                } else {
-                    Self::opconcat_other_and_other(other, self)
-                }
-            }
+            (RegularExpression::Concat(_), _) => Self::opconcat_concat_and_other(front, back),
+            (_, RegularExpression::Concat(_)) => Self::opconcat_other_and_concat(front, back),
+            (_, _) => Self::opconcat_other_and_other(front, back),
         }
     }
 
