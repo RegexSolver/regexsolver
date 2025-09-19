@@ -11,12 +11,12 @@ lazy_static! {
 }
 
 impl RegularExpression {
-    /// Parses and simplify the provided pattern and returns the resulting [`RegularExpression`].
+    /// Parses and simplifies the provided pattern and returns the resulting [`RegularExpression`].
     pub fn new(pattern: &str) -> Result<Self, EngineError> {
         Self::parse(pattern, true)
     }
 
-    /// Parses the provided pattern and returns the resulting [`RegularExpression`].
+    /// Parses the provided pattern and returns the resulting [`RegularExpression`]. If simplify is `true`, the expression is simplified during parsing.
     pub fn parse(pattern: &str, simplify: bool) -> Result<Self, EngineError> {
         if pattern.is_empty() {
             return Ok(RegularExpression::new_empty_string());

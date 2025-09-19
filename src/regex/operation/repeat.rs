@@ -1,41 +1,41 @@
 use super::*;
 
 impl RegularExpression {
-    /// Returns the repetition of the expression between `min` and `max_opt` times; if `max_opt` is `None`, the repetition is unbounded.
-    pub fn repeat(&self, o_min: u32, o_max_opt: Option<u32>) -> RegularExpression {
+    /// Computes the repetition of the automaton between `min` and `max_opt` times; if `max_opt` is `None`, the repetition is unbounded.
+    pub fn repeat(&self, min: u32, max_opt: Option<u32>) -> RegularExpression {
         if self.is_total() {
             return RegularExpression::new_total();
         } else if self.is_empty() {
             return RegularExpression::new_empty();
         } else if self.is_empty_string() {
             return Self::new_empty_string();
-        } else if let Some(max) = o_max_opt {
-            if max < o_min || max == 0 {
+        } else if let Some(max) = max_opt {
+            if max < min || max == 0 {
                 return RegularExpression::new_empty_string();
-            } else if o_min == 1 && max == 1 {
+            } else if min == 1 && max == 1 {
                 return self.clone();
             }
         }
 
         match self {
             RegularExpression::Repetition(regular_expression, i_min, i_max_opt) => {
-                let new_max = if let (Some(o_max), Some(i_max)) = (o_max_opt, i_max_opt) {
+                let new_max = if let (Some(o_max), Some(i_max)) = (max_opt, i_max_opt) {
                     Some(o_max * i_max)
                 } else {
                     None
                 };
 
-                if Self::can_simplify_nested_repetition(*i_min, *i_max_opt, o_min, o_max_opt) {
+                if Self::can_simplify_nested_repetition(*i_min, *i_max_opt, min, max_opt) {
                     RegularExpression::Repetition(
                         regular_expression.clone(),
-                        o_min * i_min,
+                        min * i_min,
                         new_max,
                     )
                 } else {
-                    RegularExpression::Repetition(Box::new(self.clone()), o_min, o_max_opt)
+                    RegularExpression::Repetition(Box::new(self.clone()), min, max_opt)
                 }
             }
-            _ => RegularExpression::Repetition(Box::new(self.clone()), o_min, o_max_opt),
+            _ => RegularExpression::Repetition(Box::new(self.clone()), min, max_opt),
         }
     }
 

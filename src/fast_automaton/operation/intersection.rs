@@ -126,7 +126,7 @@ impl FastAutomaton {
         Ok(Cow::Owned(new_automaton))
     }
 
-    // Returns `true` if the two automata have a non-empty intersection.
+    /// Returns `true` if the two automata have a non-empty intersection.
     pub fn has_intersection(&self, other: &FastAutomaton) -> Result<bool, EngineError> {
         if self.is_empty() || other.is_empty() {
             return Ok(false);
@@ -195,7 +195,7 @@ impl FastAutomaton {
         &self,
         state: State,
         condition_converter: &ConditionConverter,
-    ) -> Result<Vec<TransitionTo>, EngineError> {
+    ) -> Result<Vec<(Condition, State)>, EngineError> {
         let transitions_1: Result<Vec<_>, EngineError> = self
             .transitions_from(state)
             .map(|(c, &s)| match condition_converter.convert(c) {

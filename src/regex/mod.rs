@@ -152,12 +152,13 @@ impl RegularExpression {
         }
     }
 
+    /// Returns a heuristic score for the readability of the pattern.
     pub fn evaluate_complexity(&self) -> f64 {
         let (score, depth, _) = self.eval_inner();
         score + Self::depth_penalty(depth)
     }
 
-    // returns: (score, max_depth, contains_repetition)
+    /// Returns: (score, max_depth, contains_repetition)
     fn eval_inner(&self) -> (f64, usize, bool) {
         match self {
             RegularExpression::Character(range) => {

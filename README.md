@@ -120,7 +120,7 @@ RegexSolver is based on the [regex-syntax](https://docs.rs/regex-syntax/0.8.5/re
 | -------- | ------- | ------- |
 | `equivalent(&self, term: &Term)` | `Result<bool, EngineError>` | Returns `true` if both terms accept the same language. |
 | `generate_strings(&self, count: usize)` | `Result<Vec<String>, EngineError>` | Generates `count` strings matched by the term. |
-| `get_cardinality()` | `Result<Cardinality<u32>, EngineError>` | Returns the cardinality of the term (i.e., the number of possible matched strings). |
+| `get_cardinality(&self)` | `Result<Cardinality<u32>, EngineError>` | Returns the cardinality of the term (i.e., the number of possible matched strings). |
 | `get_length(&self)` | `(Option<u32>, Option<u32>)` | Returns the minimum and maximum length of matched strings. |
 | `is_empty(&self)` | `bool` | Checks if the term matches the empty language. |
 | `is_empty_string(&self)` | `bool` | Checks if the term matches only the empty string `""`. |
@@ -129,7 +129,6 @@ RegexSolver is based on the [regex-syntax](https://docs.rs/regex-syntax/0.8.5/re
 | `to_automaton(&self)` | `Result<Cow<FastAutomaton>, EngineError>` | Converts the term to a `FastAutomaton`. |
 | `to_pattern(&self)` | `String` | Converts the term to a regular expression pattern. |
 | `to_regex(&self)` | `Cow<RegularExpression>` | Converts the term to a RegularExpression. |
-
 
 ### FastAutomaton
 
@@ -170,8 +169,9 @@ This design allows us to perform unions, intersections, and complements of trans
 | `new_from_range(range: &CharRange)` | `FastAutomaton` | Creates an automaton that matches one of the characters in the given `CharRange`. |
 | `new_state(&mut self)` | `State` | Creates a new state and returns its identifier. |
 | `new_total()` | `FastAutomaton` | Creates an automaton that matches all possible strings. |
-| `remove_state(&mut self, state: State)` | `()` | Removes the state and all its connected transitions; panics if it's a start state. |
+| `remove_state(&mut self, state: State)` | `()` | Removes the state and its connected transitions; panics if it's a start state. |
 | `remove_states(&mut self, states: &IntSet<State>)` | `()` | Removes the given states and their connected transitions; panics if any is a start state. |
+| `remove_transition(&mut self, from_state: State, to_state: State)` | `()` | Removes the transition between the two provided states if it exists. |
 
 #### Manipulate
 | Method | Return | Description |
@@ -181,6 +181,7 @@ This design allows us to perform unions, intersections, and complements of trans
 | `concat_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(automatons: I)` | `Result<FastAutomaton, EngineError>` | Computes the concatenation of all automatons in the given iterator. |
 | `determinize(&self)` | `Result<Cow<FastAutomaton>, EngineError>` | Determinizes the automaton and returns the result. |
 | `difference(&self, other: &FastAutomaton)` | `Result<FastAutomaton, EngineError>` | Computes the difference between `self` and `other`. |
+| `has_intersection(&self, other: &FastAutomaton)` | `Result<bool, EngineError>` | Returns `true` if the two automata have a non-empty intersection. |
 | `intersection(&self, other: &FastAutomaton)` | `Result<FastAutomaton, EngineError>` | Computes the intersection between `self` and `other`. |
 | `intersection_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(automatons: I)` | `Result<FastAutomaton, EngineError>` | Computes the intersection of all automatons in the given iterator. |
 | `intersection_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(automatons: I)` | `Result<FastAutomaton, EngineError>` | Computes in parallel the intersection of all automatons in the given iterator. |
@@ -192,35 +193,37 @@ This design allows us to perform unions, intersections, and complements of trans
 #### Analyze
 | Method | Return | Description |
 | -------- | ------- | ------- |
+| `as_dot(&self)` | `String` | Returns the automaton's DOT representation. |
 | `direct_states(&self, state: &State)` | `impl Iterator<Item = State>` | Returns an iterator over states directly reachable from the given state in one transition. |
 | `direct_states_vec(&self, state: &State)` | `Vec<State>` | Returns a vector of states directly reachable from the given state in one transition. |
 | `does_transition_exists(&self, from_state: State, to_state: State)` | `bool` | Returns `true` if there is a directed transition from `from_state` to `to_state`. |
 | `equivalent(&self, other: &FastAutomaton)` | `Result<bool, EngineError>` | Returns `true` if both automata accept the same language. |
-| `generate_strings(&self, count: usize)` | `Result<AHashSet<String>, EngineError>` | Generates `count` strings matched by the automaton. |
+| `generate_strings(&self, number: usize)` | `Result<Vec<String>, EngineError>` | Generates `count` strings matched by the automaton. |
 | `get_accept_states(&self)` | `&IntSet<State>` | Returns a reference to the set of accept (final) states. |
 | `get_cardinality(&self)` | `Cardinality<u32>` | Returns the cardinality of the automaton (i.e., the number of possible matched strings). |
 | `get_condition(&self, from_state: State, to_state: State)` | `Option<&Condition>` | Returns a reference to the condition of the directed transition between the two states, if any. |
 | `get_length(&self)` | `(Option<u32>, Option<u32>)` | Returns the minimum and maximum length of matched strings. |
-| `get_reachable_states(&self)` | `IntSet<State>` | Returns the set of all states reachable from the start state. |
+| `get_number_of_states(&self)` | `usize` | Returns the number of states in the automaton. |
+| `get_reacheable_states(&self)` | `IntSet<State>` | Returns the set of all states reachable from the start state. |
 | `get_spanning_set(&self)` | `&SpanningSet` | Returns a reference to the automaton's spanning set. |
 | `get_start_state(&self)` | `State` | Returns the start state. |
-| `has_intersection(&self, other: &FastAutomaton)` | `Result<bool, EngineError>` | Returns `true` if the two automata have a non-empty intersection. |
 | `has_state(&self, state: State)` | `bool` | Returns `true` if the automaton contains the given state. |
+| `in_degree(&self, state: State)` | `usize` | Returns the number of transitions to the provided state. |
 | `is_accepted(&self, state: &State)` | `bool` | Returns `true` if the given state is one of the accept states. |
 | `is_cyclic(&self)` | `bool` | Returns `true` if the automaton contains at least one cycle. |
-| `is_deterministic(&self)` | `bool` | Returns `true` if the automaton is deterministic. |
+| `is_determinitic(&self)` | `bool` | Returns `true` if the automaton is deterministic. |
 | `is_empty(&self)` | `bool` | Checks if the automaton matches the empty language. |
 | `is_empty_string(&self)` | `bool` | Checks if the automaton only matches the empty string `""`. |
 | `is_total(&self)` | `bool` | Checks if the automaton matches all possible strings. |
-| `in_degree(&self, state: State)` | `usize` | Returns the number of transitions to the provided state. |
+| `match_string(&self, string: &str)` | `bool` | Returns `true` if the automaton matches the given string. |
 | `out_degree(&self, state: State)` | `usize` | Returns the number of transitions from the provided state. |
+| `print_dot(&self)` | `()` | Prints the automaton's DOT representation. |
 | `states(&self)` | `impl Iterator<Item = State>` | Returns an iterator over the automaton’s states. |
 | `states_vec(&self)` | `Vec<State>` | Returns a vector containing the automaton’s states. |
 | `subset(&self, other: &FastAutomaton)` | `Result<bool, EngineError>` | Returns `true` if all strings accepted by `self` are also accepted by `other`. |
-| `to_regex(&self)` | `RegularExpression` | Convert the automaton to a `RegularExpression`. |
 | `transitions_from(&self, state: State)` | `impl Iterator<Item = (&Condition, &State)>` | Returns an iterator over transitions from the given state. |
-| `transitions_from_vec(&self, state: State)` | `Vec<TransitionTo>` | Returns a vector of transitions from the given state. |
-| `transitions_to_vec(&self, state: State)` | `Vec<TransitionFrom>` | Returns a vector of transitions to the given state. |
+| `transitions_from_vec(&self, state: State)` | `Vec<(Condition, State)>` | Returns a vector of transitions from the given state. |
+| `transitions_to_vec(&self, state: State)` | `Vec<(State, Condition)>` | Returns a vector of transitions to the given state. |
 
 
 ### RegularExpression
@@ -236,8 +239,8 @@ This design allows us to perform unions, intersections, and complements of trans
 | `new_empty()` | `RegularExpression` | Creates a regular expression that matches the empty language. |
 | `new_empty_string()` | `RegularExpression` | Creates a regular expression that matches only the empty string `""`. |
 | `new_total()` | `RegularExpression` | Creates a regular expression that matches all possible strings. |
-| `parse(pattern: &str, simplify: bool)` | `Result<RegularExpression, EngineError>` | Parses the given regular expression pattern and returns a corresponding `RegularExpression`. If simplify is `true`, the expression is simplified during parsing. |
-| `repeat(&self, min: u32, max_opt: Option<u32>)` | `RegularExpression` | Returns the repetition of the expression between `min` and `max_opt` times; if `max_opt` is `None`, the repetition is unbounded. |
+| `parse(pattern: &str, simplify: bool)` | `Result<RegularExpression, EngineError>` | Parses the provided pattern and returns the resulting `RegularExpression`. If simplify is `true`, the expression is simplified during parsing. |
+| `repeat(&self, min: u32, max_opt: Option<u32>)` | `RegularExpression` | Computes the repetition of the automaton between `min` and `max_opt` times; if `max_opt` is `None`, the repetition is unbounded. |
 | `simplify(&self)` | `RegularExpression` | Returns a simplified version by eliminating redundant constructs and applying canonical reductions. |
 | `union(&self, other: &RegularExpression)` | `RegularExpression` | Returns a regular expression matching the union of `self` and `other`. |
 | `union_all<'a, I: IntoIterator<Item = &'a RegularExpression>>(patterns: I)` | `RegularExpression` | Returns a regular expression that is the union of all expressions in `patterns`. |
@@ -245,12 +248,14 @@ This design allows us to perform unions, intersections, and complements of trans
 #### Analyze
 | Method | Return | Description |
 | -------- | ------- | ------- |
+| `evaluate_complexity(&self)` | `f64` | Returns a heuristic score for the readability of the pattern. |
 | `get_cardinality(&self)` | `Cardinality<u32>` | Returns the cardinality of the regular expression (i.e., the number of possible matched strings). |
 | `get_length(&self)` | `(Option<u32>, Option<u32>)` | Returns the minimum and maximum length of possible matched strings. |
 | `is_empty(&self)` | `bool` | Checks if the regular expression matches the empty language. |
 | `is_empty_string(&self)` | `bool` | Checks if the regular expression only matches the empty string `""`. |
 | `is_total(&self)` | `bool` | Checks if the regular expression matches all possible strings. |
 | `to_automaton(&self)` | `Result<FastAutomaton, EngineError>` | Converts the regular expression to an equivalent `FastAutomaton`. |
+
 
 ## Bound Execution
 

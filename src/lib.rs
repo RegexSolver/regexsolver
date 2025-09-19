@@ -118,7 +118,7 @@ impl Term {
         Term::RegularExpression(RegularExpression::new_empty_string())
     }
 
-    /// Parses the provided pattern and returns a new `Term` holding the resulting [`RegularExpression`].
+    /// Parses and simplifies the provided pattern and returns a new [`Term`] holding the resulting [`RegularExpression`].
     ///
     /// # Example:
     ///
@@ -381,13 +381,13 @@ impl Term {
     ///
     /// assert!(!term1.equivalent(&term2).unwrap());
     /// ```
-    pub fn equivalent(&self, that: &Term) -> Result<bool, EngineError> {
-        if self == that {
+    pub fn equivalent(&self, term: &Term) -> Result<bool, EngineError> {
+        if self == term {
             return Ok(true);
         }
 
         let automaton_1 = self.to_automaton()?;
-        let automaton_2 = that.to_automaton()?;
+        let automaton_2 = term.to_automaton()?;
         automaton_1.equivalent(&automaton_2)
     }
 
@@ -403,13 +403,13 @@ impl Term {
     ///
     /// assert!(term1.subset(&term2).unwrap());
     /// ```
-    pub fn subset(&self, that: &Term) -> Result<bool, EngineError> {
-        if self == that {
+    pub fn subset(&self, term: &Term) -> Result<bool, EngineError> {
+        if self == term {
             return Ok(true);
         }
 
         let automaton_1 = self.to_automaton()?;
-        let automaton_2 = that.to_automaton()?;
+        let automaton_2 = term.to_automaton()?;
         automaton_1.subset(&automaton_2)
     }
 

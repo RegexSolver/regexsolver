@@ -14,12 +14,6 @@ pub(crate) type Transitions = IntMap<State, Condition>;
 /// The identifier of state in an [`FastAutomaton`]
 pub type State = usize;
 
-/// A tuple containing the condition of a transition to a state.
-pub type TransitionTo = (Condition, State);
-
-/// A tuple containing the condition of a transition from a state.
-pub type TransitionFrom = (State, Condition);
-
 mod analyze;
 mod builder;
 pub mod condition;
@@ -125,8 +119,8 @@ impl FastAutomaton {
         self.direct_states(state).collect()
     }
 
-    /// Returns a vector containing the transitions to the provided state.
-    pub fn transitions_to_vec(&self, state: State) -> Vec<TransitionFrom> {
+    /// Returns a vector of transitions to the given state.
+    pub fn transitions_to_vec(&self, state: State) -> Vec<(State, Condition)> {
         let mut in_transitions = vec![];
         for from_state in self.transitions_in.get(&state).unwrap_or(&IntSet::new()) {
             for (condition, to_state) in self.transitions_from_vec(*from_state) {
@@ -141,7 +135,7 @@ impl FastAutomaton {
 
     /// Returns a vector of transitions from the given state.
     #[inline]
-    pub fn transitions_from_vec(&self, state: State) -> Vec<TransitionTo> {
+    pub fn transitions_from_vec(&self, state: State) -> Vec<(Condition, State)> {
         self.transitions[state]
             .iter()
             .map(|(s, c)| (c.clone(), *s))
@@ -184,13 +178,13 @@ impl FastAutomaton {
             .collect()
     }
 
-    // Returns the number of states in the automaton.
+    /// Returns the number of states in the automaton.
     #[inline]
     pub fn get_number_of_states(&self) -> usize {
         self.transitions.len() - self.removed_states.len()
     }
 
-    // Returns a reference to the condition of the directed transition between the two states, if any.
+    /// Returns a reference to the condition of the directed transition between the two states, if any.
     #[inline]
     pub fn get_condition(&self, from_state: State, to_state: State) -> Option<&Condition> {
         self.transitions[from_state].get(&to_state)
@@ -202,7 +196,7 @@ impl FastAutomaton {
         self.start_state
     }
 
-    // Returns a reference to the set of accept (final) states.
+    /// Returns a reference to the set of accept (final) states.
     #[inline]
     pub fn get_accept_states(&self) -> &IntSet<State> {
         &self.accept_states
@@ -238,21 +232,22 @@ impl FastAutomaton {
         !(state >= self.transitions.len() || self.removed_states.contains(&state))
     }
 
-    pub fn match_string(&self, input: &str) -> bool {
+    /// Returns `true` if the automaton matches the given string.
+    pub fn match_string(&self, string: &str) -> bool {
         let mut worklist = VecDeque::with_capacity(self.get_number_of_states());
         worklist.push_back((0, &self.start_state));
 
         while let Some((position, current_state)) = worklist.pop_back() {
-            if input.len() == position {
+            if string.len() == position {
                 if self.accept_states.contains(current_state) {
                     return true;
                 }
                 continue;
             }
-            let curr_char = input.chars().nth(position).unwrap() as u32;
+            let curr_char = string.chars().nth(position).unwrap() as u32;
             for (cond, to_state) in self.transitions_from(*current_state) {
                 if cond.has_character(&curr_char, &self.spanning_set).unwrap() {
-                    if position + 1 == input.len() {
+                    if position + 1 == string.len() {
                         if self.accept_states.contains(to_state) {
                             return true;
                         }
@@ -265,11 +260,13 @@ impl FastAutomaton {
         false
     }
 
+    /// Returns the automaton's DOT representation.
     #[inline]
     pub fn as_dot(&self) -> String {
         format!("{self}")
     }
 
+    /// Prints the automaton's DOT representation.
     #[inline]
     pub fn print_dot(&self) {
         println!("{self}");

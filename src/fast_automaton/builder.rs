@@ -193,6 +193,7 @@ impl FastAutomaton {
         }
     }
 
+    /// Removes the transition between the two provided states if it exists.
     pub fn remove_transition(&mut self, from_state: State, to_state: State) {
         self.assert_state_exists(from_state);
         if from_state != to_state {
@@ -206,7 +207,7 @@ impl FastAutomaton {
         self.transitions[from_state].remove(&to_state);
     }
 
-    /// Removes the state and all its connected transitions; panics if it's a start state.
+    /// Removes the state and its connected transitions; panics if it's a start state.
     pub fn remove_state(&mut self, state: State) {
         self.assert_state_exists(state);
         if self.start_state == state {
@@ -236,7 +237,7 @@ impl FastAutomaton {
         }
     }
 
-    /// Remove the provided states from the automaton. Remove all the transitions they are connected to. Panic if one of the state is used as a start state.
+    /// Removes the given states and their connected transitions; panics if any is a start state.
     pub fn remove_states(&mut self, states: &IntSet<State>) {
         self.accept_states.retain(|e| !states.contains(e));
 
