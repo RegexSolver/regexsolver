@@ -6,7 +6,7 @@ use super::*;
 
 impl FastAutomaton {
     fn totalize(&mut self) -> Result<(), EngineError> {
-        assert!(self.is_determinitic(), "The automaton should be deterministic.");
+        assert!(self.is_deterministic(), "The automaton should be deterministic.");
 
         let crash_state = self.new_state();
         let mut transitions_to_crash_state: IntMap<State, Condition> =

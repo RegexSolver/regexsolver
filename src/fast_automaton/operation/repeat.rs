@@ -116,12 +116,12 @@ mod tests {
             .unwrap()
             .to_automaton()
             .unwrap();
-        assert!(automaton.match_string(""));
-        assert!(automaton.match_string(","));
-        assert!(automaton.match_string("aaa,"));
-        assert!(automaton.match_string("aaaa,aa"));
-        assert!(!automaton.match_string("a"));
-        assert!(!automaton.match_string("aa"));
+        assert!(automaton.is_match(""));
+        assert!(automaton.is_match(","));
+        assert!(automaton.is_match("aaa,"));
+        assert!(automaton.is_match("aaaa,aa"));
+        assert!(!automaton.is_match("a"));
+        assert!(!automaton.is_match("aa"));
         Ok(())
     }
 }

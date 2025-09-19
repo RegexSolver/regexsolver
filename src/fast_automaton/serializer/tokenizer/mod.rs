@@ -39,7 +39,7 @@ impl Tokenizer<'_> {
             state_counter += 1;
 
             automaton
-                .transitions_from_iter(current_state)
+                .transitions_from(current_state)
                 .filter(|(c, _)| !c.is_empty())
                 .for_each(|(_, to_state)| {
                     if !seen.contains(to_state) {

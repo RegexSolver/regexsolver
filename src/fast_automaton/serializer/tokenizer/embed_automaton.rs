@@ -32,7 +32,7 @@ impl Tokenizer<'_> {
                 vec.push(AutomatonToken::AcceptState)
             }
 
-            for (condition, to_state) in self.automaton.transitions_from_iter(current_state) {
+            for (condition, to_state) in self.automaton.transitions_from(current_state) {
                 if condition.is_empty() {
                     continue;
                 }

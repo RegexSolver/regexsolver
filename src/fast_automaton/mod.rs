@@ -157,7 +157,7 @@ impl FastAutomaton {
 
     /// Returns `true` if there is a directed transition from `from_state` to `to_state`.
     #[inline]
-    pub fn does_transition_exists(&self, from_state: State, to_state: State) -> bool {
+    pub fn has_transition(&self, from_state: State, to_state: State) -> bool {
         if !self.has_state(from_state) || !self.has_state(to_state) {
             return false;
         }
@@ -216,7 +216,7 @@ impl FastAutomaton {
 
     /// Returns `true` if the automaton is deterministic.
     #[inline]
-    pub fn is_determinitic(&self) -> bool {
+    pub fn is_deterministic(&self) -> bool {
         self.deterministic
     }
 
@@ -233,7 +233,7 @@ impl FastAutomaton {
     }
 
     /// Returns `true` if the automaton matches the given string.
-    pub fn match_string(&self, string: &str) -> bool {
+    pub fn is_match(&self, string: &str) -> bool {
         let mut worklist = VecDeque::with_capacity(self.get_number_of_states());
         worklist.push_back((0, &self.start_state));
 

@@ -36,7 +36,7 @@ impl FastAutomaton {
     }
 
     /// Returns the set of all states reachable from the start state.
-    pub fn get_reacheable_states(&self) -> IntSet<State> {
+    pub fn get_reachable_states(&self) -> IntSet<State> {
         let mut states_map: IntMap<usize, IntSet<usize>> =
             IntMap::with_capacity_and_hasher(self.transitions.len(), BuildHasherDefault::default());
         for from_state in self.states() {

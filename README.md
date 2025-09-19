@@ -1,7 +1,7 @@
 # RegexSolver
 [![Crates.io Version](https://img.shields.io/crates/v/regexsolver)](https://crates.io/crates/regexsolver)
 
-**RegexSolver** is a high-performance Rust library for building, combining, and analyzing regular expressions and finite automata. Ideal for constraint solvers, code or test-case generators, and any system needing rich regex or automaton operations.
+**RegexSolver** is a Rust library for building, combining, and analyzing regular expressions and finite automata. It is designed for constraint solvers, test generators, and other systems that need advanced regex and automaton operations.
 
 ## Table of Contents
 
@@ -81,11 +81,11 @@ fn main() -> Result<(), EngineError> {
 ## Key Concepts & Limitations
 
 RegexSolver supports a subset of regular expressions that adhere to the principles of regular languages. Here are the key characteristics and limitations of the regular expressions supported by RegexSolver:
-- **Anchored Expressions:** All regular expressions in RegexSolver are anchored. This means that the expressions are treated as if they start and end at the boundaries of the input text. For example, the expression `abc` will match the string "abc" but not "xabc" or "abcx".
 - **Lookahead/Lookbehind:** RegexSolver does not support lookahead (`(?=...)`) or lookbehind (`(?<=...)`) assertions. Using them returns an error.
+- **Pure Regular Expressions:** RegexSolver focuses on pure regular expressions as defined in regular language theory. This means features that extend beyond regular languages, such as backreferences (`\1`, `\2`, etc.), are not supported. Any use of backreference would return an error.
 - **Greedy/Ungreedy Quantifiers:** The concept of ungreedy (`*?`, `+?`, `??`) quantifiers is not supported. All quantifiers are treated as greedy. For example, `a*` or `a*?` will match the longest possible sequence of "a"s.
 - **Line Feed and Dot:** RegexSolver handles all characters the same way. The dot `.` matches any Unicode character including line feed (`\n`).
-- **Pure Regular Expressions:** RegexSolver focuses on pure regular expressions as defined in regular language theory. This means features that extend beyond regular languages, such as backreferences (`\1`, `\2`, etc.), are not supported. Any use of backreference would return an error.
+- **Anchored Expressions:** All regular expressions in RegexSolver are anchored. This means that the expressions are treated as if they start and end at the boundaries of the input text. For example, the expression `abc` will match the string "abc" but not "xabc" or "abcx".
 - **Empty Regular Expressions:** The empty language (matches no string) is represented by constructs like `[]` (empty character class). This is distinct from the empty string.
 
 RegexSolver is based on the [regex-syntax](https://docs.rs/regex-syntax/0.8.5/regex_syntax/) library for parsing patterns. Unsupported features are parsed but ignored; they do not raise an error unless they affect semantics that cannot be represented (e.g., backreferences). This allows for some flexibility in writing regular expressions, but it is important to be aware of the unsupported features to avoid unexpected behavior.
@@ -178,17 +178,17 @@ This design allows us to perform unions, intersections, and complements of trans
 | -------- | ------- | ------- |
 | `complement(&mut self)` | `Result<(), EngineError>` | Complements the automaton; it must be deterministic. |
 | `concat(&self, other: &FastAutomaton)` | `Result<FastAutomaton, EngineError>` | Computes the concatenation between `self` and `other`. |
-| `concat_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(automatons: I)` | `Result<FastAutomaton, EngineError>` | Computes the concatenation of all automatons in the given iterator. |
+| `concat_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(automata: I)` | `Result<FastAutomaton, EngineError>` | Computes the concatenation of all automata in the given iterator. |
 | `determinize(&self)` | `Result<Cow<FastAutomaton>, EngineError>` | Determinizes the automaton and returns the result. |
 | `difference(&self, other: &FastAutomaton)` | `Result<FastAutomaton, EngineError>` | Computes the difference between `self` and `other`. |
 | `has_intersection(&self, other: &FastAutomaton)` | `Result<bool, EngineError>` | Returns `true` if the two automata have a non-empty intersection. |
 | `intersection(&self, other: &FastAutomaton)` | `Result<FastAutomaton, EngineError>` | Computes the intersection between `self` and `other`. |
-| `intersection_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(automatons: I)` | `Result<FastAutomaton, EngineError>` | Computes the intersection of all automatons in the given iterator. |
-| `intersection_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(automatons: I)` | `Result<FastAutomaton, EngineError>` | Computes in parallel the intersection of all automatons in the given iterator. |
+| `intersection_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(automata: I)` | `Result<FastAutomaton, EngineError>` | Computes the intersection of all automata in the given iterator. |
+| `intersection_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(automata: I)` | `Result<FastAutomaton, EngineError>` | Computes in parallel the intersection of all automata in the given iterator. |
 | `repeat(&self, min: u32, max_opt: Option<u32>)` | `Result<FastAutomaton, EngineError>` | Computes the repetition of the automaton between `min` and `max_opt` times; if `max_opt` is `None`, the repetition is unbounded. |
 | `union(&self, other: &FastAutomaton)` | `Result<FastAutomaton, EngineError>` | Computes the union between `self` and `other`. |
-| `union_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(automatons: I)` | `Result<FastAutomaton, EngineError>` | Computes the union of all automatons in the given iterator. |
-| `union_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(automatons: I)` | `Result<FastAutomaton, EngineError>` | Computes in parallel the union of all automatons in the given iterator. |
+| `union_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(automata: I)` | `Result<FastAutomaton, EngineError>` | Computes the union of all automata in the given iterator. |
+| `union_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(automata: I)` | `Result<FastAutomaton, EngineError>` | Computes in parallel the union of all automata in the given iterator. |
 
 #### Analyze
 | Method | Return | Description |
@@ -196,26 +196,26 @@ This design allows us to perform unions, intersections, and complements of trans
 | `as_dot(&self)` | `String` | Returns the automaton's DOT representation. |
 | `direct_states(&self, state: &State)` | `impl Iterator<Item = State>` | Returns an iterator over states directly reachable from the given state in one transition. |
 | `direct_states_vec(&self, state: &State)` | `Vec<State>` | Returns a vector of states directly reachable from the given state in one transition. |
-| `does_transition_exists(&self, from_state: State, to_state: State)` | `bool` | Returns `true` if there is a directed transition from `from_state` to `to_state`. |
 | `equivalent(&self, other: &FastAutomaton)` | `Result<bool, EngineError>` | Returns `true` if both automata accept the same language. |
-| `generate_strings(&self, number: usize)` | `Result<Vec<String>, EngineError>` | Generates `count` strings matched by the automaton. |
+| `generate_strings(&self, count: usize)` | `Result<Vec<String>, EngineError>` | Generates `count` strings matched by the term. |
 | `get_accept_states(&self)` | `&IntSet<State>` | Returns a reference to the set of accept (final) states. |
 | `get_cardinality(&self)` | `Cardinality<u32>` | Returns the cardinality of the automaton (i.e., the number of possible matched strings). |
 | `get_condition(&self, from_state: State, to_state: State)` | `Option<&Condition>` | Returns a reference to the condition of the directed transition between the two states, if any. |
 | `get_length(&self)` | `(Option<u32>, Option<u32>)` | Returns the minimum and maximum length of matched strings. |
 | `get_number_of_states(&self)` | `usize` | Returns the number of states in the automaton. |
-| `get_reacheable_states(&self)` | `IntSet<State>` | Returns the set of all states reachable from the start state. |
+| `get_reachable_states(&self)` | `IntSet<State>` | Returns the set of all states reachable from the start state. |
 | `get_spanning_set(&self)` | `&SpanningSet` | Returns a reference to the automaton's spanning set. |
 | `get_start_state(&self)` | `State` | Returns the start state. |
 | `has_state(&self, state: State)` | `bool` | Returns `true` if the automaton contains the given state. |
+| `has_transition(&self, from_state: State, to_state: State)` | `bool` | Returns `true` if there is a directed transition from `from_state` to `to_state`. |
 | `in_degree(&self, state: State)` | `usize` | Returns the number of transitions to the provided state. |
 | `is_accepted(&self, state: &State)` | `bool` | Returns `true` if the given state is one of the accept states. |
 | `is_cyclic(&self)` | `bool` | Returns `true` if the automaton contains at least one cycle. |
-| `is_determinitic(&self)` | `bool` | Returns `true` if the automaton is deterministic. |
+| `is_deterministic(&self)` | `bool` | Returns `true` if the automaton is deterministic. |
 | `is_empty(&self)` | `bool` | Checks if the automaton matches the empty language. |
 | `is_empty_string(&self)` | `bool` | Checks if the automaton only matches the empty string `""`. |
+| `is_match(&self, string: &str)` | `bool` | Returns `true` if the automaton matches the given string. |
 | `is_total(&self)` | `bool` | Checks if the automaton matches all possible strings. |
-| `match_string(&self, string: &str)` | `bool` | Returns `true` if the automaton matches the given string. |
 | `out_degree(&self, state: State)` | `usize` | Returns the number of transitions from the provided state. |
 | `print_dot(&self)` | `()` | Prints the automaton's DOT representation. |
 | `states(&self)` | `impl Iterator<Item = State>` | Returns an iterator over the automaton’s states. |

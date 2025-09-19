@@ -13,26 +13,26 @@ impl FastAutomaton {
         Self::union_all([self, other])
     }
 
-    /// Computes the union of all automatons in the given iterator.
+    /// Computes the union of all automata in the given iterator.
     pub fn union_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(
-        automatons: I,
+        automata: I,
     ) -> Result<Self, EngineError> {
         let mut new_automaton = FastAutomaton::new_empty();
-        for automaton in automatons {
+        for automaton in automata {
             new_automaton.union_mut(automaton)?;
         }
         Ok(new_automaton)
     }
 
-    /// Computes in parallel the union of all automatons in the given iterator.
+    /// Computes in parallel the union of all automata in the given iterator.
     pub fn union_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(
-        automatons: I,
+        automata: I,
     ) -> Result<Self, EngineError> {
         let execution_profile = ExecutionProfile::get();
 
         let empty = FastAutomaton::new_empty();
 
-        automatons
+        automata
             .into_par_iter()
             .try_fold(
                 || empty.clone(),
@@ -218,16 +218,16 @@ mod tests {
             .unwrap()
             .to_automaton()
             .unwrap();
-        assert!(automaton.match_string("abc"));
-        assert!(automaton.match_string("ac"));
-        assert!(automaton.match_string("aaa"));
-        assert!(!automaton.match_string("abcd"));
-        assert!(!automaton.match_string("ab"));
-        assert!(!automaton.match_string("acc"));
-        assert!(!automaton.match_string("a"));
-        assert!(!automaton.match_string("aaaa"));
-        assert!(!automaton.match_string("aa"));
-        assert!(!automaton.match_string(""));
+        assert!(automaton.is_match("abc"));
+        assert!(automaton.is_match("ac"));
+        assert!(automaton.is_match("aaa"));
+        assert!(!automaton.is_match("abcd"));
+        assert!(!automaton.is_match("ab"));
+        assert!(!automaton.is_match("acc"));
+        assert!(!automaton.is_match("a"));
+        assert!(!automaton.is_match("aaaa"));
+        assert!(!automaton.is_match("aa"));
+        assert!(!automaton.is_match(""));
         Ok(())
     }
 
@@ -238,11 +238,11 @@ mod tests {
             .to_automaton()
             .unwrap();
         automaton.print_dot();
-        assert!(automaton.match_string(""));
-        assert!(automaton.match_string("b"));
-        assert!(automaton.match_string("bb"));
-        assert!(!automaton.match_string("bbb"));
-        assert!(!automaton.match_string("bbbb"));
+        assert!(automaton.is_match(""));
+        assert!(automaton.is_match("b"));
+        assert!(automaton.is_match("bb"));
+        assert!(!automaton.is_match("bbb"));
+        assert!(!automaton.is_match("bbbb"));
         Ok(())
     }
 
@@ -253,12 +253,12 @@ mod tests {
             .to_automaton()
             .unwrap();
         automaton.print_dot();
-        assert!(automaton.match_string(""));
-        assert!(automaton.match_string("a"));
-        assert!(automaton.match_string("abcaaabcbc"));
-        assert!(automaton.match_string("d"));
-        assert!(!automaton.match_string("ad"));
-        assert!(!automaton.match_string("abcd"));
+        assert!(automaton.is_match(""));
+        assert!(automaton.is_match("a"));
+        assert!(automaton.is_match("abcaaabcbc"));
+        assert!(automaton.is_match("d"));
+        assert!(!automaton.is_match("ad"));
+        assert!(!automaton.is_match("abcd"));
         Ok(())
     }
 
@@ -269,12 +269,12 @@ mod tests {
             .to_automaton()
             .unwrap();
         automaton.print_dot();
-        assert!(automaton.match_string(""));
-        assert!(automaton.match_string("a"));
-        assert!(automaton.match_string("abcaaabcbc"));
-        assert!(automaton.match_string("d"));
-        assert!(!automaton.match_string("ad"));
-        assert!(!automaton.match_string("abcd"));
+        assert!(automaton.is_match(""));
+        assert!(automaton.is_match("a"));
+        assert!(automaton.is_match("abcaaabcbc"));
+        assert!(automaton.is_match("d"));
+        assert!(!automaton.is_match("ad"));
+        assert!(!automaton.is_match("abcd"));
         Ok(())
     }
 
@@ -285,13 +285,13 @@ mod tests {
             .to_automaton()
             .unwrap();
         automaton.print_dot();
-        assert!(automaton.match_string(""));
-        assert!(automaton.match_string("a"));
-        assert!(automaton.match_string("abcaaabcbc"));
-        assert!(automaton.match_string("d"));
-        assert!(automaton.match_string("ddd"));
-        assert!(!automaton.match_string("ad"));
-        assert!(!automaton.match_string("abcd"));
+        assert!(automaton.is_match(""));
+        assert!(automaton.is_match("a"));
+        assert!(automaton.is_match("abcaaabcbc"));
+        assert!(automaton.is_match("d"));
+        assert!(automaton.is_match("ddd"));
+        assert!(!automaton.is_match("ad"));
+        assert!(!automaton.is_match("abcd"));
         Ok(())
     }
 
@@ -302,10 +302,10 @@ mod tests {
             .to_automaton()
             .unwrap();
         automaton.print_dot();
-        assert!(automaton.match_string("cc"));
-        assert!(automaton.match_string("caaac"));
-        assert!(automaton.match_string("a"));
-        assert!(automaton.match_string("aababa"));
+        assert!(automaton.is_match("cc"));
+        assert!(automaton.is_match("caaac"));
+        assert!(automaton.is_match("a"));
+        assert!(automaton.is_match("aababa"));
         Ok(())
     }
 
@@ -316,15 +316,15 @@ mod tests {
             .to_automaton()
             .unwrap();
         automaton.print_dot();
-        assert!(automaton.match_string("q"));
-        assert!(automaton.match_string("aad"));
-        assert!(automaton.match_string("ads"));
-        assert!(automaton.match_string("a"));
-        assert!(automaton.match_string("aadadsaaa"));
-        assert!(!automaton.match_string("aaaas"));
-        assert!(!automaton.match_string("ad"));
-        assert!(!automaton.match_string("adsq"));
-        assert!(!automaton.match_string("qq"));
+        assert!(automaton.is_match("q"));
+        assert!(automaton.is_match("aad"));
+        assert!(automaton.is_match("ads"));
+        assert!(automaton.is_match("a"));
+        assert!(automaton.is_match("aadadsaaa"));
+        assert!(!automaton.is_match("aaaas"));
+        assert!(!automaton.is_match("ad"));
+        assert!(!automaton.is_match("adsq"));
+        assert!(!automaton.is_match("qq"));
         Ok(())
     }
 
@@ -335,11 +335,11 @@ mod tests {
             .to_automaton()
             .unwrap();
         automaton.print_dot();
-        assert!(automaton.match_string("ab"));
-        assert!(automaton.match_string(""));
-        assert!(!automaton.match_string("a"));
-        assert!(!automaton.match_string("b"));
-        assert!(!automaton.match_string("aab"));
+        assert!(automaton.is_match("ab"));
+        assert!(automaton.is_match(""));
+        assert!(!automaton.is_match("a"));
+        assert!(!automaton.is_match("b"));
+        assert!(!automaton.is_match("aab"));
         Ok(())
     }
 
@@ -350,10 +350,10 @@ mod tests {
             .to_automaton()
             .unwrap();
         automaton.print_dot();
-        assert!(automaton.match_string("a"));
-        assert!(automaton.match_string("d"));
-        assert!(automaton.match_string("ab"));
-        assert!(automaton.match_string(""));
+        assert!(automaton.is_match("a"));
+        assert!(automaton.is_match("d"));
+        assert!(automaton.is_match("ab"));
+        assert!(automaton.is_match(""));
         Ok(())
     }
 
@@ -364,11 +364,11 @@ mod tests {
             .to_automaton()
             .unwrap();
         automaton.print_dot();
-        assert!(automaton.match_string("au"));
-        assert!(automaton.match_string("du"));
-        assert!(automaton.match_string("abu"));
-        assert!(automaton.match_string("u"));
-        assert!(automaton.match_string(""));
+        assert!(automaton.is_match("au"));
+        assert!(automaton.is_match("du"));
+        assert!(automaton.is_match("abu"));
+        assert!(automaton.is_match("u"));
+        assert!(automaton.is_match(""));
         Ok(())
     }
 }

@@ -449,7 +449,7 @@ impl Term {
     pub fn get_cardinality(&self) -> Result<Cardinality<u32>, EngineError> {
         match self {
             Term::RegularExpression(regex) => Ok(regex.get_cardinality()),
-            Term::Automaton(automaton) => Ok(if !automaton.is_determinitic() {
+            Term::Automaton(automaton) => Ok(if !automaton.is_deterministic() {
                 automaton.determinize()?.get_cardinality()
             } else {
                 automaton.get_cardinality()
@@ -482,7 +482,7 @@ impl Term {
         minuend: &FastAutomaton,
         subtrahend: &'a FastAutomaton,
     ) -> Result<Cow<'a, FastAutomaton>, EngineError> {
-        if subtrahend.is_determinitic() {
+        if subtrahend.is_deterministic() {
             Ok(Cow::Borrowed(subtrahend))
         } else if !minuend.is_cyclic() && subtrahend.is_cyclic() {
             Ok(Cow::Owned(

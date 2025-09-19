@@ -14,13 +14,13 @@ impl FastAutomaton {
         FastAutomaton::intersection_all([self, other])
     }
 
-    /// Computes the intersection of all automatons in the given iterator.
+    /// Computes the intersection of all automata in the given iterator.
     pub fn intersection_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(
-        automatons: I,
+        automata: I,
     ) -> Result<Self, EngineError> {
         let mut result: Cow<'a, FastAutomaton> = Cow::Owned(FastAutomaton::new_total());
 
-        for automaton in automatons {
+        for automaton in automata {
             result = result.intersection_internal(automaton)?;
 
             if result.is_empty() {
@@ -31,15 +31,15 @@ impl FastAutomaton {
         Ok(result.into_owned())
     }
 
-    /// Computes in parallel the intersection of all automatons in the given iterator.
+    /// Computes in parallel the intersection of all automata in the given iterator.
     pub fn intersection_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(
-        automatons: I,
+        automata: I,
     ) -> Result<Self, EngineError> {
         let execution_profile = ExecutionProfile::get();
 
         let total = FastAutomaton::new_total();
 
-        automatons
+        automata
             .into_par_iter()
             .try_fold(
                 || total.clone(),
@@ -224,11 +224,11 @@ mod tests {
             .unwrap();
         let intersection = automaton1.intersection(&automaton2).unwrap();
 
-        assert!(intersection.match_string("ac"));
-        assert!(!intersection.match_string("abc"));
-        assert!(!intersection.match_string("aaa"));
-        assert!(!intersection.match_string("abcd"));
-        assert!(!intersection.match_string("aba"));
+        assert!(intersection.is_match("ac"));
+        assert!(!intersection.is_match("abc"));
+        assert!(!intersection.is_match("aaa"));
+        assert!(!intersection.is_match("abcd"));
+        assert!(!intersection.is_match("aba"));
         Ok(())
     }
 
@@ -244,9 +244,9 @@ mod tests {
             .unwrap();
         let intersection = automaton1.intersection(&automaton2).unwrap();
 
-        assert!(intersection.match_string(""));
-        assert!(!intersection.match_string("a"));
-        assert!(!intersection.match_string("b"));
+        assert!(intersection.is_match(""));
+        assert!(!intersection.is_match("a"));
+        assert!(!intersection.is_match("b"));
         Ok(())
     }
 
@@ -262,11 +262,11 @@ mod tests {
             .unwrap();
         let intersection = automaton1.intersection(&automaton2).unwrap();
 
-        assert!(intersection.match_string(""));
-        assert!(intersection.match_string("xxx"));
-        assert!(intersection.match_string("xxxxxx"));
-        assert!(!intersection.match_string("xx"));
-        assert!(!intersection.match_string("xxxx"));
+        assert!(intersection.is_match(""));
+        assert!(intersection.is_match("xxx"));
+        assert!(intersection.is_match("xxxxxx"));
+        assert!(!intersection.is_match("xx"));
+        assert!(!intersection.is_match("xxxx"));
         Ok(())
     }
 
@@ -282,12 +282,12 @@ mod tests {
             .unwrap();
         let intersection = automaton1.intersection(&automaton2).unwrap();
 
-        assert!(intersection.match_string("ac"));
-        assert!(!intersection.match_string("aaac"));
-        assert!(!intersection.match_string("abc"));
-        assert!(!intersection.match_string("aaa"));
-        assert!(!intersection.match_string("abcd"));
-        assert!(!intersection.match_string("aba"));
+        assert!(intersection.is_match("ac"));
+        assert!(!intersection.is_match("aaac"));
+        assert!(!intersection.is_match("abc"));
+        assert!(!intersection.is_match("aaa"));
+        assert!(!intersection.is_match("abcd"));
+        assert!(!intersection.is_match("aba"));
         Ok(())
     }
 
@@ -307,7 +307,7 @@ mod tests {
 
         assert!(!intersection.is_empty());
 
-        assert!(intersection.match_string("avb@gmail.com"));
+        assert!(intersection.is_match("avb@gmail.com"));
         Ok(())
     }
 }

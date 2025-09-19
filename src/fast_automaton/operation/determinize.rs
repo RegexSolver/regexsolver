@@ -91,7 +91,7 @@ mod tests {
 
         let deterministic_automaton = automaton.determinize().unwrap();
 
-        assert!(deterministic_automaton.is_determinitic());
+        assert!(deterministic_automaton.is_deterministic());
 
         Ok(())
     }
@@ -125,7 +125,7 @@ mod tests {
             "States After: {}",
             deterministic_automaton.get_number_of_states()
         );
-        assert!(deterministic_automaton.is_determinitic());
+        assert!(deterministic_automaton.is_deterministic());
         assert!(
             automaton
                 .difference(&deterministic_automaton)

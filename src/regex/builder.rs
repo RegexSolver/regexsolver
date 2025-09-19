@@ -272,22 +272,22 @@ mod tests {
         let regex_parsed = RegularExpression::new(".").unwrap();
         let automaton = regex_parsed.to_automaton().unwrap();
 
-        assert!(automaton.match_string("a"));
-        assert!(automaton.match_string("\t"));
-        assert!(automaton.match_string("\n"));
-        assert!(automaton.match_string("\r"));
+        assert!(automaton.is_match("a"));
+        assert!(automaton.is_match("\t"));
+        assert!(automaton.is_match("\n"));
+        assert!(automaton.is_match("\r"));
 
         let regex_parsed = RegularExpression::new("(?i)a").unwrap();
         let automaton = regex_parsed.to_automaton().unwrap();
 
-        assert!(automaton.match_string("a"));
-        assert!(!automaton.match_string("A"));
+        assert!(automaton.is_match("a"));
+        assert!(!automaton.is_match("A"));
 
         let regex_parsed = RegularExpression::new("a(?i)a(?-s).").unwrap();
         let automaton = regex_parsed.to_automaton().unwrap();
 
-        assert!(automaton.match_string("aa\n"));
-        assert!(!automaton.match_string("aAb"));
+        assert!(automaton.is_match("aa\n"));
+        assert!(!automaton.is_match("aAb"));
 
         assert!(RegularExpression::new("\\1").is_err());
         Ok(())

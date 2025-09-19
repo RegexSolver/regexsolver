@@ -7,12 +7,12 @@ use super::*;
 
 impl FastAutomaton {
     /// Generates `count` strings matched by the automaton.
-    pub fn generate_strings(&self, number: usize) -> Result<Vec<String>, EngineError> {
+    pub fn generate_strings(&self, count: usize) -> Result<Vec<String>, EngineError> {
         if self.is_empty() {
             return Ok(Vec::new());
         }
 
-        let mut strings = AHashSet::with_capacity(cmp::min(number, 1000));
+        let mut strings = AHashSet::with_capacity(cmp::min(count, 1000));
 
         let execution_profile = ExecutionProfile::get();
 
@@ -20,8 +20,8 @@ impl FastAutomaton {
             AHashMap::with_capacity(self.get_number_of_states());
 
         let mut worklist: VecDeque<(Vec<CharRange>, usize)> =
-            VecDeque::with_capacity(cmp::min(number, 1000));
-        let mut visited = AHashSet::with_capacity(cmp::min(number, 1000));
+            VecDeque::with_capacity(cmp::min(count, 1000));
+        let mut visited = AHashSet::with_capacity(cmp::min(count, 1000));
 
         worklist.push_back((vec![], self.start_state));
         while let Some((ranges, state)) = worklist.pop_front() {
@@ -31,7 +31,7 @@ impl FastAutomaton {
                 } else {
                     let mut end = false;
                     let mut ranges_iter: Vec<_> = ranges.iter().map(|range| range.iter()).collect();
-                    while strings.len() < number {
+                    while strings.len() < count {
                         execution_profile.assert_not_timed_out()?;
                         let mut string = vec![];
                         for i in 0..ranges.len() {
@@ -54,7 +54,7 @@ impl FastAutomaton {
                     }
                 }
 
-                if strings.len() == number {
+                if strings.len() == count {
                     break;
                 }
             }

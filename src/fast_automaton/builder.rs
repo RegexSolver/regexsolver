@@ -342,6 +342,6 @@ mod tests {
             .unwrap()
             .to_automaton()
             .unwrap();
-        assert_eq!(deterministic, automaton.is_determinitic());
+        assert_eq!(deterministic, automaton.is_deterministic());
     }
 }

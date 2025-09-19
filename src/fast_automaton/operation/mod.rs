@@ -14,7 +14,7 @@ mod repeat;
 impl FastAutomaton {
     pub(crate) fn remove_dead_transitions(&mut self) {
         if !self.is_empty() {
-            let reacheable_states = self.get_reacheable_states();
+            let reacheable_states = self.get_reachable_states();
 
             let mut dead_states = IntSet::default();
             for from_state in self.states() {
@@ -45,7 +45,7 @@ mod tests {
             .unwrap();
         let intersection = automaton1.intersection(&automaton2).unwrap();
         assert_eq!(3, intersection.get_number_of_states());
-        assert_eq!(3, intersection.get_reacheable_states().len());
+        assert_eq!(3, intersection.get_reachable_states().len());
         Ok(())
     }
 }

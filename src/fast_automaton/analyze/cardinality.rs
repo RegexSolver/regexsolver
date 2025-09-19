@@ -10,7 +10,7 @@ impl FastAutomaton {
         } else if self.cyclic || self.is_total() {
             return Cardinality::Infinite;
         }
-        assert!(self.is_determinitic(), "The automaton should be deterministic.");
+        assert!(self.is_deterministic(), "The automaton should be deterministic.");
 
         let topologically_sorted_states = self.topological_sorted_states();
         if topologically_sorted_states.is_none() {
