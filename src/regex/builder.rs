@@ -16,7 +16,7 @@ impl RegularExpression {
         Self::parse(pattern, true)
     }
 
-    /// Parses the provided pattern and returns the resulting [`RegularExpression`]. If simplify is `true`, the expression is simplified during parsing.
+    /// Parses the provided pattern and returns the resulting [`RegularExpression`]. If `simplify` is `true`, the expression is simplified during parsing.
     pub fn parse(pattern: &str, simplify: bool) -> Result<Self, EngineError> {
         if pattern.is_empty() {
             return Ok(RegularExpression::new_empty_string());

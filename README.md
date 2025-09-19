@@ -239,7 +239,7 @@ This design allows us to perform unions, intersections, and complements of trans
 | `new_empty()` | `RegularExpression` | Creates a regular expression that matches the empty language. |
 | `new_empty_string()` | `RegularExpression` | Creates a regular expression that matches only the empty string `""`. |
 | `new_total()` | `RegularExpression` | Creates a regular expression that matches all possible strings. |
-| `parse(pattern: &str, simplify: bool)` | `Result<RegularExpression, EngineError>` | Parses the provided pattern and returns the resulting `RegularExpression`. If simplify is `true`, the expression is simplified during parsing. |
+| `parse(pattern: &str, simplify: bool)` | `Result<RegularExpression, EngineError>` | Parses the provided pattern and returns the resulting `RegularExpression`. If `simplify` is `true`, the expression is simplified during parsing. |
 | `repeat(&self, min: u32, max_opt: Option<u32>)` | `RegularExpression` | Computes the repetition of the automaton between `min` and `max_opt` times; if `max_opt` is `None`, the repetition is unbounded. |
 | `simplify(&self)` | `RegularExpression` | Returns a simplified version by eliminating redundant constructs and applying canonical reductions. |
 | `union(&self, other: &RegularExpression)` | `RegularExpression` | Returns a regular expression matching the union of `self` and `other`. |
