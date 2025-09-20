@@ -4,6 +4,7 @@ mod state_elimination;
 mod transform;
 
 impl FastAutomaton {
+    /// Converts the term to a [`RegularExpression`].
     pub fn to_regex(&self) -> RegularExpression {
         let transformed_automaton = transform::transform(self);
         state_elimination::convert_to_regex(&transformed_automaton)

@@ -128,7 +128,7 @@ RegexSolver is based on the [regex-syntax](https://docs.rs/regex-syntax/0.8.5/re
 | `subset(&self, term: &Term)` | `Result<bool, EngineError>` | Returns `true` if all strings matched by the current term are also matched by the given term. |
 | `to_automaton(&self)` | `Result<Cow<FastAutomaton>, EngineError>` | Converts the term to a `FastAutomaton`. |
 | `to_pattern(&self)` | `String` | Converts the term to a regular expression pattern. |
-| `to_regex(&self)` | `Cow<RegularExpression>` | Converts the term to a RegularExpression. |
+| `to_regex(&self)` | `Cow<RegularExpression>` | Converts the term to a `RegularExpression`. |
 
 ### FastAutomaton
 
@@ -197,7 +197,7 @@ This design allows us to perform unions, intersections, and complements of trans
 | `direct_states(&self, state: &State)` | `impl Iterator<Item = State>` | Returns an iterator over states directly reachable from the given state in one transition. |
 | `direct_states_vec(&self, state: &State)` | `Vec<State>` | Returns a vector of states directly reachable from the given state in one transition. |
 | `equivalent(&self, other: &FastAutomaton)` | `Result<bool, EngineError>` | Returns `true` if both automata accept the same language. |
-| `generate_strings(&self, count: usize)` | `Result<Vec<String>, EngineError>` | Generates `count` strings matched by the term. |
+| `generate_strings(&self, count: usize)` | `Result<Vec<String>, EngineError>` | Generates `count` strings matched by the automaton. |
 | `get_accept_states(&self)` | `&IntSet<State>` | Returns a reference to the set of accept (final) states. |
 | `get_cardinality(&self)` | `Cardinality<u32>` | Returns the cardinality of the automaton (i.e., the number of possible matched strings). |
 | `get_condition(&self, from_state: State, to_state: State)` | `Option<&Condition>` | Returns a reference to the condition of the directed transition between the two states, if any. |
@@ -221,6 +221,7 @@ This design allows us to perform unions, intersections, and complements of trans
 | `states(&self)` | `impl Iterator<Item = State>` | Returns an iterator over the automaton’s states. |
 | `states_vec(&self)` | `Vec<State>` | Returns a vector containing the automaton’s states. |
 | `subset(&self, other: &FastAutomaton)` | `Result<bool, EngineError>` | Returns `true` if all strings accepted by `self` are also accepted by `other`. |
+| `to_regex(&self)` | `RegularExpression` | Converts the term to a `RegularExpression`. |
 | `transitions_from(&self, state: State)` | `impl Iterator<Item = (&Condition, &State)>` | Returns an iterator over transitions from the given state. |
 | `transitions_from_vec(&self, state: State)` | `Vec<(Condition, State)>` | Returns a vector of transitions from the given state. |
 | `transitions_to_vec(&self, state: State)` | `Vec<(State, Condition)>` | Returns a vector of transitions to the given state. |

@@ -465,7 +465,7 @@ impl Term {
         })
     }
 
-    /// Converts the term to a RegularExpression.
+    /// Converts the term to a [`RegularExpression`].
     pub fn to_regex(&self) -> Cow<RegularExpression> {
         match self {
             Term::RegularExpression(regex) => Cow::Borrowed(regex),
