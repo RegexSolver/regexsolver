@@ -27,7 +27,7 @@ impl Tokenizer<'_> {
                 AutomatonToken::State(*self.state_to_token.get(&current_state).unwrap());
             vec.push(embedded_state);
 
-            if self.automaton.is_accepted(&current_state) {
+            if self.automaton.is_accepted(current_state) {
                 // accept state
                 vec.push(AutomatonToken::AcceptState)
             }
