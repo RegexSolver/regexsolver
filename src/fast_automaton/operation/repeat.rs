@@ -23,7 +23,7 @@ impl FastAutomaton {
 
         if min == 0 && self.in_degree(self.start_state) != 0 {
             let new_state = self.new_state();
-            if self.is_accepted(&self.start_state) {
+            if self.is_accepted(self.start_state) {
                 self.accept(new_state);
             }
 

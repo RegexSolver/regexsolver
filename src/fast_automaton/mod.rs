@@ -106,8 +106,8 @@ impl FastAutomaton {
 
     /// Returns an iterator over states directly reachable from the given state in one transition.
     #[inline]
-    pub fn direct_states(&self, state: &State) -> impl Iterator<Item = State> + '_ {
-        self.transitions[*state]
+    pub fn direct_states(&self, state: State) -> impl Iterator<Item = State> + '_ {
+        self.transitions[state]
             .keys()
             .cloned()
             .filter(|s| !self.removed_states.contains(s))
@@ -115,7 +115,7 @@ impl FastAutomaton {
 
     /// Returns a vector of states directly reachable from the given state in one transition.
     #[inline]
-    pub fn direct_states_vec(&self, state: &State) -> Vec<State> {
+    pub fn direct_states_vec(&self, state: State) -> Vec<State> {
         self.direct_states(state).collect()
     }
 
@@ -210,8 +210,8 @@ impl FastAutomaton {
 
     /// Returns `true` if the given state is one of the accept states.
     #[inline]
-    pub fn is_accepted(&self, state: &State) -> bool {
-        self.accept_states.contains(state)
+    pub fn is_accepted(&self, state: State) -> bool {
+        self.accept_states.contains(&state)
     }
 
     /// Returns `true` if the automaton is deterministic.

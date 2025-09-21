@@ -286,9 +286,9 @@ impl FastAutomaton {
             return Ok(());
         }
         let condition_converter = ConditionConverter::new(&self.spanning_set, new_spanning_set)?;
-        for from_state in &self.states_vec() {
+        for &from_state in &self.states_vec() {
             for to_state in self.direct_states_vec(from_state) {
-                match self.transitions[*from_state].entry(to_state) {
+                match self.transitions[from_state].entry(to_state) {
                     Entry::Occupied(mut o) => {
                         o.insert(condition_converter.convert(o.get())?);
                     }

@@ -194,8 +194,8 @@ This design allows us to perform unions, intersections, and complements of trans
 | Method | Return | Description |
 | -------- | ------- | ------- |
 | `as_dot(&self)` | `String` | Returns the automaton's DOT representation. |
-| `direct_states(&self, state: &State)` | `impl Iterator<Item = State>` | Returns an iterator over states directly reachable from the given state in one transition. |
-| `direct_states_vec(&self, state: &State)` | `Vec<State>` | Returns a vector of states directly reachable from the given state in one transition. |
+| `direct_states(&self, state: State)` | `impl Iterator<Item = State>` | Returns an iterator over states directly reachable from the given state in one transition. |
+| `direct_states_vec(&self, state: State)` | `Vec<State>` | Returns a vector of states directly reachable from the given state in one transition. |
 | `equivalent(&self, other: &FastAutomaton)` | `Result<bool, EngineError>` | Returns `true` if both automata accept the same language. |
 | `generate_strings(&self, count: usize)` | `Result<Vec<String>, EngineError>` | Generates `count` strings matched by the automaton. |
 | `get_accept_states(&self)` | `&IntSet<State>` | Returns a reference to the set of accept (final) states. |
@@ -209,7 +209,7 @@ This design allows us to perform unions, intersections, and complements of trans
 | `has_state(&self, state: State)` | `bool` | Returns `true` if the automaton contains the given state. |
 | `has_transition(&self, from_state: State, to_state: State)` | `bool` | Returns `true` if there is a directed transition from `from_state` to `to_state`. |
 | `in_degree(&self, state: State)` | `usize` | Returns the number of transitions to the provided state. |
-| `is_accepted(&self, state: &State)` | `bool` | Returns `true` if the given state is one of the accept states. |
+| `is_accepted(&self, state: State)` | `bool` | Returns `true` if the given state is one of the accept states. |
 | `is_cyclic(&self)` | `bool` | Returns `true` if the automaton contains at least one cycle. |
 | `is_deterministic(&self)` | `bool` | Returns `true` if the automaton is deterministic. |
 | `is_empty(&self)` | `bool` | Checks if the automaton matches the empty language. |

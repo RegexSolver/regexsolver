@@ -62,7 +62,7 @@ impl FastAutomaton {
     ) -> Result<IntSet<usize>, EngineError> {
         let mut imcomplete_states =
             IntSet::with_capacity(other.out_degree(other.start_state) + 1);
-        if other.is_accepted(&other.start_state) {
+        if other.is_accepted(other.start_state) {
             self.accept(self.start_state);
         }
         let self_start_state_in_degree = self.in_degree(self.start_state);
@@ -82,7 +82,7 @@ impl FastAutomaton {
             }
             if other_start_state_in_degree != 0 {
                 let new_state = self.new_state();
-                if other.is_accepted(&other.start_state) {
+                if other.is_accepted(other.start_state) {
                     self.accept(new_state);
                 }
 

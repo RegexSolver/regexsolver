@@ -39,7 +39,7 @@ fn dot_star_component(automaton: &mut FastAutomaton, component: &IntSet<State>) 
     let start_state = start_state.unwrap();
 
     let mut first_hop = automaton
-        .direct_states(&start_state)
+        .direct_states(start_state)
         .filter(|&s| s != start_state)
         .collect::<IntSet<_>>();
     let mut states_to_remove = vec![];
@@ -89,7 +89,7 @@ fn dot_star_component(automaton: &mut FastAutomaton, component: &IntSet<State>) 
 
     automaton.add_transition(start_state, start_state, &out_condition.unwrap());
     for &state in component {
-        for to_state in automaton.direct_states_vec(&state) {
+        for to_state in automaton.direct_states_vec(state) {
             if !component.contains(&to_state) {
                 continue;
             }
@@ -149,7 +149,7 @@ fn strongconnect(
     stack.push(v);
     on_stack[v] = true;
 
-    for w in automaton.direct_states(&v) {
+    for w in automaton.direct_states(v) {
         if indices[w] == -1 {
             strongconnect(automaton, w, index, stack, indices, lowlink, on_stack, scc);
             lowlink[v] = lowlink[v].min(lowlink[w]);
