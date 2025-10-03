@@ -1,4 +1,7 @@
-use std::{cell::RefCell, time::SystemTime};
+use std::{
+    cell::RefCell,
+    time::{Duration, Instant},
+};
 
 use crate::error::EngineError;
 
@@ -41,10 +44,10 @@ use crate::error::EngineError;
 pub struct ExecutionProfile {
     /// The maximum number of states that a non-determinitic finite automaton can hold, this is checked during the convertion of regular expression to automaton.
     max_number_of_states: Option<usize>,
-    /// Timestamp of when the execution has started, if this value is not set the operations will never timeout.
-    start_execution_time: Option<SystemTime>,
     /// The longest time in milliseconds that an operation execution can last, there are no guaranties that the exact time will be respected.
-    execution_timeout: Option<u128>,
+    execution_timeout: Option<u64>,
+    /// The time after when a [`EngineError::OperationTimeOutError`] should be thrown.
+    execution_deadline: Option<Instant>,
 }
 
 impl PartialEq for ExecutionProfile {
@@ -66,15 +69,8 @@ impl ExecutionProfile {
     ///
     /// Return [`EngineError::OperationTimeOutError`] otherwise.
     pub(crate) fn assert_not_timed_out(&self) -> Result<(), EngineError> {
-        if let (Some(start), Some(execution_timeout)) =
-            (self.start_execution_time, self.execution_timeout)
-        {
-            let run_duration = SystemTime::now()
-                .duration_since(start)
-                .expect("Time went backwards")
-                .as_millis();
-
-            if run_duration > execution_timeout {
+        if let Some(execution_deadline) = self.execution_deadline {
+            if Instant::now() > execution_deadline {
                 Err(EngineError::OperationTimeOutError)
             } else {
                 Ok(())
@@ -101,7 +97,7 @@ impl ExecutionProfile {
         Ok(())
     }
 
-    pub fn with_execution_timeout(mut self, execution_timeout_in_ms: u128) -> Self {
+    pub fn with_execution_timeout(mut self, execution_timeout_in_ms: u64) -> Self {
         self.execution_timeout = Some(execution_timeout_in_ms);
         self
     }
@@ -123,7 +119,9 @@ impl ExecutionProfile {
         let initial_execution_profile = ThreadLocalParams::get_execution_profile();
 
         let mut execution_profile = self.clone();
-        execution_profile.start_execution_time = Some(SystemTime::now());
+        if let Some(execution_timeout) = execution_profile.execution_timeout {
+            execution_profile.execution_deadline = Some(Instant::now() + Duration::from_millis(execution_timeout));
+        }
 
         ThreadLocalParams::set_execution_profile(&execution_profile);
         let result = f();
@@ -149,7 +147,7 @@ pub struct ExecutionProfileBuilder {
     /// The maximum number of states that a non-determinitic finite automaton can hold, this is checked during the convertion of regular expression to automaton.
     max_number_of_states: Option<usize>,
     /// The longest time in milliseconds that an operation execution can last, there are no guaranties that the exact time will be respected.
-    execution_timeout: Option<u128>,
+    execution_timeout: Option<u64>,
 }
 impl Default for ExecutionProfileBuilder {
     fn default() -> Self {
@@ -165,7 +163,7 @@ impl ExecutionProfileBuilder {
         }
     }
 
-    pub fn execution_timeout(mut self, execution_timeout_in_ms: u128) -> Self {
+    pub fn execution_timeout(mut self, execution_timeout_in_ms: u64) -> Self {
         self.execution_timeout = Some(execution_timeout_in_ms);
         self
     }
@@ -179,7 +177,7 @@ impl ExecutionProfileBuilder {
         ExecutionProfile {
             max_number_of_states: self.max_number_of_states,
             execution_timeout: self.execution_timeout,
-            start_execution_time: None,
+            execution_deadline: None,
         }
     }
 }
@@ -188,8 +186,8 @@ struct ThreadLocalParams;
 impl ThreadLocalParams {
     thread_local! {
         static MAX_NUMBER_OF_STATES: RefCell<Option<usize>> = const { RefCell::new(None) };
-        static START_EXECUTION_TIME: RefCell<Option<SystemTime>> = const { RefCell::new(None) };
-        static EXECUTION_TIMEOUT: RefCell<Option<u128>> = const { RefCell::new(None) };
+        static EXECUTION_DEADLINE: RefCell<Option<Instant>> = const { RefCell::new(None) };
+        static EXECUTION_TIMEOUT: RefCell<Option<u64>> = const { RefCell::new(None) };
     }
 
     /// Store on the current thread [`ExecutionProfile`].
@@ -198,8 +196,8 @@ impl ThreadLocalParams {
             *cell.borrow_mut() = profile.max_number_of_states;
         });
 
-        ThreadLocalParams::START_EXECUTION_TIME.with(|cell| {
-            *cell.borrow_mut() = profile.start_execution_time;
+        ThreadLocalParams::EXECUTION_DEADLINE.with(|cell| {
+            *cell.borrow_mut() = profile.execution_deadline;
         });
 
         ThreadLocalParams::EXECUTION_TIMEOUT.with(|cell| {
@@ -211,11 +209,11 @@ impl ThreadLocalParams {
         ThreadLocalParams::MAX_NUMBER_OF_STATES.with(|cell| *cell.borrow())
     }
 
-    fn get_start_execution_time() -> Option<SystemTime> {
-        ThreadLocalParams::START_EXECUTION_TIME.with(|cell| *cell.borrow())
+    fn get_execution_deadline() -> Option<Instant> {
+        ThreadLocalParams::EXECUTION_DEADLINE.with(|cell| *cell.borrow())
     }
 
-    fn get_execution_timeout() -> Option<u128> {
+    fn get_execution_timeout() -> Option<u64> {
         ThreadLocalParams::EXECUTION_TIMEOUT.with(|cell| *cell.borrow())
     }
 
@@ -223,7 +221,7 @@ impl ThreadLocalParams {
     fn get_execution_profile() -> ExecutionProfile {
         ExecutionProfile {
             max_number_of_states: Self::get_max_number_of_states(),
-            start_execution_time: Self::get_start_execution_time(),
+            execution_deadline: Self::get_execution_deadline(),
             execution_timeout: Self::get_execution_timeout(),
         }
     }
@@ -283,7 +281,7 @@ mod tests {
         let term = Term::from_pattern(".*abc.*def.*qdsqd.*sqdsqd.*qsdsqdsqdz").unwrap();
 
         let execution_timeout_in_ms = 10;
-        let start_time = SystemTime::now();
+        let start_time = Instant::now();
         ExecutionProfileBuilder::new()
             .execution_timeout(execution_timeout_in_ms)
             .build()
@@ -293,13 +291,12 @@ mod tests {
                     term.generate_strings(100).unwrap_err()
                 );
 
-                let run_duration = SystemTime::now()
+                let run_duration = Instant::now()
                     .duration_since(start_time)
-                    .expect("Time went backwards")
                     .as_millis();
 
                 println!("{run_duration}");
-                assert!(run_duration <= execution_timeout_in_ms + 50);
+                assert!(run_duration <= (execution_timeout_in_ms + 50) as u128);
             });
 
         Ok(())
@@ -311,7 +308,7 @@ mod tests {
         let term2 = Term::from_pattern(".*abc.*def.*qdsqd.*sqdsqd.*qsdsqdsqdz.*abc.*def.*qdsqd.*sqdsqd.*qsdsqdsqdz.*abc.*def.*qdsqd.*sqdsqd.*qsdsqdsqdz").unwrap();
 
         let execution_timeout_in_ms = 50;
-        let start_time = SystemTime::now();
+        let start_time = Instant::now();
         ExecutionProfileBuilder::new()
             .execution_timeout(execution_timeout_in_ms)
             .build()
@@ -321,13 +318,12 @@ mod tests {
                     term1.difference(&term2).unwrap_err()
                 );
 
-                let run_duration = SystemTime::now()
+                let run_duration = Instant::now()
                     .duration_since(start_time)
-                    .expect("Time went backwards")
                     .as_millis();
 
                 println!("{run_duration}");
-                assert!(run_duration <= execution_timeout_in_ms + 25);
+                assert!(run_duration <= (execution_timeout_in_ms + 25) as u128);
             });
 
         Ok(())
