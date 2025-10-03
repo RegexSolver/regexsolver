@@ -16,11 +16,13 @@ impl Tokenizer<'_> {
         worklist.push_front(self.automaton.get_start_state());
 
         while let Some(current_state) = worklist.pop_back() {
+            if !seen.insert(current_state) {
+                continue;
+            }
             if !vec.is_empty() {
                 // separator
                 vec.push(AutomatonToken::SeparatorState)
             }
-            seen.insert(current_state);
 
             // state
             let embedded_state =
