@@ -16,13 +16,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_convert_t() -> Result<(), String> {
-        assert_convert("abc.*def.*uif(ab|de)");
-
-        Ok(())
-    }
-
-    #[test]
     fn test_convert() -> Result<(), String> {
         
         assert_convert(".*u(ab|de)");

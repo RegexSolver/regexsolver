@@ -16,59 +16,50 @@ impl Gnfa {
     }
 
     fn get_next_state_to_eliminate(&self) -> Option<usize> {
-        let mut best_state: Option<usize> = None;
-        let mut best_score: u128 = u128::MAX;
+        let states: Vec<usize> = self
+            .all_states_iter()
+            .filter(|&s| s != self.start_state && s != self.accept_state)
+            .collect();
 
-        for state in self.all_states_iter() {
-            if state == self.start_state || state == self.accept_state {
-                continue;
-            }
+        states
+            .into_par_iter()
+            .filter_map(|state| {
+                let preds = self.transitions_to_vec(state);
+                let succs = self.transitions_from_vec(state);
 
-            let preds = self.transitions_to_vec(state);
-            let succs = self.transitions_from_vec(state);
+                let in_deg = preds.len() as u128;
+                let out_deg = succs.len() as u128;
 
-            let in_deg = preds.len() as u128;
-            let out_deg = succs.len() as u128;
-
-            if in_deg == 0 || out_deg == 0 {
-                let score = state as u128 & 0xFF;
-                if score < best_score {
-                    best_score = score;
-                    best_state = Some(state);
+                if in_deg == 0 || out_deg == 0 {
+                    let score = (state as u128) & 0xFF;
+                    return Some((score, state));
                 }
-                continue;
-            }
 
-            let mut score: u128 = in_deg * out_deg;
+                let mut score: u128 = in_deg * out_deg;
 
-            if self.has_self_loop(state) {
-                score = score + (score >> 1);
-            }
+                if self.has_self_loop(state) {
+                    score = score + (score >> 1);
+                }
 
-            let mut label_cost: u128 = 0;
+                let mut label_cost: u128 = 0;
 
-            for (_, regex) in &preds {
-                label_cost += regex.evaluate_complexity() as u128;
-            }
-            for (regex, _) in &succs {
-                label_cost += regex.evaluate_complexity() as u128;
-            }
-            if let Some(re) = self.get_transition(state, state) {
-                label_cost += (re.evaluate_complexity() as u128) * 2;
-            }
+                for (_, regex) in &preds {
+                    label_cost += regex.evaluate_complexity() as u128;
+                }
+                for (regex, _) in &succs {
+                    label_cost += regex.evaluate_complexity() as u128;
+                }
+                if let Some(re) = self.get_transition(state, state) {
+                    label_cost += (re.evaluate_complexity() as u128) * 2;
+                }
 
-            score = score.saturating_mul(1).saturating_add(label_cost);
+                score = score.saturating_add(label_cost);
 
-            let tie = state as u128 & 0xFFFF;
-            let score = score.saturating_add(tie);
-
-            if score < best_score {
-                best_score = score;
-                best_state = Some(state);
-            }
-        }
-
-        best_state
+                let tie = (state as u128) & 0xFFFF;
+                Some((score.saturating_add(tie), state))
+            })
+            .reduce_with(|a, b| if a.0 < b.0 { a } else { b })
+            .map(|(_, state)| state)
     }
 
     fn eliminate_state(&mut self, k: usize) {
