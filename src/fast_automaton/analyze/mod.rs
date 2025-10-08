@@ -72,7 +72,7 @@ impl FastAutomaton {
         live
     }
 
-    pub(crate) fn get_ranges(&self) -> Result<Vec<Condition>, EngineError> {
+    pub(crate) fn get_spanning_bases(&self) -> Result<Vec<Condition>, EngineError> {
         self.spanning_set
             .get_spanning_ranges()
             .map(|range| Condition::from_range(range, &self.spanning_set))

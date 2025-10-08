@@ -1,15 +1,13 @@
-use std::{cmp, hash::Hasher};
-
-use ahash::AHasher;
+use std::cmp;
 
 use super::*;
 
-mod union;
 mod concat;
 mod determinize;
-mod intersection;
 mod difference;
+mod intersection;
 mod repeat;
+mod union;
 
 impl FastAutomaton {
     pub(crate) fn remove_dead_transitions(&mut self) {

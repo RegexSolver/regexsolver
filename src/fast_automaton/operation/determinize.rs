@@ -1,4 +1,4 @@
-use ahash::HashMapExt;
+use bit_set::BitSet;
 
 use crate::{EngineError, execution_profile::ExecutionProfile};
 
@@ -12,89 +12,72 @@ impl FastAutomaton {
         }
         let execution_profile = ExecutionProfile::get();
 
-        let ranges = self.get_ranges()?;
-
-        let initial_vec = VecDeque::from(vec![self.start_state]);
+        let bases = self.get_spanning_bases()?;
 
         let mut worklist = VecDeque::with_capacity(self.get_number_of_states());
 
         let map_capacity = (self.get_number_of_states() as f64 / 0.75).ceil() as usize;
-        let mut new_states = IntMap::with_capacity(map_capacity);
+        let mut new_states = AHashMap::with_capacity(map_capacity);
+
+        let mut accept_states = BitSet::new();
+        for &state in &self.accept_states {
+            accept_states.insert(state);
+        }
 
         let mut new_automaton = FastAutomaton::new_empty();
         new_automaton.spanning_set = self.spanning_set.clone();
 
-        worklist.push_back((vec![self.start_state], new_automaton.start_state));
-        new_states.insert(Self::simple_hash(&initial_vec), new_automaton.start_state);
+        let mut initial_state = BitSet::new();
+        initial_state.insert(self.start_state);
 
-        let mut new_states_to_add = VecDeque::with_capacity(self.get_number_of_states());
+        worklist.push_back((initial_state.clone(), new_automaton.start_state));
+        new_states.insert(initial_state, new_automaton.start_state);
+
+        let mut new_states_to_add = BitSet::new();
         while let Some((states, r)) = worklist.pop_front() {
             execution_profile.assert_not_timed_out()?;
 
-            for state in &states {
-                if self.accept_states.contains(state) {
-                    new_automaton.accept_states.insert(r);
-                    break;
-                }
+            if !states.is_disjoint(&accept_states) {
+                new_automaton.accept_states.insert(r);
             }
 
-            for base in &ranges {
+            for base in &bases {
                 for from_state in &states {
-                    for (cond, to_state) in self.transitions_from(*from_state) {
+                    for (cond, to_state) in self.transitions_from(from_state) {
                         if cond.has_intersection(base) {
-                            match new_states_to_add.binary_search(to_state) {
-                                Ok(_) => {} // element already in vector @ `pos`
-                                Err(pos) => new_states_to_add.insert(pos, *to_state),
-                            };
+                            new_states_to_add.insert(*to_state);
                         }
                     }
                 }
                 if !new_states_to_add.is_empty() {
-                    let q = match new_states.entry(Self::simple_hash(&new_states_to_add)) {
-                        Entry::Occupied(o) => *o.get(),
+                    match new_states.entry(new_states_to_add.clone()) {
+                        Entry::Occupied(o) => {
+                            let q = *o.get();
+
+                            new_states_to_add.clear();
+
+                            new_automaton.add_transition(r, q, base);
+                        }
                         Entry::Vacant(v) => {
                             let new_q = new_automaton.new_state();
-                            worklist
-                                .push_back((new_states_to_add.iter().cloned().collect(), new_q));
                             v.insert(new_q);
-                            new_q
+
+                            let new_states = std::mem::take(&mut new_states_to_add);
+                            worklist.push_back((new_states, new_q));
+
+                            new_automaton.add_transition(r, new_q, base);
                         }
                     };
-
-                    new_automaton.add_transition(r, q, base);
                 }
-                new_states_to_add.clear();
             }
         }
         Ok(Cow::Owned(new_automaton))
-    }
-
-    fn simple_hash(list: &VecDeque<usize>) -> u64 {
-        let mut hasher = AHasher::default();
-        for &item in list {
-            hasher.write_usize(item);
-        }
-        hasher.finish()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::regex::RegularExpression;
-
-    #[test]
-    fn test_determinize_1() -> Result<(), String> {
-        let automaton = RegularExpression::parse(".*ab", false)
-            .unwrap()
-            .to_automaton()
-            .unwrap();
-
-        let deterministic_automaton = automaton.determinize().unwrap();
-
-        assert!(deterministic_automaton.is_deterministic());
-
-        Ok(())
-    }
 
     #[test]
     fn test_determinize_regex() -> Result<(), String> {
@@ -117,8 +100,6 @@ mod tests {
             .unwrap()
             .to_automaton()
             .unwrap();
-        //automaton.compute_determinization_cost();
-        //println!("Determinization Cost: {:?}", automaton.determinisation_cost);
         println!("States Before: {}", automaton.get_number_of_states());
         let deterministic_automaton = automaton.determinize().unwrap();
         println!(
@@ -126,6 +107,7 @@ mod tests {
             deterministic_automaton.get_number_of_states()
         );
         assert!(deterministic_automaton.is_deterministic());
+        //deterministic_automaton.print_dot();
         assert!(
             automaton
                 .difference(&deterministic_automaton)
