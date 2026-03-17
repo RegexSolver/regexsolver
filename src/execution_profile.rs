@@ -37,7 +37,7 @@ use crate::error::EngineError;
 ///     .build();
 ///
 /// execution_profile.run(|| {
-///     assert_eq!(EngineError::OperationTimeOutError, term.generate_strings(1000).unwrap_err());
+///     assert_eq!(EngineError::OperationTimeOutError, term.generate_strings(1000, 0).unwrap_err());
 /// });
 /// ```
 #[derive(Clone, Debug)]
@@ -89,10 +89,10 @@ impl ExecutionProfile {
         &self,
         number_of_states: usize,
     ) -> Result<(), EngineError> {
-        if let Some(max_number_of_states) = self.max_number_of_states {
-            if number_of_states >= max_number_of_states {
-                return Err(EngineError::AutomatonHasTooManyStates);
-            }
+        if let Some(max_number_of_states) = self.max_number_of_states
+            && number_of_states >= max_number_of_states
+        {
+            return Err(EngineError::AutomatonHasTooManyStates);
         }
         Ok(())
     }
@@ -120,7 +120,8 @@ impl ExecutionProfile {
 
         let mut execution_profile = self.clone();
         if let Some(execution_timeout) = execution_profile.execution_timeout {
-            execution_profile.execution_deadline = Some(Instant::now() + Duration::from_millis(execution_timeout));
+            execution_profile.execution_deadline =
+                Some(Instant::now() + Duration::from_millis(execution_timeout));
         }
 
         ThreadLocalParams::set_execution_profile(&execution_profile);
@@ -288,12 +289,10 @@ mod tests {
             .run(|| {
                 assert_eq!(
                     EngineError::OperationTimeOutError,
-                    term.generate_strings(100).unwrap_err()
+                    term.generate_strings(100, 0).unwrap_err()
                 );
 
-                let run_duration = Instant::now()
-                    .duration_since(start_time)
-                    .as_millis();
+                let run_duration = Instant::now().duration_since(start_time).as_millis();
 
                 println!("{run_duration}");
                 assert!(run_duration <= (execution_timeout_in_ms + 50) as u128);
@@ -307,7 +306,7 @@ mod tests {
         let term1 = Term::from_pattern(".*abc.*def.*qdqd.*qsdsqdsqdz").unwrap();
         let term2 = Term::from_pattern(".*abc.*def.*qdsqd.*sqdsqd.*qsdsqdsqdz.*abc.*def.*qdsqd.*sqdsqd.*qsdsqdsqdz.*abc.*def.*qdsqd.*sqdsqd.*qsdsqdsqdz").unwrap();
 
-        let execution_timeout_in_ms = 50;
+        let execution_timeout_in_ms = 10;
         let start_time = Instant::now();
         ExecutionProfileBuilder::new()
             .execution_timeout(execution_timeout_in_ms)
@@ -318,9 +317,7 @@ mod tests {
                     term1.difference(&term2).unwrap_err()
                 );
 
-                let run_duration = Instant::now()
-                    .duration_since(start_time)
-                    .as_millis();
+                let run_duration = Instant::now().duration_since(start_time).as_millis();
 
                 println!("{run_duration}");
                 assert!(run_duration <= (execution_timeout_in_ms + 25) as u128);

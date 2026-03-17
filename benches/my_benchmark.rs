@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use regexsolver::{fast_automaton::FastAutomaton, regex::RegularExpression};
 
 fn parse_regex(regex: &str) -> RegularExpression {
@@ -18,7 +18,7 @@ fn intersection(automaton_1: &FastAutomaton, automaton_2: &FastAutomaton) -> Fas
 }
 
 fn generate_strings(automaton: &FastAutomaton) -> Vec<String> {
-    automaton.generate_strings(2000).unwrap()
+    automaton.generate_strings(2000, 1000).unwrap()
 }
 
 fn criterion_benchmark(c: &mut Criterion) {
@@ -61,10 +61,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     {
         let automaton1 = RegularExpression::new("a(bcfe|bcdg|mkv)*(abc){1,3}")
             .unwrap()
-            .to_automaton().unwrap();
+            .to_automaton()
+            .unwrap();
         let automaton2 = RegularExpression::new("a(bcfe|mkv|opr)*(abc){2,4}")
             .unwrap()
-            .to_automaton().unwrap();
+            .to_automaton()
+            .unwrap();
 
         c.bench_function("intersection", |b| {
             b.iter(|| intersection(black_box(&automaton1), black_box(&automaton2)))
@@ -74,7 +76,8 @@ fn criterion_benchmark(c: &mut Criterion) {
     {
         let automaton = RegularExpression::new("a(bcfe|bcdg|mkv)*(abc){1,3}")
             .unwrap()
-            .to_automaton().unwrap();
+            .to_automaton()
+            .unwrap();
 
         c.bench_function("generate_strings", |b| {
             b.iter(|| generate_strings(black_box(&automaton)))

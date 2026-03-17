@@ -6,7 +6,7 @@ use super::*;
 
 impl FastAutomaton {
     /// Determinizes the automaton and returns the result.
-    pub fn determinize(&self) -> Result<Cow<Self>, EngineError> {
+    pub fn determinize(&self) -> Result<Cow<'_, Self>, EngineError> {
         if self.deterministic {
             return Ok(Cow::Borrowed(self));
         }

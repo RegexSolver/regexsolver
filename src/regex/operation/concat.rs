@@ -1,7 +1,7 @@
 use super::*;
 
 impl RegularExpression {
-     /// Returns a regular expression that is the concatenation of all expressions in `patterns`.
+    /// Returns a regular expression that is the concatenation of all expressions in `patterns`.
     pub fn concat_all<'a, I: IntoIterator<Item = &'a RegularExpression>>(
         patterns: I,
     ) -> RegularExpression {
@@ -13,7 +13,7 @@ impl RegularExpression {
 
         result
     }
-    
+
     /// Returns a new regular expression representing the concatenation of `self` and `other`; `append_back` determines their order.
     pub fn concat(&self, other: &RegularExpression, append_back: bool) -> RegularExpression {
         if self.is_empty() || other.is_empty() {
@@ -202,12 +202,12 @@ impl RegularExpression {
             {
                 if this_range.contains_all(&that_range) && that_min == &0 && this_max_opt.is_none()
                 {
-                    return Some(this.clone());
+                    Some(this.clone())
                 } else {
-                    return None;
+                    None
                 }
             } else {
-                return None;
+                None
             }
         } else if let RegularExpression::Repetition(this_regex, this_min, this_max_opt) = this {
             if **this_regex == *that {

@@ -26,11 +26,7 @@ impl RegularExpression {
                 };
 
                 if Self::can_simplify_nested_repetition(*i_min, *i_max_opt, min, max_opt) {
-                    RegularExpression::Repetition(
-                        regular_expression.clone(),
-                        min * i_min,
-                        new_max,
-                    )
+                    RegularExpression::Repetition(regular_expression.clone(), min * i_min, new_max)
                 } else {
                     RegularExpression::Repetition(Box::new(self.clone()), min, max_opt)
                 }
@@ -46,10 +42,10 @@ impl RegularExpression {
         o_min: u32,
         o_max_opt: Option<u32>,
     ) -> bool {
-        if let Some(o_max) = o_max_opt {
-            if o_min == o_max {
-                return true;
-            }
+        if let Some(o_max) = o_max_opt
+            && o_min == o_max
+        {
+            return true;
         }
 
         if let Some(i_max) = i_max_opt {

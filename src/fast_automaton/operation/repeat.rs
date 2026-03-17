@@ -12,11 +12,11 @@ impl FastAutomaton {
     }
 
     pub(crate) fn repeat_mut(&mut self, min: u32, max_opt: Option<u32>) -> Result<(), EngineError> {
-        if let Some(max) = max_opt {
-            if min > max {
-                self.make_empty();
-                return Ok(());
-            }
+        if let Some(max) = max_opt
+            && min > max
+        {
+            self.make_empty();
+            return Ok(());
         }
 
         let automaton_to_repeat = self.clone();
@@ -39,13 +39,14 @@ impl FastAutomaton {
             }
         }
 
-        if let Some(max) = max_opt {
-            if min <= 1 && max == 1 {
-                if min == 0 {
-                    self.accept_states.insert(self.start_state);
-                }
-                return Ok(());
+        if let Some(max) = max_opt
+            && min <= 1
+            && max == 1
+        {
+            if min == 0 {
+                self.accept_states.insert(self.start_state);
             }
+            return Ok(());
         }
 
         let iter = if min == 0 { 0..0 } else { 0..min - 1 };

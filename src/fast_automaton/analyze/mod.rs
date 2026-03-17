@@ -19,11 +19,12 @@ impl FastAutomaton {
     /// Checks if the automaton matches all possible strings.
     #[inline]
     pub fn is_total(&self) -> bool {
-        if self.accept_states.contains(&self.start_state) {
-            if let Some(condition) = self.transitions[self.start_state].get(&self.start_state) {
-                return condition.is_total();
-            }
+        if self.accept_states.contains(&self.start_state)
+            && let Some(condition) = self.transitions[self.start_state].get(&self.start_state)
+        {
+            return condition.is_total();
         }
+
         false
     }
 

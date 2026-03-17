@@ -68,7 +68,7 @@ pub type CharRange = RangeSet<Char>;
 ///
 ///     // Generate examples
 ///     let samples = Term::from_pattern("(x|y){1,3}")?
-///         .generate_strings(5)?;
+///         .generate_strings(5, 0)?;
 ///     println!("Some matches: {:?}", samples);
 ///
 ///     // Equivalence & subset
@@ -352,7 +352,7 @@ impl Term {
         }
     }
 
-    /// Generates `count` strings matched by the term.
+    /// Generates `count` strings matched by the term, skipping the first `offset` strings.
     ///
     /// # Example:
     ///
@@ -361,12 +361,20 @@ impl Term {
     ///
     /// let term = Term::from_pattern("(abc|de){2}").unwrap();
     ///
-    /// let strings = term.generate_strings(3).unwrap();
+    /// // Generate the first 2 matched strings
+    /// let batch_1 = term.generate_strings(2, 0).unwrap();
+    /// assert_eq!(2, batch_1.len()); // ["dede", "deabc"]
     ///
-    /// assert_eq!(3, strings.len()); // ex: ["deabc", "dede", "abcde"]
+    /// // Generate the next 2 matched strings by setting the offset
+    /// let batch_2 = term.generate_strings(2, 2).unwrap();
+    /// assert_eq!(2, batch_2.len()); // ["abcde", "abcabc"]
     /// ```
-    pub fn generate_strings(&self, count: usize) -> Result<Vec<String>, EngineError> {
-        self.to_automaton()?.generate_strings(count)
+    pub fn generate_strings(
+        &self,
+        count: usize,
+        offset: usize,
+    ) -> Result<Vec<String>, EngineError> {
+        self.to_automaton()?.generate_strings(count, offset)
     }
 
     /// Returns `true` if both terms accept the same language.
@@ -458,7 +466,7 @@ impl Term {
     }
 
     /// Converts the term to a [`FastAutomaton`].
-    pub fn to_automaton(&self) -> Result<Cow<FastAutomaton>, EngineError> {
+    pub fn to_automaton(&self) -> Result<Cow<'_, FastAutomaton>, EngineError> {
         Ok(match self {
             Term::RegularExpression(regex) => Cow::Owned(regex.to_automaton()?),
             Term::Automaton(automaton) => Cow::Borrowed(automaton),
@@ -466,7 +474,7 @@ impl Term {
     }
 
     /// Converts the term to a [`RegularExpression`].
-    pub fn to_regex(&self) -> Cow<RegularExpression> {
+    pub fn to_regex(&self) -> Cow<'_, RegularExpression> {
         match self {
             Term::RegularExpression(regex) => Cow::Borrowed(regex),
             Term::Automaton(automaton) => Cow::Owned(automaton.to_regex()),
@@ -525,10 +533,7 @@ impl Term {
         let mut regex_list = Vec::with_capacity(terms.len() + 1);
         regex_list.push(self.to_regex());
 
-        let mut terms_regexes = terms
-            .iter()
-            .map(Term::to_regex)
-            .collect::<Vec<_>>();
+        let mut terms_regexes = terms.iter().map(Term::to_regex).collect::<Vec<_>>();
         regex_list.append(&mut terms_regexes);
 
         Some(regex_list)

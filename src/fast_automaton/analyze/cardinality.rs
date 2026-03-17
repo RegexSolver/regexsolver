@@ -10,7 +10,10 @@ impl FastAutomaton {
         } else if self.cyclic || self.is_total() {
             return Cardinality::Infinite;
         }
-        assert!(self.is_deterministic(), "The automaton should be deterministic.");
+        assert!(
+            self.is_deterministic(),
+            "The automaton should be deterministic."
+        );
 
         let topologically_sorted_states = self.topological_sorted_states();
         if topologically_sorted_states.is_none() {
@@ -31,13 +34,11 @@ impl FastAutomaton {
                         condition
                             .get_cardinality(&self.spanning_set)
                             .expect("It should be possible to get the cardinality of a condition."),
-                    ) {
-                        if let Some(new_distance) =
-                            distances.get(to_state).unwrap_or(&0).checked_add(distance)
-                        {
-                            distances.insert(*to_state, new_distance);
-                            continue;
-                        }
+                    ) && let Some(new_distance) =
+                        distances.get(to_state).unwrap_or(&0).checked_add(distance)
+                    {
+                        distances.insert(*to_state, new_distance);
+                        continue;
                     }
 
                     return Cardinality::BigInteger;

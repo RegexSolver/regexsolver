@@ -65,7 +65,7 @@ fn main() -> Result<(), EngineError> {
 
     // Generate examples
     let samples = Term::from_pattern("(x|y){1,3}")?
-        .generate_strings(5)?;
+        .generate_strings(5, 0)?;
     println!("Some matches: {:?}", samples);
 
     // Equivalence & subset
@@ -119,7 +119,7 @@ RegexSolver is based on the [regex-syntax](https://docs.rs/regex-syntax/0.8.5/re
 | Method | Return | Description |
 | -------- | ------- | ------- |
 | `equivalent(&self, term: &Term)` | `Result<bool, EngineError>` | Returns `true` if both terms accept the same language. |
-| `generate_strings(&self, count: usize)` | `Result<Vec<String>, EngineError>` | Generates `count` strings matched by the term. |
+| `generate_strings(&self, count: usize, offset: usize)` | `Result<Vec<String>, EngineError>` | Generates `count` strings matched by the term, skipping the first `offset` strings. |
 | `get_cardinality(&self)` | `Result<Cardinality<u32>, EngineError>` | Returns the cardinality of the term (i.e., the number of possible matched strings). |
 | `get_length(&self)` | `(Option<u32>, Option<u32>)` | Returns the minimum and maximum length of matched strings. |
 | `is_empty(&self)` | `bool` | Checks if the term matches the empty language. |
@@ -197,7 +197,7 @@ This design allows us to perform unions, intersections, and complements of trans
 | `direct_states(&self, state: State)` | `impl Iterator<Item = State>` | Returns an iterator over states directly reachable from the given state in one transition. |
 | `direct_states_vec(&self, state: State)` | `Vec<State>` | Returns a vector of states directly reachable from the given state in one transition. |
 | `equivalent(&self, other: &FastAutomaton)` | `Result<bool, EngineError>` | Returns `true` if both automata accept the same language. |
-| `generate_strings(&self, count: usize)` | `Result<Vec<String>, EngineError>` | Generates `count` strings matched by the automaton. |
+| `generate_strings(&self, count: usize, offset: usize)` | `Result<Vec<String>, EngineError>` | Generates `count` strings matched by the automaton, skipping the first `offset` strings. |
 | `get_accept_states(&self)` | `&IntSet<State>` | Returns a reference to the set of accept (final) states. |
 | `get_cardinality(&self)` | `Cardinality<u32>` | Returns the cardinality of the automaton (i.e., the number of possible matched strings). |
 | `get_condition(&self, from_state: State, to_state: State)` | `Option<&Condition>` | Returns a reference to the condition of the directed transition between the two states, if any. |

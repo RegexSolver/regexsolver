@@ -17,7 +17,11 @@ impl std::fmt::Display for FastBitVec {
 impl FastBitVec {
     #[inline]
     pub fn from_elem(n: usize, bit: bool) -> Self {
-        let nblocks = if n % 64 == 0 { n / 64 } else { n / 64 + 1 };
+        let nblocks = if n.is_multiple_of(64) {
+            n / 64
+        } else {
+            n / 64 + 1
+        };
         let bits = vec![if bit { !0_u64 } else { 0_u64 }; nblocks];
         let mut bit_vec = FastBitVec { bits, n };
         bit_vec.fix_last_block();

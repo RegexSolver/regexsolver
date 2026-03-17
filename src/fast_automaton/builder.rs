@@ -46,8 +46,9 @@ impl FastAutomaton {
         }
         let new_state = automaton.new_state();
 
-        let spanning_set = SpanningSet::compute_spanning_set(&[range.clone()]);
-        let condition = Condition::from_range(range, &spanning_set).expect("The spanning set should be valid");
+        let spanning_set = SpanningSet::compute_spanning_set(std::slice::from_ref(range));
+        let condition =
+            Condition::from_range(range, &spanning_set).expect("The spanning set should be valid");
         automaton.spanning_set = spanning_set;
         automaton.add_transition(0, new_state, &condition);
         automaton.accept(new_state);

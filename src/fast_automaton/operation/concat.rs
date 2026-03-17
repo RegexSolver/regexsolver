@@ -13,8 +13,9 @@ impl FastAutomaton {
     }
 
     /// Computes the concatenation of all automata in the given iterator.
-    pub fn concat_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(automata: I) -> Result<Self, EngineError>
-    {
+    pub fn concat_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(
+        automata: I,
+    ) -> Result<Self, EngineError> {
         let mut new_automaton = FastAutomaton::new_empty_string();
         for automaton in automata {
             new_automaton.concat_mut(automaton)?;
@@ -107,23 +108,20 @@ impl FastAutomaton {
                 let projected_condition = condition_converter.convert(condition)?;
                 for new_from_state in new_from_states.iter() {
                     for new_to_state in new_to_states.iter() {
-                        self.add_transition(
-                            *new_from_state,
-                            *new_to_state,
-                            &projected_condition,
-                        );
+                        self.add_transition(*new_from_state, *new_to_state, &projected_condition);
                     }
                 }
             }
         }
 
-        if start_state_and_accept_states_not_mergeable {
-            if let Some(&other_start_state) = new_states.get(&other.start_state) {
-                for accept_state in &accept_states {
-                    self.add_epsilon_transition(*accept_state, other_start_state);
-                }
+        if start_state_and_accept_states_not_mergeable
+            && let Some(&other_start_state) = new_states.get(&other.start_state)
+        {
+            for accept_state in &accept_states {
+                self.add_epsilon_transition(*accept_state, other_start_state);
             }
         }
+
         self.cyclic = self.cyclic || other.cyclic;
         Ok(())
     }

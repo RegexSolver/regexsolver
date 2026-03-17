@@ -47,7 +47,7 @@ impl SpanningSet {
         }
     }
 
-    pub fn get_spanning_ranges(&self) -> Iter<CharRange> {
+    pub fn get_spanning_ranges(&self) -> Iter<'_, CharRange> {
         self.0.iter()
     }
 

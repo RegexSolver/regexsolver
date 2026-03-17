@@ -145,10 +145,7 @@ impl FastAutomaton {
 
     /// Returns an iterator over transitions from the given state.
     #[inline]
-    pub fn transitions_from(
-        &self,
-        state: State,
-    ) -> impl Iterator<Item = (&Condition, &State)> {
+    pub fn transitions_from(&self, state: State) -> impl Iterator<Item = (&Condition, &State)> {
         self.transitions[state]
             .iter()
             .map(|(s, c)| (c, s))
