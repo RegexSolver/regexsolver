@@ -91,7 +91,10 @@ impl FastAutomaton {
         }
 
         // Precompute the lengths of each range to avoid repeated iteration overhead
-        let range_lengths: Vec<usize> = ranges.iter().map(|r| r.clone().iter().count()).collect();
+        let range_lengths: Vec<usize> = ranges
+            .iter()
+            .map(|r| r.get_cardinality() as usize)
+            .collect();
 
         // Calculate the total Cartesian combinations this path will yield
         let mut total_combinations = 1usize;
@@ -234,6 +237,7 @@ mod tests {
 
     #[test]
     fn test_generate_strings_offset() -> Result<(), String> {
+        assert_generate_strings_offset(".{900}");
         assert_generate_strings_offset("[a-z]+");
         assert_generate_strings_offset("[a-z]+@");
 
