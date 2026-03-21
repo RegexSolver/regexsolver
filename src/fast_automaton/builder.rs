@@ -16,6 +16,7 @@ impl FastAutomaton {
             removed_states: IntSet::default(),
             spanning_set: SpanningSet::new_empty(),
             deterministic: true,
+            minimal: true,
             cyclic: false,
         }
     }
@@ -25,6 +26,7 @@ impl FastAutomaton {
     pub fn new_empty_string() -> Self {
         let mut automaton = Self::new_empty();
         automaton.accept(automaton.start_state);
+        automaton.minimal = true;
         automaton
     }
 
@@ -35,6 +37,7 @@ impl FastAutomaton {
         automaton.spanning_set = SpanningSet::new_total();
         automaton.accept(automaton.start_state);
         automaton.add_transition(0, 0, &Condition::total(&automaton.spanning_set));
+        automaton.minimal = true;
         automaton
     }
 
@@ -52,12 +55,14 @@ impl FastAutomaton {
         automaton.spanning_set = spanning_set;
         automaton.add_transition(0, new_state, &condition);
         automaton.accept(new_state);
+        automaton.minimal = true;
         automaton
     }
 
     /// Creates a new state and returns its identifier.
     #[inline]
     pub fn new_state(&mut self) -> State {
+        self.minimal = false;
         if let Some(new_state) = self.removed_states.clone().iter().next() {
             self.removed_states.remove(new_state);
             *new_state
@@ -71,6 +76,7 @@ impl FastAutomaton {
     #[inline]
     pub fn accept(&mut self, state: State) {
         self.assert_state_exists(state);
+        self.minimal = false;
         self.accept_states.insert(state);
     }
 
@@ -121,6 +127,7 @@ impl FastAutomaton {
             return;
         }
 
+        self.minimal = false;
         if self.deterministic {
             let mut deterministic = true;
             for (condition, state) in self.transitions_from(from_state) {
@@ -156,6 +163,9 @@ impl FastAutomaton {
         }
         self.assert_state_exists(from_state);
         self.assert_state_exists(to_state);
+
+        self.minimal = false;
+
         if self.accept_states.contains(&to_state) {
             self.accept_states.insert(from_state);
         }
@@ -201,6 +211,8 @@ impl FastAutomaton {
             self.assert_state_exists(to_state);
         }
 
+        self.minimal = false;
+
         self.transitions_in
             .entry(to_state)
             .or_default()
@@ -214,6 +226,7 @@ impl FastAutomaton {
         if self.start_state == state {
             panic!("Can not remove the state {state}, it is still used as start state.");
         }
+        self.minimal = false;
         self.accept_states.remove(&state);
         self.transitions_in.remove(&state);
         if self.transitions.len() - 1 == state {
@@ -242,6 +255,7 @@ impl FastAutomaton {
     pub fn remove_states(&mut self, states: &IntSet<State>) {
         self.accept_states.retain(|e| !states.contains(e));
 
+        self.minimal = false;
         let mut states_to_remove = Vec::with_capacity(states.len());
 
         for &state in states {
@@ -276,6 +290,21 @@ impl FastAutomaton {
                 transitions.remove(state);
             }
         }
+    }
+
+    /// Recompute a minimal spanning set for the automaton and apply it.
+    pub fn recompute_minimal_spanning_set(&mut self) -> Result<(), EngineError> {
+        let mut ranges = Vec::with_capacity(self.get_number_of_states());
+
+        for state in self.states() {
+            for (condition, _) in self.transitions_from(state) {
+                ranges.push(condition.to_range(&self.spanning_set)?);
+            }
+        }
+
+        let new_spanning_set = SpanningSet::compute_spanning_set(&ranges);
+
+        self.apply_new_spanning_set(&new_spanning_set)
     }
 
     /// Applies the provided spanning set and projects all existing conditions onto it.
@@ -320,6 +349,7 @@ impl FastAutomaton {
         self.removed_states = model.removed_states.clone();
         self.spanning_set = model.spanning_set.clone();
         self.deterministic = model.deterministic;
+        self.minimal = model.minimal;
         self.cyclic = model.cyclic;
     }
 }

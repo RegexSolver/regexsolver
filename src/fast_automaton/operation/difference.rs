@@ -5,8 +5,9 @@ use crate::EngineError;
 use super::*;
 
 impl FastAutomaton {
+    /// Totalize the automaton; it must be deterministic.
     fn totalize(&mut self) -> Result<(), EngineError> {
-        assert!(self.is_deterministic(), "The automaton should be deterministic.");
+        self.assert_deterministic();
 
         let crash_state = self.new_state();
         let mut transitions_to_crash_state: IntMap<State, Condition> =
@@ -44,6 +45,7 @@ impl FastAutomaton {
 
     /// Complements the automaton; it must be deterministic.
     pub fn complement(&mut self) -> Result<(), EngineError> {
+        self.assert_deterministic();
         self.totalize()?;
 
         let mut new_accept_states = IntSet::default();
@@ -58,8 +60,9 @@ impl FastAutomaton {
         Ok(())
     }
 
-    /// Computes the difference between `self` and `other`.
+    /// Computes the difference between `self` and `other`. `other` must be deterministic.
     pub fn difference(&self, other: &FastAutomaton) -> Result<FastAutomaton, EngineError> {
+        other.assert_deterministic();
         let mut complement = other.clone();
         match complement.complement() {
             Ok(()) => self.intersection(&complement),

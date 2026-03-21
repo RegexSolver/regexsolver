@@ -64,7 +64,7 @@ pub type CharRange = RangeSet<Char>;
 ///
 ///     // Analyze
 ///     assert_eq!(rep.get_length(), (Some(6), Some(12)));
-///     assert!(!rep.is_empty());
+///     assert!(!rep.is_empty().unwrap());
 ///
 ///     // Generate examples
 ///     let samples = Term::from_pattern("(x|y){1,3}")?
@@ -212,16 +212,9 @@ impl Term {
     /// }
     /// ```
     pub fn union(&self, terms: &[Term]) -> Result<Term, EngineError> {
-        if self.is_total() {
-            return Ok(Term::new_total());
-        }
-
         let mut has_automaton = matches!(self, Term::Automaton(_));
         if !has_automaton {
             for term in terms {
-                if term.is_total() {
-                    return Ok(Term::new_total());
-                }
                 if matches!(term, Term::Automaton(_)) {
                     has_automaton = true;
                     break;
@@ -274,10 +267,6 @@ impl Term {
     /// }
     /// ```
     pub fn intersection(&self, terms: &[Term]) -> Result<Term, EngineError> {
-        if self.is_empty() || terms.iter().any(|t| t.is_empty()) {
-            return Ok(Term::new_empty());
-        }
-
         let parallel = terms.len() > 3;
 
         let automaton_list = self.get_automata(terms, parallel)?;
@@ -317,6 +306,28 @@ impl Term {
         let return_automaton = minuend_automaton.difference(&subtrahend_automaton)?;
 
         Ok(Term::Automaton(return_automaton))
+    }
+
+    /// Computes the complement of `self`.
+    ///
+    /// # Example:
+    ///
+    /// ```
+    /// use regexsolver::Term;
+    ///
+    /// let term = Term::from_pattern("(abc|de)").unwrap();
+    ///
+    /// let complement = term.complement().unwrap();
+    ///
+    /// assert!(term.intersection(&[complement.clone()]).unwrap().is_empty().unwrap());
+    /// assert!(term.union(&[complement]).unwrap().is_total().unwrap());
+    /// ```
+    pub fn complement(&self) -> Result<Term, EngineError> {
+        let automaton = self.to_automaton()?;
+        let mut automaton = automaton.determinize()?.into_owned();
+        automaton.complement()?;
+
+        Ok(Term::Automaton(automaton))
     }
 
     /// Computes the repetition of the current term between `min` and `max_opt` times; if `max_opt` is `None`, the repetition is unbounded.
@@ -359,22 +370,28 @@ impl Term {
     /// ```
     /// use regexsolver::Term;
     ///
-    /// let term = Term::from_pattern("(abc|de){2}").unwrap();
+    /// let mut term = Term::from_pattern("(abc|de){2}").unwrap();
+    /// let mut batch: Vec<String>;
     ///
     /// // Generate the first 2 matched strings
-    /// let batch_1 = term.generate_strings(2, 0).unwrap();
-    /// assert_eq!(2, batch_1.len()); // ["dede", "deabc"]
+    /// let (term, batch) = term.generate_strings(2, 0).unwrap();
+    /// assert_eq!(2, batch.len()); // ["dede", "deabc"]
     ///
     /// // Generate the next 2 matched strings by setting the offset
-    /// let batch_2 = term.generate_strings(2, 2).unwrap();
-    /// assert_eq!(2, batch_2.len()); // ["abcde", "abcabc"]
+    /// let (term, batch) = term.generate_strings(2, 2).unwrap();
+    /// assert_eq!(2, batch.len()); // ["abcde", "abcabc"]
     /// ```
     pub fn generate_strings(
         &self,
         count: usize,
         offset: usize,
-    ) -> Result<Vec<String>, EngineError> {
-        self.to_automaton()?.generate_strings(count, offset)
+    ) -> Result<(Term, Vec<String>), EngineError> {
+        let deterministic_minimal_automaton = self.to_deterministic_minimal_automaton()?;
+        let generated_strings = deterministic_minimal_automaton.generate_strings(count, offset)?;
+        Ok((
+            Term::Automaton(deterministic_minimal_automaton),
+            generated_strings,
+        ))
     }
 
     /// Returns `true` if both terms accept the same language.
@@ -422,27 +439,57 @@ impl Term {
     }
 
     /// Checks if the term matches the empty language.
-    pub fn is_empty(&self) -> bool {
-        match self {
+    pub fn is_empty(&self) -> Result<bool, EngineError> {
+        Ok(match self {
             Term::RegularExpression(regular_expression) => regular_expression.is_empty(),
-            Term::Automaton(fast_automaton) => fast_automaton.is_empty(),
-        }
+            Term::Automaton(fast_automaton) => {
+                if fast_automaton.is_minimal() {
+                    fast_automaton.is_empty()
+                } else if fast_automaton.is_empty() {
+                    true
+                } else {
+                    let mut fast_automaton = fast_automaton.determinize()?.into_owned();
+                    fast_automaton.minimize()?;
+                    fast_automaton.is_empty()
+                }
+            }
+        })
     }
 
     /// Checks if the term matches all possible strings.
-    pub fn is_total(&self) -> bool {
-        match self {
+    pub fn is_total(&self) -> Result<bool, EngineError> {
+        Ok(match self {
             Term::RegularExpression(regular_expression) => regular_expression.is_total(),
-            Term::Automaton(fast_automaton) => fast_automaton.is_total(),
-        }
+            Term::Automaton(fast_automaton) => {
+                if fast_automaton.is_minimal() {
+                    fast_automaton.is_total()
+                } else if fast_automaton.is_total() {
+                    true
+                } else {
+                    let mut fast_automaton = fast_automaton.determinize()?.into_owned();
+                    fast_automaton.minimize()?;
+                    fast_automaton.is_total()
+                }
+            }
+        })
     }
 
     /// Checks if the term matches only the empty string `""`.
-    pub fn is_empty_string(&self) -> bool {
-        match self {
+    pub fn is_empty_string(&self) -> Result<bool, EngineError> {
+        Ok(match self {
             Term::RegularExpression(regular_expression) => regular_expression.is_empty_string(),
-            Term::Automaton(fast_automaton) => fast_automaton.is_empty_string(),
-        }
+            Term::Automaton(fast_automaton) => {
+                if fast_automaton.is_minimal() {
+                    fast_automaton.is_empty_string()
+                } else if fast_automaton.is_empty_string() {
+                    true
+                } else {
+                    let mut fast_automaton = fast_automaton.determinize()?.into_owned();
+                    fast_automaton.minimize()?;
+                    fast_automaton.is_empty_string()
+                }
+            }
+        })
     }
 
     /// Returns the minimum and maximum length of matched strings.
@@ -471,6 +518,20 @@ impl Term {
             Term::RegularExpression(regex) => Cow::Owned(regex.to_automaton()?),
             Term::Automaton(automaton) => Cow::Borrowed(automaton),
         })
+    }
+
+    /// Converts the term to a deterministic minimal [`FastAutomaton`].
+    pub fn to_deterministic_minimal_automaton(&self) -> Result<FastAutomaton, EngineError> {
+        let mut automaton = self.to_automaton()?.into_owned();
+        if !automaton.is_deterministic() {
+            automaton = automaton.determinize()?.into_owned();
+        }
+
+        if !automaton.is_minimal() {
+            automaton.minimize()?;
+        }
+
+        Ok(automaton)
     }
 
     /// Converts the term to a [`RegularExpression`].
@@ -547,12 +608,43 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_complement() -> Result<(), String> {
+        let term = Term::from_pattern("(abc|de)").unwrap();
+
+        let complement = term.complement().unwrap();
+
+        assert!(
+            term.intersection(&[complement.clone()])
+                .unwrap()
+                .is_empty()
+                .unwrap()
+        );
+
+        println!("term: {}", term.to_automaton().unwrap().as_dot());
+
+        if let Term::Automaton(complement) = &complement {
+            println!("complement: {}", complement.as_dot());
+        }
+
+        let union = term.union(&[complement]).unwrap();
+        if let Term::Automaton(union) = &union {
+            println!("{}", union.as_dot());
+            let union = union.determinize().unwrap();
+            println!("{}", union.as_dot());
+        }
+
+        assert!(union.is_total().unwrap());
+
+        Ok(())
+    }
+
+    #[test]
     fn test_intersection() -> Result<(), String> {
         let regex1 = Term::from_pattern("a").unwrap();
         let regex2 = Term::from_pattern("b").unwrap();
 
         let intersection = regex1.intersection(&vec![regex2]).unwrap();
-        assert!(intersection.is_empty());
+        assert!(intersection.is_empty().unwrap());
         assert_eq!("[]", intersection.to_pattern());
 
         Ok(())

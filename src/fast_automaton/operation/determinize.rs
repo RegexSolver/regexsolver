@@ -36,6 +36,7 @@ impl FastAutomaton {
         let mut new_states_to_add = BitSet::new();
         while let Some((states, r)) = worklist.pop_front() {
             execution_profile.assert_not_timed_out()?;
+            execution_profile.assert_max_number_of_states(new_states.len())?;
 
             if !states.is_disjoint(&accept_states) {
                 new_automaton.accept_states.insert(r);

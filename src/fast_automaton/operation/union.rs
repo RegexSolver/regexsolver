@@ -60,8 +60,7 @@ impl FastAutomaton {
         new_states: &mut IntMap<usize, usize>,
         condition_converter: &ConditionConverter,
     ) -> Result<IntSet<usize>, EngineError> {
-        let mut imcomplete_states =
-            IntSet::with_capacity(other.out_degree(other.start_state) + 1);
+        let mut imcomplete_states = IntSet::with_capacity(other.out_degree(other.start_state) + 1);
         if other.is_accepted(other.start_state) {
             self.accept(self.start_state);
         }
@@ -158,6 +157,9 @@ impl FastAutomaton {
      * - the accept states can't be merged if they have outgoing edges
      */
     pub(crate) fn union_mut(&mut self, other: &FastAutomaton) -> Result<(), EngineError> {
+        ExecutionProfile::get()
+            .assert_max_number_of_states(self.union_state_count_heuristic(other))?;
+
         if other.is_empty() || self.is_total() {
             return Ok(());
         } else if other.is_total() {
@@ -204,13 +206,88 @@ impl FastAutomaton {
             }
         }
         self.cyclic = self.cyclic || other.cyclic;
+        self.minimal = false;
         Ok(())
+    }
+
+    /// Computes the expected number of states after calling `union_mut`.
+    fn union_state_count_heuristic(&self, other: &FastAutomaton) -> usize {
+        // Edge cases
+        if other.is_empty() || self.is_total() {
+            return self.get_number_of_states();
+        } else if other.is_total() || self.is_empty() {
+            return other.get_number_of_states();
+        }
+
+        let v1 = self.get_number_of_states();
+        let v2 = other.get_number_of_states();
+
+        let self_in = self.in_degree(self.start_state);
+        let other_in = other.in_degree(other.start_state);
+
+        let mut total_delta: i32 = 0;
+
+        // --- 1. Start States Math ---
+        if self_in == 0 && other_in == 0 {
+            total_delta -= 1;
+        } else if self_in != 0 && other_in != 0 {
+            total_delta += 1;
+        }
+
+        // Track which 'other' states are already mapped in the start phase
+        // so we don't double-count them when calculating accept state savings.
+        let mut mapped_other_states = std::collections::HashSet::new();
+        mapped_other_states.insert(other.start_state);
+
+        if other_in != 0 {
+            for (_, to_state) in other.transitions_from(other.start_state) {
+                mapped_other_states.insert(*to_state);
+            }
+        }
+
+        // --- 2. Accept States Math ---
+        // Gather self's accept states. If other.start_state is accepted,
+        // it virtually triggers self.accept(self.start_state) early.
+        let mut self_accepts: std::collections::HashSet<usize> =
+            self.accept_states.iter().cloned().collect();
+
+        if other.is_accepted(other.start_state) {
+            self_accepts.insert(self.start_state);
+        }
+
+        let case_a = self_in == 0 && other_in == 0;
+        let mut n = 0;
+
+        for &state in &self_accepts {
+            let is_incomplete = case_a && state == self.start_state;
+            if self.out_degree(state) == 0 && !is_incomplete {
+                n += 1;
+            }
+        }
+
+        let has_acc_target = n >= 1;
+
+        // If n > 1, we replace `n` states with exactly 1 unified state.
+        if n > 1 {
+            total_delta += 1 - n;
+        }
+
+        // Calculate mappings for other's accept states
+        if has_acc_target {
+            for &state in &other.accept_states {
+                if other.out_degree(state) == 0 && !mapped_other_states.contains(&state) {
+                    total_delta -= 1;
+                }
+            }
+        }
+
+        (v1 as i32 + v2 as i32 + total_delta) as usize
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::regex::RegularExpression;
+    use crate::{fast_automaton::FastAutomaton, regex::RegularExpression};
 
     #[test]
     fn test_simple_alternation_regex_1() -> Result<(), String> {
@@ -370,5 +447,98 @@ mod tests {
         assert!(automaton.is_match("u"));
         assert!(automaton.is_match(""));
         Ok(())
+    }
+
+    #[test]
+    fn test_heuristic() -> Result<(), String> {
+        assert_heuristic(".{900}", "[a-z]+");
+
+        assert_heuristic("[a-z]+@", "[0-9]+[A-Z]*");
+
+        assert_heuristic("a+(ba+)*", "((a|bc)*|d)");
+
+        assert_heuristic(".*", "(ac|ads|a)*");
+
+        assert_heuristic(
+            "((aad|ads|a)*|q)",
+            r"john[!#-'\*\+\-/-9=\?\^-\u{007e}]*(\.[!#-'\*\+\-/-9=\?\^-\u{007e}](\.?[!#-'\*\+\-/-9=\?\^-\u{007e}])*)?\.?doe@example\.com",
+        );
+
+        assert_heuristic(
+            "(?:A+(?:\\.[AB]+)*|\"(?:C|\\\\D)*\")@",
+            "(?:[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*|\"(?:[\\x01-\\x08\\x0b\\x0c\\x0e-\\x1f\\x21\\x23-\\x5b\\x5d-\\x7f]|\\\\[\\x01-\\x09\\x0b\\x0c\\x0e-\\x7f])*\")@",
+        );
+
+        assert_heuristic("((aad|ads|a)*abc.*uif(aad|ads|x)*|q)", ".*");
+
+        assert_heuristic(
+            ".{900}",
+            r"john[!#-'\*\+\-/-9=\?\^-\u{007e}]*(\.[!#-'\*\+\-/-9=\?\^-\u{007e}](\.?[!#-'\*\+\-/-9=\?\^-\u{007e}])*)?\.?doe@example\.com",
+        );
+
+        Ok(())
+    }
+
+    fn assert_heuristic(regex1: &str, regex2: &str) {
+        println!("Testing union heuristic for: '{}' | '{}'", regex1, regex2);
+
+        let automaton1 = RegularExpression::parse(regex1, false)
+            .unwrap()
+            .to_automaton()
+            .unwrap();
+
+        let automaton2 = RegularExpression::parse(regex2, false)
+            .unwrap()
+            .to_automaton()
+            .unwrap();
+
+        let test_pair = |a1: &FastAutomaton, a2: &FastAutomaton, desc: &str| {
+            let mut actual_union = a1.clone();
+            actual_union.union_mut(a2).unwrap();
+
+            let actual_states = actual_union.get_number_of_states();
+            let heuristic_states = a1.union_state_count_heuristic(a2);
+
+            assert_eq!(
+                actual_states, heuristic_states,
+                "Mismatch for {}.\nExpected (heuristic): {}\nActual (computed): {}",
+                desc, heuristic_states, actual_states
+            );
+        };
+
+        // Test standard union: A | B
+        test_pair(
+            &automaton1,
+            &automaton2,
+            &format!("'{}' | '{}'", regex1, regex2),
+        );
+
+        // Test reverse union: B | A
+        test_pair(
+            &automaton2,
+            &automaton1,
+            &format!("'{}' | '{}'", regex2, regex1),
+        );
+
+        // Test self-union: A | A
+        test_pair(
+            &automaton1,
+            &automaton1,
+            &format!("'{}' | '{}' (Self)", regex1, regex1),
+        );
+
+        // Test Empty states
+        let empty_automaton = FastAutomaton::new_empty();
+
+        test_pair(
+            &empty_automaton,
+            &automaton2,
+            &format!("Empty | '{}'", regex2),
+        );
+        test_pair(
+            &automaton1,
+            &empty_automaton,
+            &format!("'{}' | Empty", regex1),
+        );
     }
 }

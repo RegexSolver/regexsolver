@@ -92,6 +92,7 @@ impl FastAutomaton {
 
         while let Some(p) = worklist.pop_front() {
             execution_profile.assert_not_timed_out()?;
+            execution_profile.assert_max_number_of_states(new_states.len())?;
             if self.accept_states.contains(&p.1) && other.accept_states.contains(&p.2) {
                 new_automaton.accept(p.0);
             }

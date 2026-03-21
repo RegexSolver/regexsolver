@@ -25,6 +25,9 @@ impl FastAutomaton {
     }
 
     pub(crate) fn concat_mut(&mut self, other: &FastAutomaton) -> Result<(), EngineError> {
+        ExecutionProfile::get()
+            .assert_max_number_of_states(self.concat_state_count_heuristic(other))?;
+
         if other.is_empty() {
             return Ok(());
         }
@@ -123,13 +126,44 @@ impl FastAutomaton {
         }
 
         self.cyclic = self.cyclic || other.cyclic;
+        self.minimal = false;
         Ok(())
+    }
+
+    pub(crate) fn concat_state_count_heuristic(&self, other: &FastAutomaton) -> usize {
+        // Edge Case 1: If the other automaton is empty, the state count doesn't change.
+        if other.is_empty() {
+            return self.get_number_of_states();
+        }
+
+        // Edge Case 2: If this automaton is empty, the resulting state count is just the other's.
+        if self.is_empty() {
+            return other.get_number_of_states();
+        }
+
+        // Determine if we are forced to create a new state to avoid unintended loops
+        let start_state_and_accept_states_not_mergeable = other.in_degree(other.start_state) > 0
+            && self
+                .accept_states
+                .iter()
+                .cloned()
+                .any(|s| self.out_degree(s) > 0);
+
+        let v1 = self.get_number_of_states();
+        let v2 = other.get_number_of_states();
+
+        // Apply the heuristic
+        if start_state_and_accept_states_not_mergeable {
+            v1 + v2
+        } else {
+            v1 + v2 - 1
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::regex::RegularExpression;
+    use crate::{fast_automaton::FastAutomaton, regex::RegularExpression};
 
     #[test]
     fn test_simple_concatenation_regex() -> Result<(), String> {
@@ -419,6 +453,105 @@ mod tests {
         automaton.print_dot();
         assert_eq!(3, automaton.get_number_of_states());
         Ok(())
+    }
+
+    #[test]
+    fn test_heuristic() -> Result<(), String> {
+        assert_heuristic(".{900}", "[a-z]+");
+
+        assert_heuristic("[a-z]+@", "[0-9]+[A-Z]*");
+
+        assert_heuristic("a+(ba+)*", "((a|bc)*|d)");
+
+        assert_heuristic(".*", "(ac|ads|a)*");
+
+        assert_heuristic(
+            "((aad|ads|a)*|q)",
+            r"john[!#-'\*\+\-/-9=\?\^-\u{007e}]*(\.[!#-'\*\+\-/-9=\?\^-\u{007e}](\.?[!#-'\*\+\-/-9=\?\^-\u{007e}])*)?\.?doe@example\.com",
+        );
+
+        assert_heuristic(
+            "(?:A+(?:\\.[AB]+)*|\"(?:C|\\\\D)*\")@",
+            "(?:[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*|\"(?:[\\x01-\\x08\\x0b\\x0c\\x0e-\\x1f\\x21\\x23-\\x5b\\x5d-\\x7f]|\\\\[\\x01-\\x09\\x0b\\x0c\\x0e-\\x7f])*\")@",
+        );
+
+        assert_heuristic("((aad|ads|a)*abc.*uif(aad|ads|x)*|q)", ".*");
+
+        assert_heuristic(
+            ".{900}",
+            r"john[!#-'\*\+\-/-9=\?\^-\u{007e}]*(\.[!#-'\*\+\-/-9=\?\^-\u{007e}](\.?[!#-'\*\+\-/-9=\?\^-\u{007e}])*)?\.?doe@example\.com",
+        );
+
+        Ok(())
+    }
+
+    fn assert_heuristic(regex1: &str, regex2: &str) {
+        println!(
+            "Testing concat heuristic for: '{}' and '{}'",
+            regex1, regex2
+        );
+
+        let automaton1 = RegularExpression::parse(regex1, false)
+            .unwrap()
+            .to_automaton()
+            .unwrap();
+
+        let automaton2 = RegularExpression::parse(regex2, false)
+            .unwrap()
+            .to_automaton()
+            .unwrap();
+
+        // Helper closure to run the test and assert
+        let test_pair = |a1: &FastAutomaton, a2: &FastAutomaton, desc: &str| {
+            let mut actual_concat = a1.clone();
+
+            // Execute the actual mutation
+            actual_concat.concat_mut(a2).unwrap();
+
+            let actual_states = actual_concat.get_number_of_states();
+            let heuristic_states = a1.concat_state_count_heuristic(a2);
+
+            assert_eq!(
+                actual_states, heuristic_states,
+                "Mismatch for {}.\nExpected (heuristic): {}\nActual (computed): {}",
+                desc, heuristic_states, actual_states
+            );
+        };
+
+        // Test 1: regex1 + regex2
+        test_pair(
+            &automaton1,
+            &automaton2,
+            &format!("'{}' + '{}'", regex1, regex2),
+        );
+
+        // Test 2: regex2 + regex1 (Reverse order)
+        test_pair(
+            &automaton2,
+            &automaton1,
+            &format!("'{}' + '{}'", regex2, regex1),
+        );
+
+        // Test 3: regex1 + regex1 (Self-concatenation, crucial for your repeat logic)
+        test_pair(
+            &automaton1,
+            &automaton1,
+            &format!("'{}' + '{}' (Self)", regex1, regex1),
+        );
+
+        // Test 4 & 5: Empty automaton edge cases
+        let empty_automaton = FastAutomaton::new_empty();
+
+        test_pair(
+            &empty_automaton,
+            &automaton2,
+            &format!("Empty + '{}'", regex2),
+        );
+        test_pair(
+            &automaton1,
+            &empty_automaton,
+            &format!("'{}' + Empty", regex1),
+        );
     }
 }
 //(a|bc)*

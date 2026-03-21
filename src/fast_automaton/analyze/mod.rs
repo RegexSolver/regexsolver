@@ -10,13 +10,13 @@ mod length;
 mod subset;
 
 impl FastAutomaton {
-    /// Checks if the automaton matches the empty language.
+    /// Checks if the automaton matches the empty language. There can be false negative if the automaton is not minimal.
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.accept_states.is_empty()
     }
 
-    /// Checks if the automaton matches all possible strings.
+    /// Checks if the automaton matches all possible strings. There can be false negative if the automaton is not minimal.
     #[inline]
     pub fn is_total(&self) -> bool {
         if self.accept_states.contains(&self.start_state)
@@ -28,7 +28,7 @@ impl FastAutomaton {
         false
     }
 
-    /// Checks if the automaton only matches the empty string `""`.
+    /// Checks if the automaton only matches the empty string `""`. There can be false negative if the automaton is not minimal.
     #[inline]
     pub fn is_empty_string(&self) -> bool {
         self.accept_states.len() == 1

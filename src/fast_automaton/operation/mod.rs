@@ -6,6 +6,7 @@ mod concat;
 mod determinize;
 mod difference;
 mod intersection;
+mod minimize;
 mod repeat;
 mod union;
 

@@ -5,6 +5,7 @@ use super::*;
 
 impl FastAutomaton {
     /// Generates `count` strings matched by the automaton, skipping the first `offset` strings.
+    /// If the provided automaton is not deterministic, it is possible to get multiple time the same strings over multiple call with different offset.
     pub fn generate_strings(
         &self,
         count: usize,

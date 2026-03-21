@@ -34,6 +34,7 @@ pub struct FastAutomaton {
     removed_states: IntSet<State>,
     spanning_set: SpanningSet,
     deterministic: bool,
+    minimal: bool,
     cyclic: bool,
 }
 
@@ -215,6 +216,18 @@ impl FastAutomaton {
     #[inline]
     pub fn is_deterministic(&self) -> bool {
         self.deterministic
+    }
+
+    /// Assert the automaton is deterministic.
+    #[inline]
+    pub(crate) fn assert_deterministic(&self) {
+        assert!(self.deterministic, "The automaton should be deterministic.");
+    }
+
+    /// Returns `true` if the automaton is minimal.
+    #[inline]
+    pub fn is_minimal(&self) -> bool {
+        self.minimal
     }
 
     /// Returns `true` if the automaton contains at least one cycle.
