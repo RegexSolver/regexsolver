@@ -37,7 +37,7 @@ use crate::error::EngineError;
 ///     .build();
 ///
 /// execution_profile.run(|| {
-///     assert_eq!(EngineError::OperationTimeOutError, term.generate_strings(1000, 0).unwrap_err());
+///     assert_eq!(EngineError::OperationTimeOutError, term.generate_strings(1000, 0, false).unwrap_err());
 /// });
 /// ```
 #[derive(Clone, Debug)]
@@ -289,7 +289,7 @@ mod tests {
             .run(|| {
                 assert_eq!(
                     EngineError::OperationTimeOutError,
-                    term.generate_strings(100, 0).unwrap_err()
+                    term.generate_strings(100, 0, false).unwrap_err()
                 );
 
                 let run_duration = Instant::now().duration_since(start_time).as_millis();

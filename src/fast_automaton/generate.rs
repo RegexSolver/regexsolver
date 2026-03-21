@@ -8,10 +8,10 @@ impl FastAutomaton {
     /// If the provided automaton is not deterministic, it is possible to get multiple time the same strings over multiple call with different offset.
     pub fn generate_strings(
         &self,
-        count: usize,
+        limit: usize,
         mut offset: usize,
     ) -> Result<Vec<String>, EngineError> {
-        if self.is_empty() || count == 0 {
+        if self.is_empty() || limit == 0 {
             return Ok(vec![]);
         }
 
@@ -22,7 +22,7 @@ impl FastAutomaton {
 
         let mut ranges_cache = AHashMap::with_capacity(self.get_number_of_states());
         // Only allocate memory for the final `count`!
-        let mut strings = AHashSet::with_capacity(count);
+        let mut strings = AHashSet::with_capacity(limit);
         let mut visited = AHashSet::with_capacity(self.get_number_of_states());
         let mut q = VecDeque::with_capacity(self.get_number_of_states());
 
@@ -46,13 +46,13 @@ impl FastAutomaton {
                     Self::ranges_to_strings(
                         &mut strings,
                         &ranges,
-                        count,
+                        limit,
                         &mut offset,
                         &execution_profile,
                     )?;
                 }
 
-                if strings.len() >= count {
+                if strings.len() >= limit {
                     break;
                 }
             }

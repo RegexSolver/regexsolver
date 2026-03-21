@@ -68,7 +68,7 @@ pub type CharRange = RangeSet<Char>;
 ///
 ///     // Generate examples
 ///     let samples = Term::from_pattern("(x|y){1,3}")?
-///         .generate_strings(5, 0)?;
+///         .generate_strings(5, 0, false)?;
 ///     println!("Some matches: {:?}", samples);
 ///
 ///     // Equivalence & subset
@@ -363,7 +363,17 @@ impl Term {
         }
     }
 
-    /// Generates `count` strings matched by the term, skipping the first `offset` strings.
+    /// Generates up to `limit` distinct strings matched by the term, skipping the first `offset` strings.
+    ///
+    /// When paginating through a large set of generated strings, you should set `return_stable_term`
+    /// to `true` on the initial call. This instructs the engine to compile the term into a deterministic
+    /// and minimized state (a "stable term").
+    ///
+    /// Replacing your current term with this returned stable term for subsequent calls guarantees
+    /// that no strings are repeated.
+    ///
+    /// The stable term is returned as the first element of the tuple (`Some(Term)`). If the term is
+    /// already stable, or if `return_stable_term` is `false`, it returns `None` to save resources.
     ///
     /// # Example:
     ///
@@ -371,27 +381,42 @@ impl Term {
     /// use regexsolver::Term;
     ///
     /// let mut term = Term::from_pattern("(abc|de){2}").unwrap();
-    /// let mut batch: Vec<String>;
     ///
-    /// // Generate the first 2 matched strings
-    /// let (term, batch) = term.generate_strings(2, 0).unwrap();
+    /// // Generate the first 2 matched strings and request a stable term
+    /// let (stable_term, batch) = term.generate_strings(2, 0, true).unwrap();
     /// assert_eq!(2, batch.len()); // ["dede", "deabc"]
     ///
-    /// // Generate the next 2 matched strings by setting the offset
-    /// let (term, batch) = term.generate_strings(2, 2).unwrap();
+    /// // Update the term if a newly compiled stable term was returned
+    /// if let Some(t) = stable_term {
+    ///     term = t;
+    /// }
+    ///
+    /// // Generate the next 2 matched strings by setting the offset using the stable term
+    /// let (_, batch) = term.generate_strings(2, 2, false).unwrap();
     /// assert_eq!(2, batch.len()); // ["abcde", "abcabc"]
     /// ```
     pub fn generate_strings(
         &self,
-        count: usize,
+        limit: usize,
         offset: usize,
-    ) -> Result<(Term, Vec<String>), EngineError> {
-        let deterministic_minimal_automaton = self.to_deterministic_minimal_automaton()?;
-        let generated_strings = deterministic_minimal_automaton.generate_strings(count, offset)?;
-        Ok((
-            Term::Automaton(deterministic_minimal_automaton),
-            generated_strings,
-        ))
+        return_stable_term: bool,
+    ) -> Result<(Option<Term>, Vec<String>), EngineError> {
+        let automaton = self.to_automaton()?;
+        if !return_stable_term || automaton.is_deterministic() {
+            Ok((None, self.to_automaton()?.generate_strings(limit, offset)?))
+        } else {
+            let mut automaton = automaton.into_owned();
+            if !automaton.is_deterministic() {
+                automaton = automaton.determinize()?.into_owned();
+            }
+
+            if !automaton.is_minimal() {
+                automaton.minimize()?;
+            }
+
+            let generated_strings = automaton.generate_strings(limit, offset)?;
+            Ok((Some(Term::Automaton(automaton)), generated_strings))
+        }
     }
 
     /// Returns `true` if both terms accept the same language.
@@ -518,20 +543,6 @@ impl Term {
             Term::RegularExpression(regex) => Cow::Owned(regex.to_automaton()?),
             Term::Automaton(automaton) => Cow::Borrowed(automaton),
         })
-    }
-
-    /// Converts the term to a deterministic minimal [`FastAutomaton`].
-    pub fn to_deterministic_minimal_automaton(&self) -> Result<FastAutomaton, EngineError> {
-        let mut automaton = self.to_automaton()?.into_owned();
-        if !automaton.is_deterministic() {
-            automaton = automaton.determinize()?.into_owned();
-        }
-
-        if !automaton.is_minimal() {
-            automaton.minimize()?;
-        }
-
-        Ok(automaton)
     }
 
     /// Converts the term to a [`RegularExpression`].
