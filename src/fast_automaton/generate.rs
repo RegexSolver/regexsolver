@@ -1,7 +1,36 @@
 use crate::{EngineError, execution_profile::ExecutionProfile};
-use ahash::AHashSet;
+use ahash::{AHashSet, RandomState};
+use indexmap::IndexSet;
 
 use super::*;
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
+
+#[derive(Clone, Eq, PartialEq)]
+struct QueueItem {
+    score: usize,
+    depth: usize,
+    state: usize,
+    ranges: Vec<CharRange>,
+    hash: u64,
+}
+
+impl Ord for QueueItem {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other
+            .score
+            .cmp(&self.score)
+            .then_with(|| self.depth.cmp(&other.depth))
+            .then_with(|| self.state.cmp(&other.state))
+            .then_with(|| self.hash.cmp(&other.hash))
+    }
+}
+
+impl PartialOrd for QueueItem {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
 impl FastAutomaton {
     /// Generates `count` strings matched by the automaton, skipping the first `offset` strings.
@@ -16,27 +45,71 @@ impl FastAutomaton {
         }
 
         let (_, max) = self.get_length();
-        let max_len = max.unwrap_or(u32::MAX);
+        let max_len = max.unwrap_or(u32::MAX) as usize;
 
         let execution_profile = ExecutionProfile::get();
+        let num_states = self.transitions.len();
 
-        let mut ranges_cache = AHashMap::with_capacity(self.get_number_of_states());
-        // Only allocate memory for the final `count`!
-        let mut strings = AHashSet::with_capacity(limit);
-        let mut visited = AHashSet::with_capacity(self.get_number_of_states());
-        let mut q = VecDeque::with_capacity(self.get_number_of_states());
+        // -----------------------------------------------------------------
+        // 1. REVERSE BFS: Precalculate exact distances to Accept State
+        // -----------------------------------------------------------------
+        let mut incoming = vec![vec![]; num_states];
+        let mut dist_q = std::collections::VecDeque::new();
+        let mut dist = vec![usize::MAX; num_states];
 
-        q.push_back((self.get_start_state(), vec![], 0u64));
+        for state in self.states() {
+            if self.is_accepted(state as _) {
+                dist[state] = 0;
+                dist_q.push_back(state);
+            }
+            for (_cond, &to_state) in self.transitions_from(state as _) {
+                incoming[to_state].push(state);
+            }
+        }
 
-        while let Some((state, ranges, h)) = q.pop_front() {
+        while let Some(state) = dist_q.pop_front() {
+            let d = dist[state];
+            for &prev in &incoming[state] {
+                if dist[prev] == usize::MAX {
+                    dist[prev] = d + 1;
+                    dist_q.push_back(prev);
+                }
+            }
+        }
+
+        // -----------------------------------------------------------------
+        // 2. A* SEARCH: Find matching strings instantly
+        // -----------------------------------------------------------------
+        let mut ranges_cache = AHashMap::with_capacity(num_states);
+        let mut strings = IndexSet::with_capacity_and_hasher(limit, RandomState::default());
+        let mut visited = AHashSet::with_capacity(num_states);
+
+        let mut q = BinaryHeap::new();
+        let start_state = self.get_start_state();
+
+        // If the start state can't reach an accept state, exit immediately
+        if dist[start_state] != usize::MAX {
+            q.push(QueueItem {
+                score: dist[start_state],
+                depth: 0,
+                state: start_state,
+                ranges: vec![],
+                hash: 0u64,
+            });
+        }
+
+        while let Some(QueueItem {
+            score: _,
+            depth: current_depth,
+            state,
+            mut ranges,
+            hash: h,
+        }) = q.pop()
+        {
             execution_profile.assert_not_timed_out()?;
 
-            if ranges.len() > max_len as usize {
-                continue;
-            }
-
             if self.is_accepted(state) {
-                if ranges.is_empty() {
+                if current_depth == 0 {
                     if offset > 0 {
                         offset -= 1;
                     } else {
@@ -57,31 +130,64 @@ impl FastAutomaton {
                 }
             }
 
+            if current_depth >= max_len {
+                continue;
+            }
+
+            let next_depth = current_depth + 1;
+            let mut valid_transitions = Vec::new();
+
             for (cond, &to_state) in self.transitions_from(state) {
+                let to_state_usize = to_state;
+
+                // DEAD-END PRUNING: Instantly kill paths that cannot accept
+                if dist[to_state_usize] == usize::MAX {
+                    continue;
+                }
+
                 let hash =
                     Self::path_mix(h, Self::mix64(state as u64 ^ Self::mix64(to_state as u64)));
 
-                if visited.insert((to_state, ranges.len() + 1, hash)) {
-                    let mut new_ranges = ranges.clone();
-                    new_ranges.push(
-                        ranges_cache
-                            .entry(cond)
-                            .or_insert_with(|| cond.to_range(&self.spanning_set).unwrap())
-                            .clone(),
-                    );
+                if visited.insert((to_state, next_depth, hash)) {
+                    let range = ranges_cache
+                        .entry(cond)
+                        .or_insert_with(|| cond.to_range(&self.spanning_set).unwrap())
+                        .clone();
 
-                    q.push_back((to_state, new_ranges, hash));
+                    valid_transitions.push((to_state_usize, range, hash));
                 }
+            }
+
+            // Vector Reuse Optimization
+            if let Some((last_state, last_range, last_hash)) = valid_transitions.pop() {
+                for (to_state, range, hash) in valid_transitions {
+                    let mut new_ranges = ranges.clone();
+                    new_ranges.push(range);
+                    q.push(QueueItem {
+                        score: next_depth + dist[to_state], // A* Score Formula
+                        depth: next_depth,
+                        state: to_state,
+                        ranges: new_ranges,
+                        hash,
+                    });
+                }
+
+                ranges.push(last_range);
+                q.push(QueueItem {
+                    score: next_depth + dist[last_state], // A* Score Formula
+                    depth: next_depth,
+                    state: last_state,
+                    ranges,
+                    hash: last_hash,
+                });
             }
         }
 
-        let mut strings: Vec<String> = strings.into_iter().collect();
-        strings.sort_unstable_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
-        Ok(strings)
+        Ok(strings.into_iter().collect())
     }
 
     fn ranges_to_strings(
-        strings: &mut AHashSet<String>,
+        strings: &mut IndexSet<String, RandomState>,
         ranges: &Vec<CharRange>,
         count: usize,
         offset: &mut usize,
@@ -91,27 +197,21 @@ impl FastAutomaton {
             return Ok(());
         }
 
-        // Precompute the lengths of each range to avoid repeated iteration overhead
         let range_lengths: Vec<usize> = ranges
             .iter()
             .map(|r| r.get_cardinality() as usize)
             .collect();
 
-        // Calculate the total Cartesian combinations this path will yield
         let mut total_combinations = 1usize;
         for &len in &range_lengths {
             total_combinations = total_combinations.saturating_mul(len);
         }
 
-        // Analytical skip: if this entire subtree's yield is within the offset,
-        // subtract it and skip without doing any string allocations!
         if *offset >= total_combinations {
             *offset -= total_combinations;
             return Ok(());
         }
 
-        // DFS generation using a single shared String buffer.
-        // This is significantly more memory efficient than building Vecs level by level.
         let mut current_str = String::with_capacity(ranges.len());
         Self::generate_combinations(
             ranges,
@@ -131,7 +231,7 @@ impl FastAutomaton {
         range_lengths: &[usize],
         depth: usize,
         current_str: &mut String,
-        strings: &mut AHashSet<String>,
+        strings: &mut IndexSet<String, RandomState>,
         count: usize,
         offset: &mut usize,
         execution_profile: &ExecutionProfile,
@@ -207,7 +307,39 @@ mod tests {
     use regex::Regex;
 
     #[test]
-    fn test_generate_strings() -> Result<(), String> {
+    fn test_generate_strings_1() -> Result<(), String> {
+        let automaton =
+            RegularExpression::parse(".*ab.*c(de|fg).*dab.*c(de|fg).*ab.*c(de|fg).*dab.*c", true)
+                .unwrap()
+                .to_automaton()
+                .unwrap();
+
+        let automaton = automaton.determinize().unwrap();
+        automaton.generate_strings(30, 0).unwrap();
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_generate_strings_2() -> Result<(), String> {
+        let automaton = RegularExpression::parse("(abc|de){2}", true)
+            .unwrap()
+            .to_automaton()
+            .unwrap();
+
+        let automaton = automaton.determinize().unwrap();
+        let strings = automaton.generate_strings(2, 0).unwrap();
+        assert_eq!(2, strings.len());
+
+        let strings = automaton.generate_strings(2, 2).unwrap();
+        assert_eq!(2, strings.len());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_generate_strings_3() -> Result<(), String> {
+        assert_generate_strings(r"<([A-Za-z][A-Za-z0-9]*)[^>]*?/>", 500);
         assert_generate_strings("a{100}[a-z]", 100);
         assert_generate_strings("(ab|cd)e", 100);
         assert_generate_strings("[a-z]+", 100);
@@ -294,8 +426,6 @@ mod tests {
         let mut combined = chunk1;
         combined.extend(chunk2);
         combined.extend(chunk3);
-
-        combined.sort_unstable_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
 
         // Prove that generating in chunks perfectly matches the bulk generation
         assert_eq!(
