@@ -1,23 +1,22 @@
 use super::*;
 
 mod state_elimination;
-mod transform;
 
 impl FastAutomaton {
-    /// Converts the term to a [`RegularExpression`].
+    /// Converts the automaton to a [`RegularExpression`].
     pub fn to_regex(&self) -> RegularExpression {
-        let transformed_automaton = transform::transform(self);
-        state_elimination::convert_to_regex(&transformed_automaton)
+        state_elimination::convert_to_regex(self)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use ::regex::Regex;
+
     use super::*;
 
     #[test]
     fn test_convert() -> Result<(), String> {
-        
         assert_convert(".*u(ab|de)");
         assert_convert(".*sf.*uif(ab|de)");
 
@@ -160,6 +159,31 @@ mod tests {
         let result = result.to_regex();
 
         assert_eq!(".*(abc.*def|def.*abc).*", result.to_string());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_convert_after_operation_5() -> Result<(), String> {
+        let automaton = RegularExpression::parse(".*abc.*", false)
+            .unwrap()
+            .to_automaton()
+            .unwrap();
+        let mut automaton = automaton.determinize().unwrap().into_owned();
+
+        automaton.complement().unwrap();
+
+        let result = format!("^{}$", automaton.to_regex().to_string());
+
+        println!("{result}");
+
+        let result = Regex::new(&result).unwrap();
+
+        assert!(!result.is_match("abc"));
+        assert!(!result.is_match("2374abc012"));
+
+        assert!(result.is_match("bc"));
+        assert!(result.is_match("237a4bc012"));
 
         Ok(())
     }
