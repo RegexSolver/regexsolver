@@ -2,17 +2,17 @@ use std::slice::Iter;
 
 use ahash::AHashSet;
 
-#[cfg(feature = "serializable")]
-use serde::{Deserialize, Serialize};
-
 use crate::CharRange;
 
 /// Contains a set of [`CharRange`] that span all the transition of a [`crate::FastAutomaton`].
-#[cfg_attr(feature = "serializable", derive(Serialize, Deserialize))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SpanningSet(Vec<CharRange>, CharRange);
 
 impl SpanningSet {
+    pub fn new(ranges: Vec<CharRange>, rest: CharRange) -> Self {
+        SpanningSet(ranges, rest)
+    }
+
     pub fn new_empty() -> Self {
         SpanningSet(vec![], CharRange::total())
     }

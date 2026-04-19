@@ -20,8 +20,6 @@ pub mod condition;
 mod convert;
 mod generate;
 mod operation;
-#[cfg(feature = "serializable")]
-pub mod serializer;
 pub mod spanning_set;
 
 /// Represent a finite state automaton.

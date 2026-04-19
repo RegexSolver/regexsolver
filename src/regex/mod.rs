@@ -11,8 +11,6 @@ use super::*;
 mod analyze;
 mod builder;
 mod operation;
-#[cfg(feature = "serializable")]
-mod serializer;
 
 /// Represent a regular expression.
 #[derive(Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]

@@ -10,12 +10,6 @@ description = "High-performance Rust library for building, combining, and analyz
 readme = "README.md"
 
 [dependencies]
-serde = { version = "1.0", features = ["derive"], optional = true }
-ciborium = { version = "0.2.2", optional = true }
-z85 = { version = "3.0.5", optional = true }
-flate2 = { version = "1.0.30", features = [
-    "zlib-ng",
-], default-features = false, optional = true }
 nohash-hasher = "0.2"
 ahash = "0.8.11"
 log = "0.4.21"
@@ -32,17 +26,6 @@ indexmap = "2.13.0"
 criterion = { version = "0.5", features = ["html_reports"] }
 env_logger = "0.11.3"
 serde_json = "1.0.114"
-
-
-[features]
-default = []
-serializable = [
-    "regex-charclass/serde",
-    "dep:serde",
-    "dep:ciborium",
-    "dep:z85",
-    "dep:flate2",
-]
 
 [[bench]]
 name = "my_benchmark"

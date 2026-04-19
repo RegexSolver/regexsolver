@@ -12,8 +12,6 @@ use nohash_hasher::NoHashHasher;
 use rayon::prelude::*;
 use regex::RegularExpression;
 use regex_charclass::{char::Char, irange::RangeSet};
-#[cfg(feature = "serializable")]
-use serde::{Deserialize, Serialize};
 
 use crate::execution_profile::ExecutionProfile;
 
@@ -83,13 +81,9 @@ pub type CharRange = RangeSet<Char>;
 /// ```
 ///
 /// To put constraint and limitation on the execution of operations please refer to [`ExecutionProfile`].
-#[cfg_attr(feature = "serializable", derive(Serialize, Deserialize))]
 #[derive(Clone, PartialEq, Eq, Debug)]
-#[cfg_attr(feature = "serializable", serde(tag = "type", content = "value"))]
 pub enum Term {
-    #[cfg_attr(feature = "serializable", serde(rename = "regex"))]
     RegularExpression(RegularExpression),
-    #[cfg_attr(feature = "serializable", serde(rename = "fair"))]
     Automaton(FastAutomaton),
 }
 
