@@ -11,7 +11,7 @@ mod repeat;
 mod union;
 
 impl FastAutomaton {
-    pub(crate) fn remove_dead_transitions(&mut self) {
+    pub fn remove_dead_transitions(&mut self) {
         if !self.is_empty() {
             let reacheable_states = self.get_reachable_states();
 
