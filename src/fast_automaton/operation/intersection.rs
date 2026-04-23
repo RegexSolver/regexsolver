@@ -123,7 +123,7 @@ impl FastAutomaton {
             }
         }
         new_automaton.spanning_set = new_spanning_set;
-        new_automaton.remove_dead_transitions();
+        new_automaton.remove_unreachable_states();
         Ok(Cow::Owned(new_automaton))
     }
 
