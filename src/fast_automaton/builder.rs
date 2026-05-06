@@ -80,6 +80,14 @@ impl FastAutomaton {
         self.accept_states.insert(state);
     }
 
+    /// Marks the provided state as a non-accepting state.
+    #[inline]
+    pub fn unaccept(&mut self, state: State) {
+        self.assert_state_exists(state);
+        self.minimal = false;
+        self.accept_states.remove(&state);
+    }
+
     /// Creates a new transition with the given condition; the condition must follow the automaton’s current spanning set.
     ///
     /// This method accepts a [`Condition`] rather than a raw character set. To build a [`Condition`], call:
