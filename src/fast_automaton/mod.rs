@@ -218,7 +218,7 @@ impl FastAutomaton {
 
     /// Assert the automaton is deterministic.
     #[inline]
-    pub(crate) fn assert_deterministic(&self) {
+    pub fn assert_deterministic(&self) {
         assert!(self.deterministic, "The automaton should be deterministic.");
     }
 
