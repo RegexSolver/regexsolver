@@ -124,6 +124,7 @@ impl FastAutomaton {
         }
         new_automaton.spanning_set = new_spanning_set;
         new_automaton.remove_unreachable_states();
+        new_automaton.cyclic = new_automaton.detect_cyclic();
         Ok(Cow::Owned(new_automaton))
     }
 
@@ -212,6 +213,30 @@ impl FastAutomaton {
 #[cfg(test)]
 mod tests {
     use crate::regex::RegularExpression;
+
+    // Regression: `intersection` builds its result from `new_empty()`
+    // (cyclic=false) and used to leave the flag at false even when the
+    // result contained cycles. `Term::difference` and `get_cardinality` both
+    // branch on `is_cyclic`; a stale false would route them incorrectly.
+    // Fixed by recomputing the flag at the end of `intersection_internal`.
+    #[test]
+    fn intersection_recomputes_cyclic_flag() {
+        let a_star = RegularExpression::parse("a*", false)
+            .unwrap()
+            .to_automaton()
+            .unwrap();
+        assert!(
+            a_star.is_cyclic(),
+            "precondition: a* should be cyclic in the source automaton"
+        );
+
+        // a* ∩ a* = a*, which is cyclic.
+        let inter = a_star.intersection(&a_star).unwrap();
+        assert!(
+            inter.is_cyclic(),
+            "intersection of two cyclic automata accepting a* should be cyclic"
+        );
+    }
 
     #[test]
     fn test_simple_intersection_regex_1() -> Result<(), String> {

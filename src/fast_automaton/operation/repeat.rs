@@ -22,6 +22,16 @@ impl FastAutomaton {
             return Ok(());
         }
 
+        // Empty language: ∅⁰ = {""}, ∅ⁿ = ∅ for n ≥ 1. The general algorithm
+        // below assumes at least one accept state when installing loop-backs
+        // for unbounded repeats; bail out here before it can panic.
+        if self.accept_states.is_empty() {
+            if min == 0 {
+                self.accept(self.start_state);
+            }
+            return Ok(());
+        }
+
         let automaton_to_repeat = self.clone();
 
         if min == 0 && self.in_degree(self.start_state) != 0 {
@@ -194,7 +204,50 @@ impl FastAutomaton {
 
 #[cfg(test)]
 mod tests {
+    use crate::fast_automaton::FastAutomaton;
     use crate::regex::RegularExpression;
+
+    // BUG: `repeat(0, Some(0))` on a non-empty language returns L ∪ {""}
+    // instead of just {""}. After the (effectively no-op) main loop, the
+    // code unconditionally calls `accept(start_state)` when min == 0,
+    // adding "" to the language WITHOUT first reducing the automaton to
+    // {""}. The result is the union of the original language and the
+    // empty string.
+    //
+    // Repro: "abc".repeat(0, Some(0)) should match "" only; it currently
+    // also matches "abc".
+    #[test]
+    #[ignore = "known bug: repeat(0, 0) returns L ∪ {\"\"} instead of {\"\"}"]
+    fn bug_repeat_zero_zero_on_non_empty() {
+        let a = RegularExpression::parse("abc", false)
+            .unwrap()
+            .to_automaton()
+            .unwrap();
+        let r = a.repeat(0, Some(0)).unwrap();
+        assert!(r.is_match(""), "L^0 must contain \"\"");
+        assert!(
+            !r.is_match("abc"),
+            "L^0 must NOT contain L (got 'abc' match)"
+        );
+    }
+
+    // Regression: empty.repeat(_, None) used to panic on
+    // `accept_states.iter().next().unwrap()` at repeat.rs:63 because the
+    // unbounded-repeat branch assumed at least one accept state. Language
+    // theory: ∅* = {""} and ∅⁺ = ∅; both must be returnable without panic.
+    #[test]
+    fn empty_repeat_unbounded_does_not_panic() {
+        let empty = FastAutomaton::new_empty();
+        // Expected: ∅* = {""}.
+        let r = empty.repeat(0, None).expect("should not error");
+        assert!(r.is_match(""));
+        assert!(!r.is_match("a"));
+
+        // Expected: ∅⁺ = ∅.
+        let r = empty.repeat(1, None).expect("should not error");
+        assert!(!r.is_match(""));
+        assert!(!r.is_match("a"));
+    }
 
     #[test]
     fn test_repeat_1() -> Result<(), String> {

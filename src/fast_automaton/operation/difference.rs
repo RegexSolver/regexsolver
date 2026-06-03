@@ -5,9 +5,10 @@ use crate::EngineError;
 use super::*;
 
 impl FastAutomaton {
-    /// Totalize the automaton; it must be deterministic.
+    /// Totalize the automaton. Precondition: `self.deterministic` is true
+    /// (the only caller, `complement`, determinizes first).
     fn totalize(&mut self) -> Result<(), EngineError> {
-        self.assert_deterministic();
+        debug_assert!(self.deterministic, "totalize requires a DFA");
 
         let crash_state = self.new_state();
         let mut transitions_to_crash_state: IntMap<State, Condition> =
@@ -38,14 +39,23 @@ impl FastAutomaton {
         self.apply_new_spanning_set(&new_spanning_set)?;
 
         if self.in_degree(crash_state) == 1 {
+            // Only the self-loop points to crash; nothing else needs it.
             self.remove_state(crash_state);
+        } else {
+            // crash_state has incoming edges from real states and a total
+            // self-loop, so the automaton now contains a cycle.
+            self.cyclic = true;
         }
         Ok(())
     }
 
-    /// Complements the automaton; it must be deterministic.
+    /// Complements the automaton.
+    ///
+    /// If `self` is non-deterministic, it is determinized in place first.
     pub fn complement(&mut self) -> Result<(), EngineError> {
-        self.assert_deterministic();
+        if !self.deterministic {
+            *self = self.determinize()?.into_owned();
+        }
         self.totalize()?;
 
         let mut new_accept_states = IntSet::default();
@@ -60,16 +70,51 @@ impl FastAutomaton {
         Ok(())
     }
 
-    /// Computes the difference between `self` and `other`. `other` must be deterministic.
+    /// Computes the difference between `self` and `other`.
+    ///
+    /// If `other` is non-deterministic, it is determinized first.
     pub fn difference(&self, other: &FastAutomaton) -> Result<FastAutomaton, EngineError> {
-        other.assert_deterministic();
-        let mut complement = other.clone();
-        match complement.complement() {
-            Ok(()) => self.intersection(&complement),
-            Err(err) => Err(err),
-        }
+        let mut complement = other.determinize()?.into_owned();
+        complement.complement()?;
+        self.intersection(&complement)
     }
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use crate::fast_automaton::FastAutomaton;
+    use crate::regex::RegularExpression;
+
+    // Regression: `totalize` adds a `crash_state` with a total self-loop
+    // whenever the input isn't already total. That self-loop makes the
+    // automaton cyclic. The flag is now updated when the crash state
+    // survives.
+    #[test]
+    fn complement_updates_cyclic_flag() {
+        let mut a = RegularExpression::parse("abc", false)
+            .unwrap()
+            .to_automaton()
+            .unwrap();
+        assert!(!a.is_cyclic(), "precondition: 'abc' is acyclic");
+
+        a.complement().unwrap();
+
+        assert!(a.is_match("x"));
+        assert!(a.is_match("xx"));
+        assert!(a.is_match("xxxxxxxxxx"));
+
+        assert!(
+            a.is_cyclic(),
+            "complement of finite acyclic must be cyclic (crash self-loop)"
+        );
+    }
+
+    // Regression: empty.complement() = Σ* which is cyclic. Same root cause
+    // as above plus `new_total` flag fix.
+    #[test]
+    fn complement_of_empty_is_cyclic() {
+        let mut a = FastAutomaton::new_empty();
+        a.complement().unwrap();
+        assert!(a.is_cyclic(), "Σ* must report cyclic");
+    }
+}

@@ -38,6 +38,7 @@ impl FastAutomaton {
         automaton.accept(automaton.start_state);
         automaton.add_transition(0, 0, &Condition::total(&automaton.spanning_set));
         automaton.minimal = true;
+        automaton.cyclic = true;
         automaton
     }
 
@@ -162,6 +163,39 @@ impl FastAutomaton {
                 v.insert(new_cond.clone());
             }
         };
+    }
+
+    /// Adds a transition, but refuses if it would turn a DFA into an NFA.
+    ///
+    /// On `Err(DeterminismLost)` the automaton is left untouched; on `Ok`,
+    /// the transition has been added and `is_deterministic()` still holds
+    /// (provided it held before the call). This is the opt-in strict
+    /// counterpart to [`add_transition`](Self::add_transition).
+    pub fn try_add_transition(
+        &mut self,
+        from_state: State,
+        to_state: State,
+        new_cond: &Condition,
+    ) -> Result<(), super::DeterminismLost> {
+        self.assert_state_exists(from_state);
+        if from_state != to_state {
+            self.assert_state_exists(to_state);
+        }
+        if new_cond.is_empty() {
+            return Ok(());
+        }
+        if self.deterministic {
+            for (condition, state) in self.transitions_from(from_state) {
+                if *state == to_state {
+                    continue;
+                }
+                if condition.has_intersection(new_cond) {
+                    return Err(super::DeterminismLost);
+                }
+            }
+        }
+        self.add_transition(from_state, to_state, new_cond);
+        Ok(())
     }
 
     /// Creates a new epsilon transition between the two states.
@@ -298,6 +332,15 @@ impl FastAutomaton {
                 transitions.remove(state);
             }
         }
+
+        for state in &states_to_remove {
+            self.transitions_in.remove(state);
+        }
+        for predecessors in self.transitions_in.values_mut() {
+            for state in &states_to_remove {
+                predecessors.remove(state);
+            }
+        }
     }
 
     /// Recompute a minimal spanning set for the automaton and apply it.
@@ -364,7 +407,41 @@ impl FastAutomaton {
 
 #[cfg(test)]
 mod tests {
+    use crate::IntSet;
+    use crate::fast_automaton::FastAutomaton;
+    use crate::fast_automaton::condition::Condition;
     use crate::regex::RegularExpression;
+
+    // Regression: `remove_states` used to skip the `transitions_in` cleanup
+    // that the single-state variant `remove_state` performs (drop entries
+    // keyed by removed states; purge them from surviving predecessor sets).
+    // Without that cleanup, `in_degree` of removed states stayed stale and
+    // any caller (repeat, concat, union, difference, to_regex) would see
+    // wrong values.
+    #[test]
+    fn remove_states_cleans_transitions_in() {
+        let mut a = FastAutomaton::new_empty();
+        let s1 = a.new_state();
+        let s2 = a.new_state();
+        let cond = Condition::total(a.get_spanning_set());
+        a.add_transition(0, s1, &cond);
+        a.add_transition(0, s2, &cond);
+        a.accept(s1);
+        a.accept(s2);
+
+        assert_eq!(a.in_degree(s1), 1);
+        assert_eq!(a.in_degree(s2), 1);
+
+        let mut to_remove = IntSet::default();
+        to_remove.insert(s1);
+        a.remove_states(&to_remove);
+
+        // After removing s1, its in_degree should report 0 (or, equivalently,
+        // queries on a removed state should be a clean no-op). Currently it
+        // still reports the pre-removal count.
+        assert_eq!(a.in_degree(s1), 0, "in_degree of removed state should be 0");
+        assert_eq!(a.in_degree(s2), 1);
+    }
 
     #[test]
     fn test_regex_build_deterministic_automaton() -> Result<(), String> {

@@ -7,8 +7,13 @@ impl FastAutomaton {
     pub fn subset(&self, other: &FastAutomaton) -> Result<bool, EngineError> {
         if self.is_empty() || other.is_total() || self == other {
             return Ok(true);
-        } else if other.is_empty() || self.is_total() {
+        } else if other.is_empty() {
             return Ok(false);
+        } else if self.is_total() {
+            // self ⊆ other iff Σ* ⊆ other iff other = Σ*. We already failed
+            // the cheap `other.is_total()` check above; that check is sound
+            // but conservative on NFAs, so retry on the determinized form.
+            return Ok(other.determinize()?.is_total());
         }
 
         let mut other = other.determinize()?.into_owned();
@@ -80,10 +85,10 @@ mod tests {
     ) {
         println!("{regex_1} and {regex_2}");
         let automaton_1 = regex_1.to_automaton().unwrap();
-        assert_eq!(true, automaton_1.subset(&automaton_1).unwrap());
+        assert!(automaton_1.subset(&automaton_1).unwrap());
 
         let automaton_2 = regex_2.to_automaton().unwrap();
-        assert_eq!(true, automaton_2.subset(&automaton_2).unwrap());
+        assert!(automaton_2.subset(&automaton_2).unwrap());
 
         assert_eq!(
             expected_1_2,

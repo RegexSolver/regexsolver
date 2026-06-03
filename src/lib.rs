@@ -460,54 +460,32 @@ impl Term {
     /// Checks if the term matches the empty language.
     pub fn is_empty(&self) -> Result<bool, EngineError> {
         Ok(match self {
-            Term::RegularExpression(regular_expression) => regular_expression.is_empty(),
-            Term::Automaton(fast_automaton) => {
-                if fast_automaton.is_minimal() {
-                    fast_automaton.is_empty()
-                } else if fast_automaton.is_empty() {
-                    true
-                } else {
-                    let mut fast_automaton = fast_automaton.determinize()?.into_owned();
-                    fast_automaton.minimize()?;
-                    fast_automaton.is_empty()
-                }
-            }
+            Term::RegularExpression(regex) => regex.is_empty(),
+            Term::Automaton(automaton) => automaton.is_empty(),
         })
     }
 
     /// Checks if the term matches all possible strings.
     pub fn is_total(&self) -> Result<bool, EngineError> {
-        Ok(match self {
-            Term::RegularExpression(regular_expression) => regular_expression.is_total(),
-            Term::Automaton(fast_automaton) => {
-                if fast_automaton.is_minimal() {
-                    fast_automaton.is_total()
-                } else if fast_automaton.is_total() {
-                    true
+        match self {
+            Term::RegularExpression(regex) => Ok(regex.is_total()),
+            Term::Automaton(automaton) => {
+                if automaton.is_total() {
+                    Ok(true)
+                } else if automaton.is_deterministic() {
+                    Ok(false)
                 } else {
-                    let mut fast_automaton = fast_automaton.determinize()?.into_owned();
-                    fast_automaton.minimize()?;
-                    fast_automaton.is_total()
+                    Ok(automaton.determinize()?.is_total())
                 }
             }
-        })
+        }
     }
 
     /// Checks if the term matches only the empty string `""`.
     pub fn is_empty_string(&self) -> Result<bool, EngineError> {
         Ok(match self {
-            Term::RegularExpression(regular_expression) => regular_expression.is_empty_string(),
-            Term::Automaton(fast_automaton) => {
-                if fast_automaton.is_minimal() {
-                    fast_automaton.is_empty_string()
-                } else if fast_automaton.is_empty_string() {
-                    true
-                } else {
-                    let mut fast_automaton = fast_automaton.determinize()?.into_owned();
-                    fast_automaton.minimize()?;
-                    fast_automaton.is_empty_string()
-                }
-            }
+            Term::RegularExpression(regex) => regex.is_empty_string(),
+            Term::Automaton(automaton) => automaton.is_empty_string(),
         })
     }
 
@@ -619,7 +597,7 @@ mod tests {
         let complement = term.complement().unwrap();
 
         assert!(
-            term.intersection(&[complement.clone()])
+            term.intersection(std::slice::from_ref(&complement))
                 .unwrap()
                 .is_empty()
                 .unwrap()
@@ -648,7 +626,7 @@ mod tests {
         let regex1 = Term::from_pattern("a").unwrap();
         let regex2 = Term::from_pattern("b").unwrap();
 
-        let intersection = regex1.intersection(&vec![regex2]).unwrap();
+        let intersection = regex1.intersection(&[regex2]).unwrap();
         assert!(intersection.is_empty().unwrap());
         assert_eq!("[]", intersection.to_pattern());
 
@@ -689,7 +667,7 @@ mod tests {
         let regex1 = Term::from_pattern("a*").unwrap();
         let regex2 = Term::from_pattern("b*").unwrap();
 
-        let result = regex1.intersection(&vec![regex2]);
+        let result = regex1.intersection(&[regex2]);
         assert!(result.is_ok());
         let result = result.unwrap().to_pattern();
         assert_eq!("", result);
@@ -702,7 +680,7 @@ mod tests {
         let regex1 = Term::from_pattern("x*").unwrap();
         let regex2 = Term::from_pattern("(xxx)*").unwrap();
 
-        let result = regex1.intersection(&vec![regex2]);
+        let result = regex1.intersection(&[regex2]);
         assert!(result.is_ok());
         let result = result.unwrap().to_pattern();
         assert_eq!("(x{3})*", result);

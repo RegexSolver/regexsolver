@@ -72,10 +72,10 @@ mod tests {
     fn assert_equivalent(regex_1: &RegularExpression, regex_2: &RegularExpression, expected: bool) {
         println!("{regex_1} and {regex_2}");
         let automaton_1 = regex_1.to_automaton().unwrap();
-        assert_eq!(true, automaton_1.equivalent(&automaton_1).unwrap());
+        assert!(automaton_1.equivalent(&automaton_1).unwrap());
 
         let automaton_2 = regex_2.to_automaton().unwrap();
-        assert_eq!(true, automaton_2.equivalent(&automaton_2).unwrap());
+        assert!(automaton_2.equivalent(&automaton_2).unwrap());
 
         assert_eq!(
             expected,

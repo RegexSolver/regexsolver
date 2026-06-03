@@ -357,12 +357,12 @@ mod tests {
         let condition_2 = Condition::from_range(range_2, used_characters).unwrap();
 
         assert_eq!(
-            Condition::empty(&used_characters),
+            Condition::empty(used_characters),
             condition_1.intersection(&condition_1.complement())
         );
 
         assert_eq!(
-            Condition::empty(&used_characters),
+            Condition::empty(used_characters),
             condition_2.intersection(&condition_2.complement())
         );
 

@@ -29,9 +29,16 @@ impl FastAutomaton {
             .assert_max_number_of_states(self.concat_state_count_heuristic(other))?;
 
         if other.is_empty() {
+            self.make_empty();
+            return Ok(());
+        } else if other.is_empty_string() {
             return Ok(());
         }
+
         if self.is_empty() {
+            self.make_empty();
+            return Ok(());
+        } else if self.is_empty_string() {
             self.apply_model(other);
             return Ok(());
         }
@@ -131,13 +138,15 @@ impl FastAutomaton {
     }
 
     pub(crate) fn concat_state_count_heuristic(&self, other: &FastAutomaton) -> usize {
-        // Edge Case 1: If the other automaton is empty, the state count doesn't change.
         if other.is_empty() {
+            return 1;
+        } else if other.is_empty_string() {
             return self.get_number_of_states();
         }
 
-        // Edge Case 2: If this automaton is empty, the resulting state count is just the other's.
         if self.is_empty() {
+            return 1;
+        } else if self.is_empty_string() {
             return other.get_number_of_states();
         }
 
@@ -164,6 +173,36 @@ impl FastAutomaton {
 #[cfg(test)]
 mod tests {
     use crate::{fast_automaton::FastAutomaton, regex::RegularExpression};
+
+    #[test]
+    fn bug_concat_empty_left() {
+        let e = FastAutomaton::new_empty();
+        let t = FastAutomaton::new_total();
+        let r = e.concat(&t).unwrap();
+        assert!(r.is_empty(), "∅ · Σ* must be ∅, got something non-empty");
+    }
+
+    #[test]
+    fn bug_concat_empty_right() {
+        let e = FastAutomaton::new_empty();
+        let t = FastAutomaton::new_total();
+        let r = t.concat(&e).unwrap();
+        assert!(r.is_empty(), "Σ* · ∅ must be ∅, got something non-empty");
+    }
+
+    #[test]
+    fn bug_term_concat_with_empty() {
+        use crate::Term;
+        let a = Term::from_automaton(
+            RegularExpression::parse("abc", false)
+                .unwrap()
+                .to_automaton()
+                .unwrap(),
+        );
+        let e = Term::from_automaton(FastAutomaton::new_empty());
+        let r = a.concat(&[e]).unwrap();
+        assert!(r.is_empty().unwrap(), "'abc' · ∅ must be ∅");
+    }
 
     #[test]
     fn test_simple_concatenation_regex() -> Result<(), String> {

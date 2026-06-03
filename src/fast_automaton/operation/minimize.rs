@@ -1,9 +1,13 @@
 use super::*;
 
 impl FastAutomaton {
-    /// Minimizes a deterministic automaton using Hopcroft's Algorithm.
+    /// Minimizes the automaton using Hopcroft's Algorithm.
+    ///
+    /// If `self` is non-deterministic, it is determinized in place first.
     pub fn minimize(&mut self) -> Result<(), EngineError> {
-        self.assert_deterministic();
+        if !self.deterministic {
+            *self = self.determinize()?.into_owned();
+        }
 
         let max_states = self.transitions.len();
 

@@ -173,7 +173,7 @@ mod tests {
 
         automaton.complement().unwrap();
 
-        let result = format!("^{}$", automaton.to_regex().to_string());
+        let result = format!("^{}$", automaton.to_regex());
 
         println!("{result}");
 

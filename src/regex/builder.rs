@@ -290,6 +290,17 @@ mod tests {
         assert!(!automaton.is_match("aAb"));
 
         assert!(RegularExpression::new("\\1").is_err());
+
+        let two_chars = RegularExpression::new("..")
+            .unwrap()
+            .to_automaton()
+            .unwrap();
+        assert!(two_chars.is_match("aé"));
+        assert!(two_chars.is_match("éa"));
+        assert!(two_chars.is_match("éé"));
+        assert!(!two_chars.is_match("é"));
+        assert!(!two_chars.is_match("aéa"));
+
         Ok(())
     }
 

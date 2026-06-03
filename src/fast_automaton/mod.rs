@@ -36,6 +36,22 @@ pub struct FastAutomaton {
     cyclic: bool,
 }
 
+/// Returned by [`FastAutomaton::try_add_transition`] when adding the requested
+/// condition would turn a DFA into an NFA. The automaton is left unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeterminismLost;
+
+impl std::fmt::Display for DeterminismLost {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "adding the transition would introduce overlapping conditions"
+        )
+    }
+}
+
+impl std::error::Error for DeterminismLost {}
+
 impl Display for FastAutomaton {
     fn fmt(&self, sb: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(sb, "digraph Automaton {{")?;
@@ -86,8 +102,12 @@ impl FastAutomaton {
     }
 
     /// Returns the number of transitions from the provided state.
+    /// Returns `0` if the state does not exist.
     #[inline]
     pub fn out_degree(&self, state: State) -> usize {
+        if !self.has_state(state) {
+            return 0;
+        }
         self.transitions[state].len()
     }
 
@@ -104,12 +124,14 @@ impl FastAutomaton {
     }
 
     /// Returns an iterator over states directly reachable from the given state in one transition.
+    /// Returns an empty iterator if the state does not exist.
     #[inline]
     pub fn direct_states(&self, state: State) -> impl Iterator<Item = State> + '_ {
-        self.transitions[state]
-            .keys()
-            .cloned()
-            .filter(|s| !self.removed_states.contains(s))
+        self.transitions.get(state).into_iter().flat_map(move |t| {
+            t.keys()
+                .copied()
+                .filter(|s| !self.removed_states.contains(s))
+        })
     }
 
     /// Returns a vector of states directly reachable from the given state in one transition.
@@ -133,22 +155,29 @@ impl FastAutomaton {
     }
 
     /// Returns a vector of transitions from the given state.
+    /// Returns an empty vector if the state does not exist.
     #[inline]
     pub fn transitions_from_vec(&self, state: State) -> Vec<(Condition, State)> {
-        self.transitions[state]
-            .iter()
-            .map(|(s, c)| (c.clone(), *s))
-            .filter(|s| !self.removed_states.contains(&s.1))
-            .collect()
+        self.transitions
+            .get(state)
+            .map(|t| {
+                t.iter()
+                    .map(|(s, c)| (c.clone(), *s))
+                    .filter(|s| !self.removed_states.contains(&s.1))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Returns an iterator over transitions from the given state.
+    /// Returns an empty iterator if the state does not exist.
     #[inline]
     pub fn transitions_from(&self, state: State) -> impl Iterator<Item = (&Condition, &State)> {
-        self.transitions[state]
-            .iter()
-            .map(|(s, c)| (c, s))
-            .filter(|s| !self.removed_states.contains(s.1))
+        self.transitions.get(state).into_iter().flat_map(move |t| {
+            t.iter()
+                .map(|(s, c)| (c, s))
+                .filter(|s| !self.removed_states.contains(s.1))
+        })
     }
 
     /// Returns `true` if there is a directed transition from `from_state` to `to_state`.
@@ -181,9 +210,12 @@ impl FastAutomaton {
     }
 
     /// Returns a reference to the condition of the directed transition between the two states, if any.
+    /// Returns `None` if either state does not exist.
     #[inline]
     pub fn get_condition(&self, from_state: State, to_state: State) -> Option<&Condition> {
-        self.transitions[from_state].get(&to_state)
+        self.transitions
+            .get(from_state)
+            .and_then(|t| t.get(&to_state))
     }
 
     /// Returns the start state.
@@ -211,15 +243,15 @@ impl FastAutomaton {
     }
 
     /// Returns `true` if the automaton is deterministic.
+    ///
+    /// Note: this flag degrades monotonically. Once `add_transition` introduces
+    /// an overlapping condition, the flag flips to `false` and is not
+    /// re-checked by `remove_transition` or `remove_state`. The automaton may
+    /// in fact be deterministic again after such removals; call
+    /// [`determinize`](Self::determinize) if you need a fresh DFA.
     #[inline]
     pub fn is_deterministic(&self) -> bool {
         self.deterministic
-    }
-
-    /// Assert the automaton is deterministic.
-    #[inline]
-    pub fn assert_deterministic(&self) {
-        assert!(self.deterministic, "The automaton should be deterministic.");
     }
 
     /// Returns `true` if the automaton is minimal.
@@ -242,30 +274,30 @@ impl FastAutomaton {
 
     /// Returns `true` if the automaton matches the given string.
     pub fn is_match(&self, string: &str) -> bool {
-        let mut worklist = VecDeque::with_capacity(self.get_number_of_states());
-        worklist.push_back((0, &self.start_state));
+        let mut current: IntSet<State> = IntSet::default();
+        current.insert(self.start_state);
 
-        while let Some((position, current_state)) = worklist.pop_back() {
-            if string.len() == position {
-                if self.accept_states.contains(current_state) {
-                    return true;
-                }
-                continue;
+        let mut next: IntSet<State> = IntSet::default();
+        for c in string.chars() {
+            if current.is_empty() {
+                return false;
             }
-            let curr_char = string.chars().nth(position).unwrap() as u32;
-            for (cond, to_state) in self.transitions_from(*current_state) {
-                if cond.has_character(&curr_char, &self.spanning_set).unwrap() {
-                    if position + 1 == string.len() {
-                        if self.accept_states.contains(to_state) {
-                            return true;
-                        }
-                    } else {
-                        worklist.push_back((position + 1, to_state));
+            let c_u32 = c as u32;
+            next.clear();
+            for &state in &current {
+                for (cond, to_state) in self.transitions_from(state) {
+                    if cond
+                        .has_character(&c_u32, &self.spanning_set)
+                        .unwrap_or(false)
+                    {
+                        next.insert(*to_state);
                     }
                 }
             }
+            std::mem::swap(&mut current, &mut next);
         }
-        false
+
+        current.iter().any(|s| self.accept_states.contains(s))
     }
 
     /// Returns the automaton's DOT representation.
@@ -310,5 +342,42 @@ mod tests {
         assert_sync::<FastAutomaton>();
 
         Ok(())
+    }
+
+    // Regression: `new_total` constructs an automaton with a total self-loop
+    // on the start state. It must report `cyclic = true` from construction.
+    #[test]
+    fn new_total_reports_cyclic() {
+        let a = FastAutomaton::new_total();
+        assert!(
+            a.is_cyclic(),
+            "new_total has a total self-loop on start, must be cyclic"
+        );
+    }
+
+    // Regression: read-only query methods used to directly index
+    // `self.transitions[state]` without checking `has_state` first, panicking
+    // on out-of-range inputs. They now return gracefully (0 / None / empty
+    // iterator).
+    #[test]
+    fn out_degree_safe_on_unknown_state() {
+        let a = FastAutomaton::new_total();
+        assert_eq!(a.out_degree(999), 0);
+    }
+
+    #[test]
+    fn get_condition_safe_on_unknown_state() {
+        let a = FastAutomaton::new_total();
+        assert!(a.get_condition(999, 0).is_none());
+        assert!(a.get_condition(0, 999).is_none());
+    }
+
+    #[test]
+    fn direct_states_safe_on_unknown_state() {
+        let a = FastAutomaton::new_total();
+        assert_eq!(a.direct_states(999).count(), 0);
+        assert_eq!(a.transitions_from(999).count(), 0);
+        assert!(a.transitions_from_vec(999).is_empty());
+        assert!(a.direct_states_vec(999).is_empty());
     }
 }
