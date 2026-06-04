@@ -26,6 +26,7 @@ indexmap = "2.13.0"
 criterion = { version = "0.5", features = ["html_reports"] }
 env_logger = "0.11.3"
 serde_json = "1.0.114"
+proptest = "1"
 
 [[bench]]
 name = "my_benchmark"

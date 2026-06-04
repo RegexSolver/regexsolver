@@ -16,7 +16,7 @@ impl FastAutomaton {
 
         // States that lie on some accepting path. Walking only these prunes
         // dead branches whose cycles cannot extend the language.
-        let live = self.get_reachable_states();
+        let live = self.get_live_states();
         if !live.contains(&self.start_state) {
             return (None, None);
         }

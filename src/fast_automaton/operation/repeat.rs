@@ -22,6 +22,23 @@ impl FastAutomaton {
             return Ok(());
         }
 
+        // r⁰ = {""} for any language (max == 0 implies min == 0 here, since
+        // min > max already returned above). Without this, the general path
+        // below would leave the original language reachable and return
+        // L ∪ {""} instead of just {""}.
+        if max_opt == Some(0) {
+            self.make_empty_string();
+            return Ok(());
+        }
+
+        // The empty-string language is a fixpoint of repetition: {""}{m,n} = {""}
+        // for any valid m ≤ n. Returning early also avoids the unbounded
+        // construction below, whose single-state "tight loop" branch would
+        // otherwise try to remove the start state and panic.
+        if self.is_empty_string() {
+            return Ok(());
+        }
+
         // Empty language: ∅⁰ = {""}, ∅ⁿ = ∅ for n ≥ 1. The general algorithm
         // below assumes at least one accept state when installing loop-backs
         // for unbounded repeats; bail out here before it can panic.
@@ -68,48 +85,67 @@ impl FastAutomaton {
         }
 
         if max_opt.is_none() {
-            let mut automaton_to_repeat = automaton_to_repeat.clone();
+            if min == 0 {
+                // r* with a start state that has no incoming edges (the
+                // in_degree > 0 case already returned above): loop the single
+                // copy in place by letting each accept state re-enter the
+                // start, and make the start accepting.
+                let mut star = automaton_to_repeat.clone();
 
-            let accept_state = *automaton_to_repeat.accept_states.iter().next().unwrap();
-            if automaton_to_repeat.accept_states.len() == 1
-                && automaton_to_repeat.out_degree(accept_state) == 0
-                && automaton_to_repeat.in_degree(automaton_to_repeat.start_state) == 0
-            {
-                automaton_to_repeat
-                    .add_epsilon_transition(accept_state, automaton_to_repeat.start_state);
-                let old_start_state = automaton_to_repeat.start_state;
-                automaton_to_repeat.start_state = accept_state;
-                automaton_to_repeat.remove_state(old_start_state);
-            } else {
-                let t = Self::transitions_from_state_set(
-                    &automaton_to_repeat.transitions,
-                    automaton_to_repeat.start_state,
-                );
-                let transitions =
-                    Self::transitions_from_state_enumerate(&t, &automaton_to_repeat.removed_states);
+                let accept_state = *star.accept_states.iter().next().unwrap();
+                if star.accept_states.len() == 1
+                    && star.out_degree(accept_state) == 0
+                    && star.in_degree(star.start_state) == 0
+                {
+                    star.add_epsilon_transition(accept_state, star.start_state);
+                    let old_start_state = star.start_state;
+                    star.start_state = accept_state;
+                    star.remove_state(old_start_state);
+                } else {
+                    let t = Self::transitions_from_state_set(&star.transitions, star.start_state);
+                    let transitions =
+                        Self::transitions_from_state_enumerate(&t, &star.removed_states);
 
-                for state in automaton_to_repeat.accept_states.clone() {
-                    for &(to_state, condition) in &transitions {
-                        automaton_to_repeat.add_transition(state, *to_state, condition);
+                    for state in star.accept_states.clone() {
+                        for &(to_state, condition) in &transitions {
+                            star.add_transition(state, *to_state, condition);
+                        }
                     }
+
+                    star.accept(star.get_start_state());
                 }
 
-                automaton_to_repeat.accept(automaton_to_repeat.get_start_state());
-            }
-            automaton_to_repeat.cyclic = true;
-
-            if min == 0 {
-                self.apply_model(&automaton_to_repeat);
+                self.apply_model(&star);
             } else {
-                self.concat_mut(&automaton_to_repeat)?;
+                // r{min,} = rᵐⁱⁿ · r*. Build the star part via recursion rather
+                // than looping `automaton_to_repeat` in place: when the start
+                // state has incoming edges, `repeat(0, None)` introduces a
+                // clean accepting start instead of marking the looping start
+                // accepting, which would otherwise accept partial copies
+                // (e.g. `(a*b)+` matching "aaba").
+                let star = automaton_to_repeat.repeat(0, None)?;
+                self.concat_mut(&star)?;
             }
 
             return Ok(());
         }
 
+        // Finite maximum: append the optional copies one at a time, keeping
+        // `self` with a single accept frontier so the chain stays linear, and
+        // collect each copy boundary in `end_states` to mark accepting at the
+        // end (stopping after any copy in `min..=max` is valid).
+        //
+        // When the copy's start state has incoming edges, merging it into the
+        // previous copy's accept state would let that (re-marked accepting)
+        // junction inherit the copy's own transitions and accept partial
+        // copies (e.g. `(a*b){1,3}` matching "ba"). In that case we force a
+        // non-merging concatenation so each boundary is a clean accept state
+        // reached by an epsilon transition.
+        let force_no_merge =
+            automaton_to_repeat.in_degree(automaton_to_repeat.start_state) > 0;
         let mut end_states = self.accept_states.iter().cloned().collect::<Vec<_>>();
         for _ in cmp::max(min, 1)..max_opt.unwrap() {
-            self.concat_mut(&automaton_to_repeat)?;
+            self.concat_mut_with(&automaton_to_repeat, force_no_merge)?;
             end_states.extend(self.accept_states.iter());
         }
         self.accept_states.extend(end_states);
@@ -127,6 +163,11 @@ impl FastAutomaton {
             && min > max
         {
             return 0;
+        }
+
+        // 1b. r⁰ = {""} (a single state); see `repeat_mut`.
+        if max_opt == Some(0) {
+            return 1;
         }
 
         let v_original = self.get_number_of_states();
@@ -163,40 +204,56 @@ impl FastAutomaton {
 
         // 5. Infinite repetition (max_opt is None)
         if max_opt.is_none() {
-            let mut v_modified = v_original;
-            let mut mod_start_in_deg_gt_0 = in_deg_start;
-            let acc_out_gt_0 = self.accept_states.iter().any(|&s| self.out_degree(s) > 0);
-
-            // Check if it triggers the start-state removal optimization block
-            if self.accept_states.len() == 1 {
-                let accept_state = *self.accept_states.iter().next().unwrap();
-                if self.out_degree(accept_state) == 0 && !in_deg_start {
-                    // The old start state is removed in the cloned automaton
-                    v_modified -= 1;
-                    mod_start_in_deg_gt_0 = self.in_degree(accept_state) > 0;
-                }
-            }
-
             if min == 0 {
+                // In-place looped r*: a single accept state with no outgoing
+                // edges and an incoming-edge-free start drops the old start
+                // state (`v_original - 1`); otherwise the state count is
+                // unchanged (the `min == 0 && in_deg_start` case already
+                // returned in step 2).
+                let mut v_modified = v_original;
+                if self.accept_states.len() == 1 {
+                    let accept_state = *self.accept_states.iter().next().unwrap();
+                    if self.out_degree(accept_state) == 0 && !in_deg_start {
+                        v_modified -= 1;
+                    }
+                }
                 return v_modified;
             } else {
-                // Calculate the final virtual concatenation cost manually since
-                // we can't pass a "virtually modified" automaton to concat_state_count_heuristic
-                let final_concat_cost = if mod_start_in_deg_gt_0 && acc_out_gt_0 {
-                    v_modified
-                } else {
-                    v_modified.saturating_sub(1)
-                };
-                return current_states + final_concat_cost;
+                // r{min,} = rᵐⁱⁿ · r*. `current_states` already accounts for the
+                // rᵐⁱⁿ part. The star r* = repeat(0, None) is independent of
+                // `min` and small, so build it to obtain its exact contribution
+                // under the merging concatenation onto rᵐⁱⁿ (whose accept states
+                // carry outgoing edges iff `acc_out_gt_0`).
+                let acc_out_gt_0 = self.accept_states.iter().any(|&s| self.out_degree(s) > 0);
+                match self.repeat(0, None) {
+                    Ok(star) => {
+                        let star_states = star.get_number_of_states();
+                        let not_mergeable =
+                            star.in_degree(star.start_state) > 0 && acc_out_gt_0;
+                        let final_concat_cost = if not_mergeable {
+                            star_states
+                        } else {
+                            star_states.saturating_sub(1)
+                        };
+                        return current_states + final_concat_cost;
+                    }
+                    Err(_) => return current_states,
+                }
             }
         }
 
         // 6. Finite maximum repetition loop
+        //
+        // The mandatory copies (handled above) merge as plain `r`. Each
+        // optional tail copy merges as well (`v - 1` new states), except when
+        // the start state has an incoming edge: the non-merging concatenation
+        // then introduces a fresh start state, costing `v` per copy.
         let max = max_opt.unwrap();
         let loop_start = if min > 1 { min } else { 1 };
         let max_iters = max.saturating_sub(loop_start);
 
-        current_states += max_iters as usize * concat_cost;
+        let optional_states = v_original + if in_deg_start { 1 } else { 0 };
+        current_states += max_iters as usize * (optional_states - 1);
 
         current_states
     }
@@ -207,17 +264,10 @@ mod tests {
     use crate::fast_automaton::FastAutomaton;
     use crate::regex::RegularExpression;
 
-    // BUG: `repeat(0, Some(0))` on a non-empty language returns L ∪ {""}
-    // instead of just {""}. After the (effectively no-op) main loop, the
-    // code unconditionally calls `accept(start_state)` when min == 0,
-    // adding "" to the language WITHOUT first reducing the automaton to
-    // {""}. The result is the union of the original language and the
-    // empty string.
-    //
-    // Repro: "abc".repeat(0, Some(0)) should match "" only; it currently
-    // also matches "abc".
+    // Regression: `repeat(0, Some(0))` on a non-empty language used to return
+    // L ∪ {""} instead of just {""} — the general path left the original
+    // language reachable and only made the start accepting. r⁰ must be {""}.
     #[test]
-    #[ignore = "known bug: repeat(0, 0) returns L ∪ {\"\"} instead of {\"\"}"]
     fn bug_repeat_zero_zero_on_non_empty() {
         let a = RegularExpression::parse("abc", false)
             .unwrap()
@@ -231,10 +281,31 @@ mod tests {
         );
     }
 
+    // Regression: repeating the empty-string automaton ({""}) used to reach the
+    // unbounded "tight loop" branch, which removed the single state while it was
+    // still the start state and panicked. {""} is a fixpoint of repetition, so
+    // every bound must return {""} without panicking.
+    #[test]
+    fn repeat_of_empty_string_is_fixpoint() {
+        let empty_string = FastAutomaton::new_empty_string();
+        for (min, max) in [
+            (0, None),
+            (1, None),
+            (3, None),
+            (0, Some(1)),
+            (2, Some(5)),
+            (0, Some(0)),
+        ] {
+            let r = empty_string.repeat(min, max).unwrap();
+            assert!(r.is_match(""), "{{\"\"}}{{{min},{max:?}}} must match \"\"");
+            assert!(!r.is_match("a"), "{{\"\"}}{{{min},{max:?}}} must match only \"\"");
+        }
+    }
+
     // Regression: empty.repeat(_, None) used to panic on
-    // `accept_states.iter().next().unwrap()` at repeat.rs:63 because the
-    // unbounded-repeat branch assumed at least one accept state. Language
-    // theory: ∅* = {""} and ∅⁺ = ∅; both must be returnable without panic.
+    // `accept_states.iter().next().unwrap()` because the unbounded-repeat
+    // branch assumed at least one accept state. Language theory: ∅* = {""}
+    // and ∅⁺ = ∅; both must be returnable without panic.
     #[test]
     fn empty_repeat_unbounded_does_not_panic() {
         let empty = FastAutomaton::new_empty();
@@ -266,6 +337,9 @@ mod tests {
 
     #[test]
     fn test_heuristic() -> Result<(), String> {
+        assert_heuristic("b*a");
+        assert_heuristic("a*b");
+        assert_heuristic("ba*");
         assert_heuristic(".{900}");
         assert_heuristic("[a-z]+");
         assert_heuristic("[a-z]+@");

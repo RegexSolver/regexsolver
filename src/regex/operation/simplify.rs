@@ -6,28 +6,12 @@ impl RegularExpression {
         match self {
             RegularExpression::Character(_) => self.clone(),
             RegularExpression::Repetition(regex, min, max_opt) => {
-                let regex = regex.simplify();
-                match regex {
-                    RegularExpression::Repetition(
-                        simplified_regex,
-                        simplified_min,
-                        simplified_max_opt,
-                    ) => {
-                        let new_max = if let (Some(max), Some(simplified_max)) =
-                            (max_opt, simplified_max_opt)
-                        {
-                            Some(max * simplified_max)
-                        } else {
-                            None
-                        };
-                        RegularExpression::Repetition(
-                            simplified_regex,
-                            min * simplified_min,
-                            new_max,
-                        )
-                    }
-                    _ => RegularExpression::Repetition(Box::new(regex), *min, *max_opt),
-                }
+                // Delegate to `repeat`, which guards the nested-repetition
+                // collapse with `can_simplify_nested_repetition`. Collapsing
+                // `(r{a,b}){c,d}` to `r{a*c,b*d}` unconditionally is unsound
+                // when the step lengths leave a gap (e.g. `(a{3,4}){1,2}`
+                // would wrongly widen to `a{3,8}`).
+                regex.simplify().repeat(*min, *max_opt)
             }
             RegularExpression::Concat(elements) => {
                 let elements: VecDeque<_> =

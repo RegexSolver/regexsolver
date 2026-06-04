@@ -25,6 +25,19 @@ impl FastAutomaton {
     }
 
     pub(crate) fn concat_mut(&mut self, other: &FastAutomaton) -> Result<(), EngineError> {
+        self.concat_mut_with(other, false)
+    }
+
+    /// Concatenation where `force_no_merge` prevents merging `other`'s start
+    /// state into `self`'s accept states, always introducing a fresh start
+    /// state for `other` reached by epsilon transitions. Used by `repeat` to
+    /// keep accept states "clean" when they must remain accepting (so they do
+    /// not inherit the next copy's transitions).
+    pub(crate) fn concat_mut_with(
+        &mut self,
+        other: &FastAutomaton,
+        force_no_merge: bool,
+    ) -> Result<(), EngineError> {
         ExecutionProfile::get()
             .assert_max_number_of_states(self.concat_state_count_heuristic(other))?;
 
@@ -52,12 +65,13 @@ impl FastAutomaton {
             BuildHasherDefault::default(),
         );
 
-        let start_state_and_accept_states_not_mergeable = other.in_degree(other.start_state) > 0
-            && self
-                .accept_states
-                .iter()
-                .cloned()
-                .any(|s| self.out_degree(s) > 0);
+        let start_state_and_accept_states_not_mergeable = force_no_merge
+            || (other.in_degree(other.start_state) > 0
+                && self
+                    .accept_states
+                    .iter()
+                    .cloned()
+                    .any(|s| self.out_degree(s) > 0));
 
         let accept_states = self.accept_states.iter().cloned().collect::<Vec<usize>>();
 
@@ -132,7 +146,6 @@ impl FastAutomaton {
             }
         }
 
-        self.cyclic = self.cyclic || other.cyclic;
         self.minimal = false;
         Ok(())
     }

@@ -127,8 +127,37 @@ impl FastAutomaton {
         true
     }
 
-    /// Returns the set of all states reachable from the start state.
-    pub fn get_reachable_states(&self) -> IntSet<State> {
+    /// Returns the states reachable **from the start state** by following
+    /// non-empty transitions (the start state is always included).
+    ///
+    /// This is forward reachability. Contrast with [`Self::get_live_states`],
+    /// which returns the states that can **reach an accept state**
+    /// (co-reachability).
+    pub(crate) fn forward_reachable_states(&self) -> IntSet<State> {
+        let mut visited = IntSet::default();
+        let mut worklist = VecDeque::new();
+        visited.insert(self.start_state);
+        worklist.push_back(self.start_state);
+        while let Some(s) = worklist.pop_front() {
+            for (condition, to_state) in self.transitions_from(s) {
+                if condition.is_empty() {
+                    continue;
+                }
+                if visited.insert(*to_state) {
+                    worklist.push_back(*to_state);
+                }
+            }
+        }
+        visited
+    }
+
+    /// Returns the "live" (co-reachable) states: those that can **reach an
+    /// accept state** by following non-empty transitions. Computed by a reverse
+    /// traversal from the accept states.
+    ///
+    /// This is co-reachability — note it is *not* the set of states reachable
+    /// from the start state.
+    pub fn get_live_states(&self) -> IntSet<State> {
         let mut states_map: IntMap<usize, IntSet<usize>> =
             IntMap::with_capacity_and_hasher(self.transitions.len(), BuildHasherDefault::default());
         for from_state in self.states() {
@@ -164,51 +193,19 @@ impl FastAutomaton {
         live
     }
 
-    /// Recomputes from the transition graph whether the automaton contains
-    /// a cycle. Use this to refresh the [`is_cyclic`](Self::is_cyclic) cache
-    /// after operations that don't maintain it.
+    /// Returns one [`Condition`] per base of the spanning set — including the
+    /// "rest" range when it is non-empty.
     ///
-    /// Kahn's algorithm: a directed graph has a cycle iff topological sort
-    /// fails to consume all nodes. O(V + E).
-    pub(crate) fn detect_cyclic(&self) -> bool {
-        let total = self.get_number_of_states();
-        if total == 0 {
-            return false;
-        }
-
-        let mut in_deg: IntMap<State, usize> = IntMap::default();
-        for s in self.states() {
-            in_deg.entry(s).or_insert(0);
-            for t in self.direct_states(s) {
-                *in_deg.entry(t).or_insert(0) += 1;
-            }
-        }
-
-        let mut queue: VecDeque<State> = in_deg
-            .iter()
-            .filter(|(_, d)| **d == 0)
-            .map(|(s, _)| *s)
-            .collect();
-
-        let mut processed = 0usize;
-        while let Some(s) = queue.pop_front() {
-            processed += 1;
-            for t in self.direct_states(s) {
-                if let Some(d) = in_deg.get_mut(&t) {
-                    *d -= 1;
-                    if *d == 0 {
-                        queue.push_back(t);
-                    }
-                }
-            }
-        }
-
-        processed != total
-    }
-
+    /// The bases must partition the whole alphabet Σ: subset construction
+    /// ([`determinize`](Self::determinize)) and Hopcroft partitioning
+    /// ([`minimize`](Self::minimize)) iterate them and would otherwise silently
+    /// drop transitions whose condition lies in the "rest" range. (For a
+    /// spanning set with an empty rest this is exactly the spanning ranges, so
+    /// well-formed automata are unaffected.)
     pub fn get_spanning_bases(&self) -> Result<Vec<Condition>, EngineError> {
         self.spanning_set
-            .get_spanning_ranges()
+            .get_spanning_ranges_with_rest()
+            .iter()
             .map(|range| Condition::from_range(range, &self.spanning_set))
             .collect()
     }

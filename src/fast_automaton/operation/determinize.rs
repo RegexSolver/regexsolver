@@ -78,7 +78,46 @@ impl FastAutomaton {
 
 #[cfg(test)]
 mod tests {
+    use crate::CharRange;
+    use crate::fast_automaton::FastAutomaton;
+    use crate::fast_automaton::condition::Condition;
+    use crate::fast_automaton::spanning_set::SpanningSet;
     use crate::regex::RegularExpression;
+    use regex_charclass::char::Char;
+
+    // Regression: subset construction iterates `get_spanning_bases`, which used
+    // to omit the spanning set's "rest" range. A transition whose condition
+    // lies in the rest range was therefore silently dropped, so determinizing a
+    // non-deterministic automaton that uses the rest range produced a DFA with
+    // the wrong (smaller) language.
+    #[test]
+    fn determinize_keeps_rest_range_transitions() {
+        let rng = |c: char| {
+            let c = Char::new(c);
+            CharRange::new_from_range(c..=c)
+        };
+        let ss = SpanningSet::compute_spanning_set(&[rng('a'), rng('b')]);
+        let rest = ss.get_rest().clone();
+
+        let mut a = FastAutomaton::new_empty();
+        a.apply_new_spanning_set(&ss).unwrap();
+        a.new_state();
+        a.add_transition(0, 1, &Condition::from_range(&rest, &ss).unwrap()); // 0 -[^ab]-> 1
+        a.add_transition(1, 0, &Condition::from_range(&rng('a'), &ss).unwrap());
+        a.add_transition(1, 1, &Condition::from_range(&rng('a'), &ss).unwrap()); // nondeterministic
+        a.accept(1);
+
+        assert!(!a.is_deterministic());
+        assert!(a.is_match("\u{0}"), "a should accept a [^ab] character");
+
+        let d = a.determinize().unwrap();
+        assert!(d.is_deterministic());
+        assert!(
+            d.is_match("\u{0}"),
+            "determinize dropped the [^ab] transition"
+        );
+        assert!(a.equivalent(&d).unwrap());
+    }
 
     #[test]
     fn test_determinize_regex() -> Result<(), String> {

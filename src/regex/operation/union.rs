@@ -279,7 +279,20 @@ impl RegularExpression {
                         );
                     }
                 } else {
-                    return this_regex.repeat(cmp::min(*this_min, *that_min), None);
+                    // At least one side is unbounded. The union collapses to
+                    // r{min(m1,m2),} only when the ranges overlap or are
+                    // adjacent — i.e. the unbounded side starts no later than
+                    // one past the bounded side's end. Otherwise there is a
+                    // gap (e.g. a? ∪ a{3,} must NOT become a*).
+                    let mergeable = match (this_max_opt, that_max_opt) {
+                        (None, None) => true,
+                        (Some(this_max), None) => *that_min <= this_max.saturating_add(1),
+                        (None, Some(that_max)) => *this_min <= that_max.saturating_add(1),
+                        (Some(_), Some(_)) => unreachable!("handled above"),
+                    };
+                    if mergeable {
+                        return this_regex.repeat(cmp::min(*this_min, *that_min), None);
+                    }
                 }
             }
 
@@ -352,6 +365,31 @@ impl RegularExpression {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Regression: with an unbounded side, the repetition merge used to fire
+    // unconditionally, so `a? ∪ a{3,}` collapsed to `a*` even though `a{2}` is
+    // in neither operand. The merge is only sound when the unbounded range
+    // starts no later than one past the bounded range's end.
+    #[test]
+    fn union_does_not_merge_gapped_repetitions() {
+        let union = |x: &str, y: &str| {
+            RegularExpression::parse(x, false)
+                .unwrap()
+                .union(&RegularExpression::parse(y, false).unwrap())
+                .to_string()
+        };
+
+        // Gapped: must stay alternations.
+        assert_eq!("(a?|a{3,})", union("a?", "a{3,}"));
+        assert_eq!("(a?|a{3,})", union("a{3,}", "a?"));
+        assert_eq!("(a{2}|a{5,})", union("a{2}", "a{5,}"));
+
+        // Overlapping or adjacent: still merge.
+        assert_eq!("a*", union("a?", "a{2,}"));
+        assert_eq!("a{2,}", union("a{2}", "a{3,}"));
+        assert_eq!("a*", union("a*", "a{3,}"));
+        assert_eq!("a{3,}", union("a{3,}", "a{5,}"));
+    }
 
     #[test]
     fn test_union() -> Result<(), String> {

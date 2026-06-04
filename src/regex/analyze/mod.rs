@@ -224,13 +224,16 @@ mod tests {
 
         let cardinality = regex.get_cardinality();
 
-        let mut automaton = regex.to_automaton().unwrap();
-
-        if !automaton.is_cyclic() {
-            automaton = automaton.determinize().unwrap().into_owned();
-        }
-
-        //automaton.to_dot();
+        let automaton = regex.to_automaton().unwrap();
+        // `get_cardinality` needs a DFA for an exact finite count, but returns
+        // `Infinite` for cyclic automata without requiring determinism. Only
+        // determinize the finite (bounded-length) ones — determinizing a large
+        // cyclic automaton can blow up.
+        let automaton = if automaton.get_length().1.is_some() {
+            automaton.determinize().unwrap().into_owned()
+        } else {
+            automaton
+        };
 
         let expected = automaton.get_cardinality();
 

@@ -203,14 +203,13 @@ This design allows us to perform unions, intersections, and complements of trans
 | `get_condition(&self, from_state: State, to_state: State)` | `Option<&Condition>` | Returns a reference to the condition of the directed transition between the two states, if any. |
 | `get_length(&self)` | `(Option<u32>, Option<u32>)` | Returns the minimum and maximum length of matched strings. |
 | `get_number_of_states(&self)` | `usize` | Returns the number of states in the automaton. |
-| `get_reachable_states(&self)` | `IntSet<State>` | Returns the set of all states reachable from the start state. |
+| `get_live_states(&self)` | `IntSet<State>` | Returns the set of "live" states: those that can reach an accept state. |
 | `get_spanning_set(&self)` | `&SpanningSet` | Returns a reference to the automaton's spanning set. |
 | `get_start_state(&self)` | `State` | Returns the start state. |
 | `has_state(&self, state: State)` | `bool` | Returns `true` if the automaton contains the given state. |
 | `has_transition(&self, from_state: State, to_state: State)` | `bool` | Returns `true` if there is a directed transition from `from_state` to `to_state`. |
 | `in_degree(&self, state: State)` | `usize` | Returns the number of transitions to the provided state. |
 | `is_accepted(&self, state: State)` | `bool` | Returns `true` if the given state is one of the accept states. |
-| `is_cyclic(&self)` | `bool` | Returns `true` if the automaton contains at least one cycle. |
 | `is_deterministic(&self)` | `bool` | Returns `true` if the automaton is deterministic. |
 | `is_empty(&self)` | `bool` | Checks if the automaton matches the empty language. |
 | `is_empty_string(&self)` | `bool` | Checks if the automaton only matches the empty string `""`. |

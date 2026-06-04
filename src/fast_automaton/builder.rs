@@ -17,7 +17,6 @@ impl FastAutomaton {
             spanning_set: SpanningSet::new_empty(),
             deterministic: true,
             minimal: true,
-            cyclic: false,
         }
     }
 
@@ -38,7 +37,6 @@ impl FastAutomaton {
         automaton.accept(automaton.start_state);
         automaton.add_transition(0, 0, &Condition::total(&automaton.spanning_set));
         automaton.minimal = true;
-        automaton.cyclic = true;
         automaton
     }
 
@@ -392,6 +390,11 @@ impl FastAutomaton {
     }
 
     #[inline]
+    pub(crate) fn make_empty_string(&mut self) {
+        self.apply_model(&Self::new_empty_string())
+    }
+
+    #[inline]
     pub(crate) fn apply_model(&mut self, model: &FastAutomaton) {
         self.transitions = model.transitions.clone();
         self.transitions_in = model.transitions_in.clone();
@@ -401,7 +404,6 @@ impl FastAutomaton {
         self.spanning_set = model.spanning_set.clone();
         self.deterministic = model.deterministic;
         self.minimal = model.minimal;
-        self.cyclic = model.cyclic;
     }
 }
 

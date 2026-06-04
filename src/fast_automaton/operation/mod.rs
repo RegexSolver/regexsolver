@@ -11,13 +11,16 @@ mod repeat;
 mod union;
 
 impl FastAutomaton {
-    pub fn remove_unreachable_states(&mut self) {
+    /// Removes "dead" states — those that cannot reach any accept state — since
+    /// they never contribute to the language. If the language is empty the whole
+    /// automaton collapses to the canonical empty automaton.
+    pub fn remove_dead_states(&mut self) {
         if !self.is_empty() {
-            let reacheable_states = self.get_reachable_states();
+            let live_states = self.get_live_states();
 
             let mut dead_states = IntSet::default();
             for from_state in self.states() {
-                if !reacheable_states.contains(&from_state) {
+                if !live_states.contains(&from_state) {
                     dead_states.insert(from_state);
                 }
             }
@@ -44,7 +47,7 @@ mod tests {
             .unwrap();
         let intersection = automaton1.intersection(&automaton2).unwrap();
         assert_eq!(3, intersection.get_number_of_states());
-        assert_eq!(3, intersection.get_reachable_states().len());
+        assert_eq!(3, intersection.get_live_states().len());
         Ok(())
     }
 }

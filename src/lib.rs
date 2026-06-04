@@ -295,8 +295,7 @@ impl Term {
     pub fn difference(&self, other: &Term) -> Result<Term, EngineError> {
         let minuend_automaton = self.to_automaton()?;
         let subtrahend_automaton = other.to_automaton()?;
-        let subtrahend_automaton =
-            Self::determinize_subtrahend(&minuend_automaton, &subtrahend_automaton)?;
+        // `FastAutomaton::difference` determinizes the subtrahend itself.
         let return_automaton = minuend_automaton.difference(&subtrahend_automaton)?;
 
         Ok(Term::Automaton(return_automaton))
@@ -317,8 +316,8 @@ impl Term {
     /// assert!(term.union(&[complement]).unwrap().is_total().unwrap());
     /// ```
     pub fn complement(&self) -> Result<Term, EngineError> {
-        let automaton = self.to_automaton()?;
-        let mut automaton = automaton.determinize()?.into_owned();
+        // `FastAutomaton::complement` determinizes `self` itself.
+        let mut automaton = self.to_automaton()?.into_owned();
         automaton.complement()?;
 
         Ok(Term::Automaton(automaton))
@@ -399,11 +398,9 @@ impl Term {
         if !return_stable_term || automaton.is_deterministic() {
             Ok((None, self.to_automaton()?.generate_strings(limit, offset)?))
         } else {
+            // `minimize` determinizes first, yielding the deterministic,
+            // minimal "stable" automaton.
             let mut automaton = automaton.into_owned();
-            if !automaton.is_deterministic() {
-                automaton = automaton.determinize()?.into_owned();
-            }
-
             if !automaton.is_minimal() {
                 automaton.minimize()?;
             }
@@ -528,24 +525,6 @@ impl Term {
     /// Converts the term to a regular expression pattern.
     pub fn to_pattern(&self) -> String {
         self.to_regex().to_string()
-    }
-
-    fn determinize_subtrahend<'a>(
-        minuend: &FastAutomaton,
-        subtrahend: &'a FastAutomaton,
-    ) -> Result<Cow<'a, FastAutomaton>, EngineError> {
-        if subtrahend.is_deterministic() {
-            Ok(Cow::Borrowed(subtrahend))
-        } else if !minuend.is_cyclic() && subtrahend.is_cyclic() {
-            Ok(Cow::Owned(
-                minuend
-                    .intersection(subtrahend)?
-                    .determinize()?
-                    .into_owned(),
-            ))
-        } else {
-            Ok(subtrahend.determinize()?)
-        }
     }
 
     fn get_automata<'a>(

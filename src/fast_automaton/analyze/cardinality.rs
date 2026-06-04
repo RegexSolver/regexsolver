@@ -7,19 +7,23 @@ impl FastAutomaton {
     pub fn get_cardinality(&self) -> Cardinality<u32> {
         if self.is_empty() {
             return Cardinality::Integer(0);
-        } else if self.cyclic || self.is_total() {
+        } else if self.is_total() {
             return Cardinality::Infinite;
         }
+
+        // A cycle means infinitely many strings. `topological_sorted_states`
+        // returns `None` exactly when the transition graph is cyclic and needs
+        // no determinism, so this also covers cyclic non-deterministic inputs.
+        let topologically_sorted_states = match self.topological_sorted_states() {
+            None => return Cardinality::Infinite,
+            Some(states) => states,
+        };
+
+        // The finite count below assumes deterministic (single-path) transitions.
         assert!(
             self.is_deterministic(),
             "The automaton should be deterministic."
         );
-
-        let topologically_sorted_states = self.topological_sorted_states();
-        if topologically_sorted_states.is_none() {
-            return Cardinality::Infinite;
-        }
-        let topologically_sorted_states = topologically_sorted_states.unwrap();
 
         let len = self.transitions.len();
         let mut distances: IntMap<usize, u32> =

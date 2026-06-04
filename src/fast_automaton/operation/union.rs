@@ -61,9 +61,11 @@ impl FastAutomaton {
         condition_converter: &ConditionConverter,
     ) -> Result<IntSet<usize>, EngineError> {
         let mut imcomplete_states = IntSet::with_capacity(other.out_degree(other.start_state) + 1);
-        if other.is_accepted(other.start_state) {
-            self.accept(self.start_state);
-        }
+        // If `other` accepts the empty string we must make the union's *entry*
+        // state accepting — but only after the start state is finalized below.
+        // Marking the current start eagerly is wrong when it has incoming edges
+        // (e.g. a self-loop) and is about to be demoted behind a fresh start:
+        // the demoted state would then wrongly accept the strings on its loop.
         let self_start_state_in_degree = self.in_degree(self.start_state);
         let other_start_state_in_degree = other.in_degree(other.start_state);
         if self_start_state_in_degree == 0 && other_start_state_in_degree == 0 {
@@ -103,6 +105,13 @@ impl FastAutomaton {
                 }
             }
         }
+        // Now that `self.start_state` is the final entry state, record `other`'s
+        // empty-string acceptance there. `self`'s own empty-string acceptance is
+        // preserved by the start handling above (a freshly created start
+        // inherits it through the epsilon transition).
+        if other.is_accepted(other.start_state) {
+            self.accept(self.start_state);
+        }
         Ok(imcomplete_states)
     }
 
@@ -114,7 +123,14 @@ impl FastAutomaton {
     ) {
         let mut self_accept_states_without_outgoing_edges = vec![];
         for &state in &self.accept_states {
-            if self.out_degree(state) == 0 && !imcomplete_states.contains(&state) {
+            // The start state must never be a merge candidate: the n > 1
+            // branch below removes the merged states, and removing the start
+            // state panics (e.g. an accepting start with no outgoing edges,
+            // unioned with an operand whose start has incoming edges).
+            if self.out_degree(state) == 0
+                && !imcomplete_states.contains(&state)
+                && state != self.start_state
+            {
                 self_accept_states_without_outgoing_edges.push(state);
             }
         }
@@ -137,18 +153,26 @@ impl FastAutomaton {
             };
 
         for &state in &other.accept_states {
-            match accept_state_without_outgoing_edges {
+            // Resolve the self-state that represents `state`, allocating one if
+            // it is not mapped yet, then mark it accepting. The accept flag must
+            // be applied even when `state` was already mapped during
+            // `prepare_start_states` (e.g. a start state with incoming edges
+            // whose outgoing edges reach this accept state); otherwise the
+            // union would silently drop `other`'s acceptance.
+            let mapped = match accept_state_without_outgoing_edges {
                 Some(accept_state) if other.out_degree(state) == 0 => {
-                    new_states.entry(state).or_insert(accept_state);
+                    *new_states.entry(state).or_insert(accept_state)
                 }
-                _ => {
-                    if new_states.get(&state).is_none() {
+                _ => match new_states.get(&state) {
+                    Some(&mapped) => mapped,
+                    None => {
                         let new_accept_state = self.new_state();
-                        self.accept(new_accept_state);
                         new_states.insert(state, new_accept_state);
+                        new_accept_state
                     }
-                }
-            }
+                },
+            };
+            self.accept(mapped);
         }
     }
 
@@ -205,7 +229,6 @@ impl FastAutomaton {
                 self.add_transition(new_from_state, new_to_state, &new_condition);
             }
         }
-        self.cyclic = self.cyclic || other.cyclic;
         self.minimal = false;
         Ok(())
     }
@@ -255,12 +278,15 @@ impl FastAutomaton {
             self_accepts.insert(self.start_state);
         }
 
-        let case_a = self_in == 0 && other_in == 0;
         let mut n = 0;
 
         for &state in &self_accepts {
-            let is_incomplete = case_a && state == self.start_state;
-            if self.out_degree(state) == 0 && !is_incomplete {
+            // Mirror `prepare_accept_states`: a state that is (still) the
+            // start after the start-state phase is never a merge candidate.
+            // When `self_in != 0` the original start gets demoted behind a
+            // fresh start, so it *does* participate.
+            let is_excluded = self_in == 0 && state == self.start_state;
+            if self.out_degree(state) == 0 && !is_excluded {
                 n += 1;
             }
         }
@@ -287,7 +313,96 @@ impl FastAutomaton {
 
 #[cfg(test)]
 mod tests {
-    use crate::{fast_automaton::FastAutomaton, regex::RegularExpression};
+    use crate::{Term, fast_automaton::FastAutomaton, regex::RegularExpression};
+
+    // Regression: unioning with the empty-string language used to drop the
+    // other operand's acceptance. When `other`'s start state has incoming edges
+    // its outgoing edges (and the accept states they reach) are mapped during
+    // `prepare_start_states`; `prepare_accept_states` then failed to mark those
+    // already-mapped images accepting, so `union({""}, "a+")` matched only ""
+    // instead of "" and "a", "aa", ...
+    #[test]
+    fn union_with_empty_string_keeps_other_accepts() {
+        let empty_string = RegularExpression::parse("", false)
+            .unwrap()
+            .to_automaton()
+            .unwrap();
+        let a_plus = RegularExpression::parse("a+", false)
+            .unwrap()
+            .to_automaton()
+            .unwrap();
+
+        let u = empty_string.union(&a_plus).unwrap();
+        assert!(u.is_match(""), "union must keep \"\"");
+        assert!(u.is_match("a"), "union dropped the other operand's language");
+        assert!(u.is_match("aaa"));
+
+        // It must be equivalent regardless of operand order.
+        let u2 = a_plus.union(&empty_string).unwrap();
+        assert!(Term::from_automaton(u).equivalent(&Term::from_automaton(u2)).unwrap());
+    }
+
+    // Regression: `prepare_accept_states` merges accept states without
+    // outgoing edges and removes the originals. When `self`'s accepting start
+    // (no outgoing edges) met an operand whose start has incoming edges, the
+    // start landed in the merge list and `remove_state(start)` panicked.
+    #[test]
+    fn union_does_not_remove_accepting_start() {
+        use crate::CharRange;
+        use crate::fast_automaton::condition::Condition;
+        use crate::fast_automaton::spanning_set::SpanningSet;
+        use regex_charclass::char::Char;
+
+        let rng = |c: char| {
+            let c = Char::new(c);
+            CharRange::new_from_range(c..=c)
+        };
+        let ss = SpanningSet::compute_spanning_set(&[rng('a'), rng('b')]);
+
+        // a: two accepting states without outgoing edges, one being the start.
+        let mut a = FastAutomaton::new_empty();
+        a.apply_new_spanning_set(&ss).unwrap();
+        a.new_state();
+        a.accept(0);
+        a.accept(1);
+
+        // b: start has an incoming edge (1 -a-> 0) but no outgoing edges.
+        let mut b = FastAutomaton::new_empty();
+        b.apply_new_spanning_set(&ss).unwrap();
+        b.new_state();
+        b.add_transition(1, 0, &Condition::from_range(&rng('a'), &ss).unwrap());
+        b.accept(0);
+
+        let u = a.union(&b).unwrap(); // used to panic
+        assert!(u.is_match(""), "union must keep the empty string");
+    }
+
+    // Regression: unioning a language whose start state has a self-loop with the
+    // empty string used to mark that looping start accepting, so `a*b | ""`
+    // wrongly matched "a", "aa", ... The empty-string acceptance must land on
+    // the union's entry state, not on a demoted looping state.
+    #[test]
+    fn union_with_empty_string_does_not_over_accept() {
+        let a_star_b = RegularExpression::parse("a*b", false)
+            .unwrap()
+            .to_automaton()
+            .unwrap();
+        let empty_string = RegularExpression::parse("", false)
+            .unwrap()
+            .to_automaton()
+            .unwrap();
+
+        let u = a_star_b.union(&empty_string).unwrap();
+        assert!(u.is_match(""), "(a*b)? must match \"\"");
+        assert!(u.is_match("b"));
+        assert!(u.is_match("ab"));
+        assert!(u.is_match("aab"));
+        assert!(
+            !u.is_match("a"),
+            "union wrongly accepted 'a' (looping start marked accepting)"
+        );
+        assert!(!u.is_match("aa"));
+    }
 
     #[test]
     fn test_simple_alternation_regex_1() -> Result<(), String> {

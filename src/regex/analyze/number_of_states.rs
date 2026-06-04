@@ -17,7 +17,7 @@ impl AbstractStateMetadata {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct AbstractNFAMetadata {
     start: AbstractStateMetadata,
     accepted: Vec<AbstractStateMetadata>,
@@ -69,6 +69,23 @@ impl AbstractNFAMetadata {
     }
 
     pub(crate) fn repeat(&self, min: u32, max_opt: &Option<u32>) -> Self {
+        // r⁰ = {""} (the empty-string automaton, a single state).
+        if max_opt == &Some(0) {
+            return Self::new_empty_string();
+        }
+
+        // Unbounded with min >= 1: `repeat_mut` builds r{min,} = rᵐⁱⁿ · r*.
+        // Mirror that here (mandatory copies via merging concatenation, then a
+        // recursively-built star) so the predicted count stays consistent with
+        // the construction even when the start state has incoming edges.
+        if max_opt.is_none() && min >= 1 {
+            let mut acc = self.clone();
+            for _ in 1..min {
+                acc = acc.concat(self);
+            }
+            return acc.concat(&self.repeat(0, &None));
+        }
+
         let start_state_not_mergeable = self.start.has_incoming_edges;
         let accepted_not_mergeable = self.accepted.iter().any(|s| s.has_outgoing_edges);
         let start_state_or_accept_states_not_mergeable =
@@ -105,13 +122,30 @@ impl AbstractNFAMetadata {
         }
 
         let return_number_of_states = if let Some(max) = max_opt {
-            let mult = if start_state_not_mergeable && (accepted_not_mergeable || min == 0) {
+            // Mirror `repeat_mut`: rᵐⁱⁿ mandatory copies built by merging
+            // concatenation, then `max - max(min,1)` optional tail copies. A
+            // tail copy whose start has incoming edges is concatenated without
+            // merging (a fresh start state, so +`number_of_states`); otherwise
+            // it merges (+`number_of_states - 1`).
+            let max = *max as usize;
+            let merge_cost = if start_state_not_mergeable && accepted_not_mergeable {
+                self.number_of_states
+            } else {
+                self.number_of_states - 1
+            };
+            let tail_cost = if start_state_not_mergeable {
                 self.number_of_states
             } else {
                 self.number_of_states - 1
             };
 
-            *max as usize * mult + 1
+            if min == 0 {
+                let base = self.number_of_states + if start_state_not_mergeable { 1 } else { 0 };
+                base + max.saturating_sub(1) * tail_cost
+            } else {
+                let mandatory = self.number_of_states + (min as usize - 1) * merge_cost;
+                mandatory + max.saturating_sub(min as usize) * tail_cost
+            }
         } else {
             let mult = if start_state_not_mergeable {
                 self.number_of_states
@@ -221,6 +255,13 @@ mod tests {
         assert_number_of_states_in_nfa("(ba*){1,2}");
         assert_number_of_states_in_nfa("(b*a){5,26}");
         assert_number_of_states_in_nfa("(ba*){5,26}");
+
+        // Unbounded with min >= 1 over a self-looping start (r{min,} = rᵐⁱⁿ·r*).
+        assert_number_of_states_in_nfa("(b*a){1,}");
+        assert_number_of_states_in_nfa("(b*a){2,}");
+        assert_number_of_states_in_nfa("(b*a){5,}");
+        assert_number_of_states_in_nfa("(a*b){1,}");
+        assert_number_of_states_in_nfa("(a*b){3,}");
 
         assert_number_of_states_in_nfa("");
         assert_number_of_states_in_nfa("toto");

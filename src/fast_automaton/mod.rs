@@ -33,7 +33,6 @@ pub struct FastAutomaton {
     spanning_set: SpanningSet,
     deterministic: bool,
     minimal: bool,
-    cyclic: bool,
 }
 
 /// Returned by [`FastAutomaton::try_add_transition`] when adding the requested
@@ -260,12 +259,6 @@ impl FastAutomaton {
         self.minimal
     }
 
-    /// Returns `true` if the automaton contains at least one cycle.
-    #[inline]
-    pub fn is_cyclic(&self) -> bool {
-        self.cyclic
-    }
-
     /// Returns `true` if the automaton contains the given state.
     #[inline]
     pub fn has_state(&self, state: State) -> bool {
@@ -342,17 +335,6 @@ mod tests {
         assert_sync::<FastAutomaton>();
 
         Ok(())
-    }
-
-    // Regression: `new_total` constructs an automaton with a total self-loop
-    // on the start state. It must report `cyclic = true` from construction.
-    #[test]
-    fn new_total_reports_cyclic() {
-        let a = FastAutomaton::new_total();
-        assert!(
-            a.is_cyclic(),
-            "new_total has a total self-loop on start, must be cyclic"
-        );
     }
 
     // Regression: read-only query methods used to directly index

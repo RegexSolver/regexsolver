@@ -9,6 +9,19 @@ impl FastAutomaton {
             *self = self.determinize()?.into_owned();
         }
 
+        // Drop states unreachable from the start. A minimal automaton has none,
+        // and downstream invariants rely on it — in particular `is_empty`'s
+        // fast path treats any minimal automaton with an accept state as
+        // non-empty, which only holds if every accept state is reachable.
+        let reachable = self.forward_reachable_states();
+        let unreachable: IntSet<State> = self
+            .states()
+            .filter(|s| !reachable.contains(s))
+            .collect();
+        if !unreachable.is_empty() {
+            self.remove_states(&unreachable);
+        }
+
         let max_states = self.transitions.len();
 
         let all_states: IntSet<usize> = self.states().collect();
