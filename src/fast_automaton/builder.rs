@@ -89,6 +89,10 @@ impl FastAutomaton {
 
     /// Creates a new transition with the given condition; the condition must follow the automaton’s current spanning set.
     ///
+    /// If you don't want to deal with conditions and spanning sets, use
+    /// [`add_transition_from_range`](Self::add_transition_from_range), which
+    /// handles the bookkeeping for you.
+    ///
     /// This method accepts a [`Condition`] rather than a raw character set. To build a [`Condition`], call:
     /// ```rust
     /// # use regexsolver::CharRange;
@@ -163,6 +167,69 @@ impl FastAutomaton {
         };
     }
 
+    /// Adds a transition labeled with the given character range, taking care
+    /// of the spanning-set bookkeeping.
+    ///
+    /// This is the convenient counterpart to
+    /// [`add_transition`](Self::add_transition): the range is converted to a
+    /// [`Condition`] automatically, and when it is not exactly expressible
+    /// in the automaton's current spanning set, the spanning set is extended
+    /// and every existing condition is re-projected first.
+    ///
+    /// An empty range matches no character, so no transition is added.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use regexsolver::CharRange;
+    /// use regexsolver::fast_automaton::FastAutomaton;
+    /// use regex_charclass::char::Char;
+    ///
+    /// let mut automaton = FastAutomaton::new_empty();
+    /// let s1 = automaton.new_state();
+    /// automaton.accept(s1);
+    ///
+    /// let a_to_c = CharRange::new_from_range(Char::new('a')..=Char::new('c'));
+    /// automaton.add_transition_from_range(0, s1, &a_to_c).unwrap();
+    ///
+    /// assert!(automaton.is_match("b"));
+    /// assert!(!automaton.is_match("d"));
+    /// ```
+    pub fn add_transition_from_range(
+        &mut self,
+        from_state: State,
+        to_state: State,
+        range: &CharRange,
+    ) -> Result<(), EngineError> {
+        if range.is_empty() {
+            return Ok(());
+        }
+
+        // Fast path: the range is exactly expressible in the current
+        // spanning set. `Condition::from_range` alone cannot tell us that —
+        // it silently drops partially-covered bases — so round-trip the
+        // condition to check exactness.
+        if let Ok(condition) = Condition::from_range(range, &self.spanning_set)
+            && condition.to_range(&self.spanning_set)? == *range
+        {
+            self.add_transition(from_state, to_state, &condition);
+            return Ok(());
+        }
+
+        // The range is not (fully) covered: extend the spanning set,
+        // re-project the existing conditions, then add.
+        let new_spanning_set =
+            self.spanning_set
+                .merge(&SpanningSet::compute_spanning_set(std::slice::from_ref(
+                    range,
+                )));
+        self.apply_new_spanning_set(&new_spanning_set)?;
+
+        let condition = Condition::from_range(range, &self.spanning_set)?;
+        self.add_transition(from_state, to_state, &condition);
+        Ok(())
+    }
+
     /// Adds a transition, but refuses if it would turn a DFA into an NFA.
     ///
     /// On `Err(DeterminismLost)` the automaton is left untouched; on `Ok`,
@@ -197,6 +264,12 @@ impl FastAutomaton {
     }
 
     /// Creates a new epsilon transition between the two states.
+    /// Adds an epsilon transition by eagerly folding `to_state`'s **current**
+    /// transitions (and acceptance) into `from_state`.
+    ///
+    /// This is a snapshot: transitions added to `to_state` *afterwards* are
+    /// not propagated retroactively. When building automata incrementally,
+    /// add epsilon transitions last.
     pub fn add_epsilon_transition(&mut self, from_state: State, to_state: State) {
         if from_state == to_state {
             return;
@@ -413,6 +486,113 @@ mod tests {
     use crate::fast_automaton::FastAutomaton;
     use crate::fast_automaton::condition::Condition;
     use crate::regex::RegularExpression;
+
+    fn rng(a: char, b: char) -> crate::CharRange {
+        use regex_charclass::char::Char;
+        crate::CharRange::new_from_range(Char::new(a)..=Char::new(b))
+    }
+
+    #[test]
+    fn small_mutators_and_queries() {
+        let mut a = FastAutomaton::new_empty();
+        let s1 = a.new_state();
+        let s2 = a.new_state();
+        a.add_transition_from_range(0, s1, &rng('a', 'a')).unwrap();
+        a.accept(s1);
+
+        assert!(a.is_accepted(s1));
+        assert!(a.has_transition(0, s1));
+        assert!(a.get_condition(0, s1).is_some());
+        assert_eq!(a.in_degree(s1), 1);
+        assert_eq!(a.out_degree(0), 1);
+        assert!(a.is_match("a"));
+
+        // try_add_transition: refuses determinism-breaking additions and
+        // leaves the automaton untouched on Err.
+        let condition_a = Condition::from_range(&rng('a', 'a'), a.get_spanning_set()).unwrap();
+        assert!(a.is_deterministic());
+        assert!(a.try_add_transition(0, s2, &condition_a).is_err());
+        assert!(a.is_deterministic());
+        assert!(!a.has_transition(0, s2));
+        // ...but accepts disjoint conditions.
+        let condition_not_a = condition_a.complement();
+        a.try_add_transition(0, s2, &condition_not_a).unwrap();
+        assert!(a.is_deterministic());
+        assert!(a.has_transition(0, s2));
+
+        // unaccept flips membership and the language.
+        a.unaccept(s1);
+        assert!(!a.is_accepted(s1));
+        assert!(!a.is_match("a"));
+        a.accept(s1);
+        assert!(a.is_match("a"));
+
+        // remove_transition removes the edge and updates queries.
+        a.remove_transition(0, s1);
+        assert!(!a.has_transition(0, s1));
+        assert!(a.get_condition(0, s1).is_none());
+        assert_eq!(a.in_degree(s1), 0);
+        assert!(!a.is_match("a"));
+    }
+
+    #[test]
+    fn add_transition_from_range_extends_the_spanning_set() {
+        let mut automaton = FastAutomaton::new_empty();
+        let s1 = automaton.new_state();
+        let s2 = automaton.new_state();
+        automaton.accept(s2);
+
+        // Both ranges extend the (initially empty) spanning set.
+        automaton
+            .add_transition_from_range(0, s1, &rng('a', 'c'))
+            .unwrap();
+        automaton
+            .add_transition_from_range(s1, s2, &rng('x', 'z'))
+            .unwrap();
+
+        assert!(automaton.is_match("ax"));
+        assert!(automaton.is_match("cz"));
+        assert!(!automaton.is_match("aa"));
+        assert!(!automaton.is_match("x"));
+
+        // An exactly-covered range takes the fast path: same spanning set.
+        let before = automaton.get_spanning_set().clone();
+        automaton
+            .add_transition_from_range(0, s1, &rng('x', 'z'))
+            .unwrap();
+        assert_eq!(&before, automaton.get_spanning_set());
+        assert!(automaton.is_match("zx"));
+
+        // An empty range adds nothing.
+        automaton
+            .add_transition_from_range(0, s2, &crate::CharRange::empty())
+            .unwrap();
+        assert!(!automaton.is_match("a"));
+    }
+
+    // Regression guard: `Condition::from_range` silently drops
+    // partially-covered bases, so a naive "convert, merge only on error"
+    // implementation would truncate [a-e] to the existing [a-c] base. The
+    // exactness round-trip must force a spanning-set refinement instead.
+    #[test]
+    fn add_transition_from_range_is_exact_on_partial_coverage() {
+        let mut automaton = FastAutomaton::new_empty();
+        let s1 = automaton.new_state();
+        automaton.accept(s1);
+
+        automaton
+            .add_transition_from_range(0, s1, &rng('a', 'c'))
+            .unwrap();
+        // Contains the whole [a-c] base but only part of the rest.
+        automaton
+            .add_transition_from_range(0, s1, &rng('a', 'e'))
+            .unwrap();
+
+        for accepted in ["a", "b", "c", "d", "e"] {
+            assert!(automaton.is_match(accepted), "{accepted:?} must match");
+        }
+        assert!(!automaton.is_match("f"));
+    }
 
     // Regression: `remove_states` used to skip the `transitions_in` cleanup
     // that the single-state variant `remove_state` performs (drop entries

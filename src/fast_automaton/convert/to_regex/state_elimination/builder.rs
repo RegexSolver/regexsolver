@@ -10,7 +10,7 @@ impl Gnfa {
             transitions: Vec::with_capacity(automaton.get_number_of_states()),
             transitions_in: IntMap::with_capacity(automaton.get_number_of_states()),
             removed_states: IntSet::with_capacity(automaton.get_number_of_states()),
-            empty: false
+            empty: false,
         };
 
         if automaton.is_empty() {
@@ -121,8 +121,8 @@ impl Gnfa {
             .insert(from_state);
         match self.transitions[from_state].entry(to_state) {
             Entry::Occupied(mut o) => {
-                //o.insert(RegularExpression::Alternation(vec![transition, o.get().clone()]));
-                o.insert(transition.union(o.get()));
+                let merged = transition.union(o.get());
+                *o.get_mut() = merged;
             }
             Entry::Vacant(v) => {
                 v.insert(transition);

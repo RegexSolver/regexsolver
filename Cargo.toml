@@ -6,28 +6,28 @@ authors = ["Alexandre van Beurden"]
 repository = "https://github.com/RegexSolver/regexsolver"
 license = "MIT"
 keywords = ["automaton", "intersection", "union", "difference", "regex"]
+categories = ["text-processing", "mathematics", "algorithms"]
 description = "High-performance Rust library for building, combining, and analyzing regular expressions and finite automata"
 readme = "README.md"
 
 [dependencies]
 nohash-hasher = "0.2"
 ahash = "0.8.11"
-log = "0.4.21"
-rand = "0.8.5"
-lazy_static = "1.4.0"
-regex = "1.10.3"
 regex-syntax = "0.8.5"
 regex-charclass = { version = "1.0.3" }
-rayon = "1.10.0"
+rayon = { version = "1.10.0", optional = true }
 bit-set = "0.8.0"
 indexmap = "2.13.0"
 
+[features]
+default = ["parallel"]
+parallel = ["dep:rayon"]
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
-env_logger = "0.11.3"
-serde_json = "1.0.114"
 proptest = "1"
+regex = "1.10.3"
 
 [[bench]]
-name = "my_benchmark"
+name = "operations"
 harness = false

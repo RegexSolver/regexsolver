@@ -4,7 +4,7 @@ impl RegularExpression {
     /// Returns a simplified version by eliminating redundant constructs and applying canonical reductions.
     pub fn simplify(&self) -> Self {
         match self {
-            RegularExpression::Character(_) => self.clone(),
+            RegularExpression::Character(..) => self.clone(),
             RegularExpression::Repetition(regex, min, max_opt) => {
                 // Delegate to `repeat`, which guards the nested-repetition
                 // collapse with `can_simplify_nested_repetition`. Collapsing

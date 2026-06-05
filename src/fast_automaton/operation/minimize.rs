@@ -1,23 +1,33 @@
+use crate::execution_profile::ExecutionProfile;
+
 use super::*;
 
 impl FastAutomaton {
     /// Minimizes the automaton using Hopcroft's Algorithm.
     ///
-    /// If `self` is non-deterministic, it is determinized in place first.
+    /// If `self` is non-deterministic, it is determinized in place first —
+    /// unless the [`ExecutionProfile`] disables implicit determinization, in
+    /// which case [`EngineError::DeterministicAutomatonRequired`] is
+    /// returned.
     pub fn minimize(&mut self) -> Result<(), EngineError> {
-        if !self.deterministic {
-            *self = self.determinize()?.into_owned();
+        // The `minimal` flag is conservatively cleared on every mutation, so
+        // it can be trusted here; this also keeps the
+        // `minimize_after_determinization` profile from paying a second
+        // Hopcroft pass when callers minimize an already-minimized result.
+        if self.minimal {
+            return Ok(());
         }
+        if !self.deterministic {
+            *self = self.determinize_implicit()?.into_owned();
+        }
+        let execution_profile = ExecutionProfile::get();
 
         // Drop states unreachable from the start. A minimal automaton has none,
         // and downstream invariants rely on it — in particular `is_empty`'s
         // fast path treats any minimal automaton with an accept state as
         // non-empty, which only holds if every accept state is reachable.
         let reachable = self.forward_reachable_states();
-        let unreachable: IntSet<State> = self
-            .states()
-            .filter(|s| !reachable.contains(s))
-            .collect();
+        let unreachable: IntSet<State> = self.states().filter(|s| !reachable.contains(s)).collect();
         if !unreachable.is_empty() {
             self.remove_states(&unreachable);
         }
@@ -57,6 +67,7 @@ impl FastAutomaton {
         let mut touched_partitions: Vec<usize> = Vec::with_capacity(max_states);
 
         while let Some(a_idx) = worklist.pop() {
+            execution_profile.assert_not_timed_out()?;
             in_worklist[a_idx] = false;
 
             let a = partitions[a_idx].clone();

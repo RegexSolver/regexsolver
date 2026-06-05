@@ -33,8 +33,14 @@ impl PartialOrd for QueueItem {
 }
 
 impl FastAutomaton {
-    /// Generates `count` strings matched by the automaton, skipping the first `offset` strings.
-    /// If the provided automaton is not deterministic, it is possible to get multiple time the same strings over multiple call with different offset.
+    /// Generates up to `limit` distinct strings matched by the automaton, skipping the first `offset` strings.
+    ///
+    /// Strings are only guaranteed to be distinct **within a single call**:
+    /// the offset fast-skips by counting paths, and in a non-deterministic
+    /// automaton the same string can be reached through several paths, so
+    /// calls with different offsets may repeat strings (or skip some).
+    /// [`determinize`](Self::determinize) (and ideally
+    /// [`minimize`](Self::minimize)) first to make pages disjoint.
     pub fn generate_strings(
         &self,
         limit: usize,
@@ -433,7 +439,7 @@ mod tests {
             "Chunked generation did not match bulk generation"
         );
 
-        let cardinality = automaton.get_cardinality();
+        let cardinality = automaton.get_cardinality().unwrap();
 
         if let Cardinality::Integer(count) = cardinality {
             let empty_chunk = automaton.generate_strings(10, count as usize).unwrap();

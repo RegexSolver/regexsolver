@@ -47,10 +47,13 @@ impl FastAutomaton {
 
     /// Complements the automaton.
     ///
-    /// If `self` is non-deterministic, it is determinized in place first.
+    /// If `self` is non-deterministic, it is determinized in place first —
+    /// unless the execution profile disables implicit determinization, in
+    /// which case [`EngineError::DeterministicAutomatonRequired`] is
+    /// returned.
     pub fn complement(&mut self) -> Result<(), EngineError> {
         if !self.deterministic {
-            *self = self.determinize()?.into_owned();
+            *self = self.determinize_implicit()?.into_owned();
         }
         self.totalize()?;
 
@@ -68,9 +71,11 @@ impl FastAutomaton {
 
     /// Computes the difference between `self` and `other`.
     ///
-    /// If `other` is non-deterministic, it is determinized first.
+    /// If `other` is non-deterministic, it is determinized first — unless
+    /// the execution profile disables implicit determinization, in which
+    /// case [`EngineError::DeterministicAutomatonRequired`] is returned.
     pub fn difference(&self, other: &FastAutomaton) -> Result<FastAutomaton, EngineError> {
-        let mut complement = other.determinize()?.into_owned();
+        let mut complement = other.determinize_implicit()?.into_owned();
         complement.complement()?;
         self.intersection(&complement)
     }

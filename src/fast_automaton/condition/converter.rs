@@ -15,7 +15,12 @@ pub struct ConditionConverter<'a, 'b> {
 impl<'a, 'b> ConditionConverter<'a, 'b> {
     /// Build a converter to project [`Condition`] from `from_spanning_set` to `to_spanning_set`.
     ///
-    /// Currently this method does not check that the provided [`SpanningSet`] are actually convertible.
+    /// Two directions are legitimate: refinement (a merged spanning set
+    /// before a binary operation) and coarsening (a recomputed minimal
+    /// spanning set, where bases no transition uses fold into the rest). The
+    /// pair is therefore not validated here; instead [`convert`](Self::convert)
+    /// asserts in debug builds that each projection preserves the
+    /// condition's character range.
     pub fn new(
         from_spanning_set: &'a SpanningSet,
         to_spanning_set: &'b SpanningSet,
@@ -54,9 +59,12 @@ impl<'a, 'b> ConditionConverter<'a, 'b> {
 
     /// Project the given [`Condition`] from `from_spanning_set` to `to_spanning_set`.
     ///
-    /// If `from_spanning_set` is not convertible to `to_spanning_set` or if the given [`Condition`] is not based on `from_spanning_set`,
-    /// the resulting [`Condition`] will not have any relevance.
+    /// Returns [`EngineError::IncompatibleSpanningSet`] if the given
+    /// [`Condition`] was not built over `from_spanning_set`.
     pub fn convert(&self, condition: &Condition) -> Result<Condition, EngineError> {
+        if condition.0.len() != self.from_spanning_set.spanning_ranges_with_rest_len() {
+            return Err(EngineError::IncompatibleSpanningSet);
+        }
         let mut new_condition = Condition::empty(self.to_spanning_set);
         for (from_index, to_indexes) in self.equivalence_map.iter().enumerate() {
             if condition.0.get(from_index) && !to_indexes.is_empty() {
@@ -65,6 +73,20 @@ impl<'a, 'b> ConditionConverter<'a, 'b> {
                 });
             }
         }
+
+        // The one invariant every legitimate use (refining and coarsening
+        // alike) must uphold: the projection denotes the same character set.
+        // A violation means a condition referenced a base the target spanning
+        // set cannot express — a silent language corruption in release.
+        debug_assert_eq!(
+            condition
+                .to_range(self.from_spanning_set)
+                .expect("the length was checked above"),
+            new_condition
+                .to_range(self.to_spanning_set)
+                .expect("the condition was built over the target spanning set"),
+            "the projection changed the condition's character range"
+        );
 
         Ok(new_condition)
     }

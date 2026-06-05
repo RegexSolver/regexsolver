@@ -5,6 +5,18 @@ use crate::{EngineError, execution_profile::ExecutionProfile};
 use super::*;
 
 impl FastAutomaton {
+    /// [`determinize`](Self::determinize) on behalf of an operation that
+    /// requires a deterministic automaton: when the execution profile
+    /// disables implicit determinization, a non-deterministic input is
+    /// rejected with [`EngineError::DeterministicAutomatonRequired`] instead
+    /// of being converted. Already-deterministic automata always pass.
+    pub(crate) fn determinize_implicit(&self) -> Result<Cow<'_, Self>, EngineError> {
+        if !self.deterministic {
+            ExecutionProfile::get().assert_implicit_determinization_allowed()?;
+        }
+        self.determinize()
+    }
+
     /// Determinizes the automaton and returns the result.
     pub fn determinize(&self) -> Result<Cow<'_, Self>, EngineError> {
         if self.deterministic {
@@ -39,7 +51,7 @@ impl FastAutomaton {
             execution_profile.assert_max_number_of_states(new_states.len())?;
 
             if !states.is_disjoint(&accept_states) {
-                new_automaton.accept_states.insert(r);
+                new_automaton.accept(r);
             }
 
             for base in &bases {
@@ -72,6 +84,12 @@ impl FastAutomaton {
                 }
             }
         }
+
+        // Optionally fold the freshly built DFA down to its minimal form
+        if execution_profile.should_minimize_after_determinization() {
+            new_automaton.minimize()?;
+        }
+
         Ok(Cow::Owned(new_automaton))
     }
 }

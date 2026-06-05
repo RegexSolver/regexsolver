@@ -105,7 +105,13 @@ impl AbstractNFAMetadata {
             return_accepted.push(return_start.clone());
             if max_opt.is_none() {
                 let return_number_of_states = if !start_state_or_accept_states_not_mergeable {
-                    self.number_of_states - 1
+                    // An automaton always has at least one state. Degenerate
+                    // sub-expressions denoting {""} (e.g. an unsimplified
+                    // `(a{0,0})*`) reach this point with a single state, and
+                    // the merge discount must not drive the count to zero —
+                    // every later `- 1` in this module relies on counts
+                    // staying >= 1.
+                    (self.number_of_states - 1).max(1)
                 } else {
                     self.number_of_states
                 };
@@ -190,7 +196,10 @@ impl AbstractNFAMetadata {
         AbstractNFAMetadata {
             start: return_start,
             accepted: return_accepted,
-            number_of_states: return_number_of_states,
+            // Both merge discounts can apply to two single-state {""}
+            // operands (e.g. `a{0,0}|b{0,0}`); clamp so the count never
+            // reaches zero (see `repeat`).
+            number_of_states: return_number_of_states.max(1),
         }
     }
 }
@@ -202,7 +211,7 @@ impl RegularExpression {
 
     fn evaluate_number_of_states_in_nfa(&self) -> AbstractNFAMetadata {
         match self {
-            RegularExpression::Character(_) => AbstractNFAMetadata::new(),
+            RegularExpression::Character(..) => AbstractNFAMetadata::new(),
             RegularExpression::Repetition(regex, min, max_opt) => regex
                 .evaluate_number_of_states_in_nfa()
                 .repeat(*min, max_opt),
@@ -302,8 +311,46 @@ mod tests {
 
         assert_number_of_states_in_nfa("q(ab|ca|ab|abc)x");
         assert_number_of_states_in_nfa("a*(aad|ads|a)abc.*def.*ghi");
-        assert_number_of_states_in_nfa("((aad|ads|a)*abc.*def.*uif(aad|ads|x)*abc.*oxs.*def(aad|ads|ax)*abc.*def.*ksd|q){1,100}");
+        assert_number_of_states_in_nfa(
+            "((aad|ads|a)*abc.*def.*uif(aad|ads|x)*abc.*oxs.*def(aad|ads|ax)*abc.*def.*ksd|q){1,100}",
+        );
         Ok(())
+    }
+
+    // Regression: directly-constructed (unsimplified) repetitions over {""}
+    // sub-expressions — shapes the string parser simplifies away but any user
+    // of the public enum can build — used to drive the abstract state count
+    // to zero, after which the merge discounts underflowed and panicked.
+    #[test]
+    fn degenerate_repetitions_do_not_underflow() {
+        use std::collections::VecDeque;
+
+        let atom = RegularExpression::new("a").unwrap();
+        // a{0,0} denotes {""} without being the canonical empty-string form.
+        let empty_string = RegularExpression::Repetition(Box::new(atom), 0, Some(0));
+        let star_of_alternation = RegularExpression::Repetition(
+            Box::new(RegularExpression::Alternation(vec![
+                empty_string.clone(),
+                empty_string.clone(),
+            ])),
+            0,
+            None,
+        );
+        let star_of_concat = RegularExpression::Repetition(
+            Box::new(RegularExpression::Concat(VecDeque::from([
+                empty_string.clone(),
+                RegularExpression::Repetition(Box::new(empty_string), 0, None),
+            ]))),
+            0,
+            None,
+        );
+
+        for regex in [star_of_alternation, star_of_concat] {
+            let estimate = regex.get_number_of_states_in_nfa();
+            assert!(estimate >= 1, "state estimate of {regex} must be >= 1");
+            let automaton = regex.to_automaton().unwrap();
+            assert!(automaton.get_number_of_states() >= 1);
+        }
     }
 
     fn assert_number_of_states_in_nfa(regex: &str) {

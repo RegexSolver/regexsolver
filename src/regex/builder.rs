@@ -1,14 +1,7 @@
-use ::regex::Regex;
-use lazy_static::lazy_static;
 use regex_charclass::irange::range::AnyRange;
 use regex_syntax::ParserBuilder;
 
 use super::*;
-
-lazy_static! {
-    static ref RE_FLAG_DETECTION: Regex =
-        Regex::new(r"\(\?[imsx]*-?[imsx]*\)").expect("Can not compile flag detection regex.");
-}
 
 impl RegularExpression {
     /// Parses and simplifies the provided pattern and returns the resulting [`RegularExpression`].
@@ -34,8 +27,39 @@ impl RegularExpression {
         }
     }
 
+    /// Strips inline flag groups like `(?i)`, `(?m-s)` or `(?-s)` from the
+    /// pattern: the engine treats all characters uniformly, so the flags are
+    /// meaningless here. Equivalent to deleting every match of
+    /// `\(\?[imsx]*-?[imsx]*\)`; anything else — including non-capturing
+    /// groups `(?:...)` — is left untouched.
     fn remove_flags(regex: &str) -> String {
-        RE_FLAG_DETECTION.replace_all(regex, "").to_string()
+        let bytes = regex.as_bytes();
+        let mut result = String::with_capacity(regex.len());
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'(' && i + 1 < bytes.len() && bytes[i + 1] == b'?' {
+                let mut j = i + 2;
+                while j < bytes.len() && matches!(bytes[j], b'i' | b'm' | b's' | b'x') {
+                    j += 1;
+                }
+                if j < bytes.len() && bytes[j] == b'-' {
+                    j += 1;
+                    while j < bytes.len() && matches!(bytes[j], b'i' | b'm' | b's' | b'x') {
+                        j += 1;
+                    }
+                }
+                if j < bytes.len() && bytes[j] == b')' {
+                    // a flag group: skip it entirely
+                    i = j + 1;
+                    continue;
+                }
+            }
+            // not a flag group: copy the whole character (UTF-8 safe)
+            let char_len = regex[i..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+            result.push_str(&regex[i..i + char_len]);
+            i += char_len;
+        }
+        result
     }
 
     /// Creates a regular expression that matches all possible strings.
@@ -154,6 +178,79 @@ impl RegularExpression {
 #[cfg(test)]
 mod tests {
     use crate::regex::RegularExpression;
+
+    // The hand-rolled flag stripper must delete exactly the matches of
+    // `\(\?[imsx]*-?[imsx]*\)` (the regex it replaced) and nothing else.
+    #[test]
+    fn remove_flags_strips_flag_groups_only() {
+        let strip = RegularExpression::remove_flags;
+
+        assert_eq!(strip("(?i)a"), "a");
+        assert_eq!(strip("a(?m-s)b"), "ab");
+        assert_eq!(strip("a(?-s)b"), "ab");
+        assert_eq!(strip("(?imsx)(?)a(?i-)"), "a");
+
+        // Non-flag constructs are untouched.
+        assert_eq!(strip("(?:ab|c)d"), "(?:ab|c)d");
+        assert_eq!(strip("(a?)b"), "(a?)b");
+        assert_eq!(strip("a(?i-s"), "a(?i-s"); // unterminated: not a flag group
+        assert_eq!(strip("héllo(?i)é"), "hélloé"); // multi-byte safe
+    }
+
+    // The variants are freely constructible (open enum); invalid bounds are
+    // rejected at the conversion boundary instead.
+    #[test]
+    fn to_automaton_rejects_invalid_repetition_bounds() {
+        use crate::error::EngineError;
+
+        let a = RegularExpression::new("a").unwrap();
+        let invalid = RegularExpression::Repetition(Box::new(a.clone()), 5, Some(2));
+        assert_eq!(
+            invalid.to_automaton().unwrap_err(),
+            EngineError::InvalidRepetitionBounds(5, 2)
+        );
+
+        // Nested invalid repetitions are caught by the recursion.
+        let nested = RegularExpression::Concat([a.clone(), invalid].into());
+        assert_eq!(
+            nested.to_automaton().unwrap_err(),
+            EngineError::InvalidRepetitionBounds(5, 2)
+        );
+
+        // The simplifying combinators must not panic on invalid trees either
+        // (regression: the affix factoring of `r{1,0}` used to underflow).
+        let degenerate = RegularExpression::Repetition(Box::new(a.clone()), 1, Some(0));
+        let _ = a.union(&degenerate);
+        let _ = a.concat(&degenerate, true);
+    }
+
+    // Regression (found by the proptest generators): singleton
+    // Alternation/Concat wrappers print transparently, so quantified
+    // expressions must be parenthesized by looking through them —
+    // `((.a))*` used to print as `.a*` instead of `(.a)*`, changing the
+    // language.
+    #[test]
+    fn display_parenthesizes_through_singleton_wrappers() {
+        use regex_charclass::char::Char;
+
+        let dot = RegularExpression::Character(crate::CharRange::total());
+        let a = RegularExpression::Character(crate::CharRange::new_from_range(
+            Char::new('a')..=Char::new('a'),
+        ));
+        let wrapped =
+            RegularExpression::Alternation(vec![RegularExpression::Concat([dot, a].into())]);
+        let star = RegularExpression::Repetition(Box::new(wrapped), 0, None);
+        assert_eq!(star.to_string(), "(.a)*");
+
+        // The printed pattern must denote the same language as the tree.
+        let reparsed = RegularExpression::parse(&star.to_string(), false).unwrap();
+        assert!(
+            star.to_automaton()
+                .unwrap()
+                .equivalent(&reparsed.to_automaton().unwrap())
+                .unwrap()
+        );
+    }
 
     #[test]
     fn test_parse() -> Result<(), String> {

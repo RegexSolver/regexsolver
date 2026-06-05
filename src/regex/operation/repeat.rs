@@ -1,7 +1,11 @@
 use super::*;
 
 impl RegularExpression {
-    /// Computes the repetition of the automaton between `min` and `max_opt` times; if `max_opt` is `None`, the repetition is unbounded.
+    /// Computes the repetition of the expression between `min` and `max_opt` times; if `max_opt` is `None`, the repetition is unbounded.
+    ///
+    /// When `max_opt` is below `min` there is no valid repetition count and
+    /// the result is the empty language, consistently with
+    /// [`FastAutomaton::repeat`](crate::fast_automaton::FastAutomaton::repeat).
     pub fn repeat(&self, min: u32, max_opt: Option<u32>) -> RegularExpression {
         if self.is_total() {
             return RegularExpression::new_total();
@@ -10,7 +14,12 @@ impl RegularExpression {
         } else if self.is_empty_string() {
             return Self::new_empty_string();
         } else if let Some(max) = max_opt {
-            if max < min || max == 0 {
+            if max < min {
+                // No valid repetition count: the language is empty. This
+                // matches `FastAutomaton::repeat`, which disagreed with the
+                // {""} previously returned here.
+                return RegularExpression::new_empty();
+            } else if max == 0 {
                 return RegularExpression::new_empty_string();
             } else if min == 1 && max == 1 {
                 return self.clone();
@@ -19,17 +28,25 @@ impl RegularExpression {
 
         match self {
             RegularExpression::Repetition(regular_expression, i_min, i_max_opt) => {
-                let new_max = if let (Some(o_max), Some(i_max)) = (max_opt, i_max_opt) {
-                    Some(o_max * i_max)
-                } else {
-                    None
-                };
-
+                // Only collapse (r{i_min,i_max}){min,max} into
+                // r{min·i_min,max·i_max} when the bounds are gap-free AND the
+                // multiplications don't overflow; the nested form is always a
+                // correct fallback.
                 if Self::can_simplify_nested_repetition(*i_min, *i_max_opt, min, max_opt) {
-                    RegularExpression::Repetition(regular_expression.clone(), min * i_min, new_max)
-                } else {
-                    RegularExpression::Repetition(Box::new(self.clone()), min, max_opt)
+                    let new_min = min.checked_mul(*i_min);
+                    let new_max = match (max_opt, i_max_opt) {
+                        (Some(o_max), Some(i_max)) => o_max.checked_mul(*i_max).map(Some),
+                        _ => Some(None),
+                    };
+                    if let (Some(new_min), Some(new_max)) = (new_min, new_max) {
+                        return RegularExpression::Repetition(
+                            regular_expression.clone(),
+                            new_min,
+                            new_max,
+                        );
+                    }
                 }
+                RegularExpression::Repetition(Box::new(self.clone()), min, max_opt)
             }
             _ => RegularExpression::Repetition(Box::new(self.clone()), min, max_opt),
         }
@@ -67,6 +84,33 @@ mod tests {
     use regex_charclass::char::Char;
 
     use crate::{CharRange, regex::RegularExpression};
+
+    // Regression: the nested-repetition simplification used to multiply
+    // bounds unchecked; huge (but valid) bounds must fall back to the nested
+    // form instead of overflowing.
+    #[test]
+    fn repeat_bound_overflow_keeps_nested_form() {
+        let a = RegularExpression::new("a").unwrap();
+        let inner = a.repeat(2, Some(2)); // a{2}
+        let outer = inner.repeat(u32::MAX, Some(u32::MAX)); // 2·u32::MAX overflows
+        assert!(matches!(
+            &outer,
+            RegularExpression::Repetition(r, u32::MAX, Some(u32::MAX))
+                if matches!(&**r, RegularExpression::Repetition(..))
+        ));
+    }
+
+    // r{min,max} with max < min has no valid repetition count: the language
+    // is empty, consistently with `FastAutomaton::repeat` (the regex side
+    // used to return {""} instead).
+    #[test]
+    fn repeat_with_max_below_min_is_empty() {
+        let a = RegularExpression::new("a").unwrap();
+        assert!(a.repeat(5, Some(2)).is_empty());
+
+        let automaton = a.to_automaton().unwrap().repeat(5, Some(2)).unwrap();
+        assert!(automaton.is_empty());
+    }
 
     #[test]
     fn test_parse_and_simplify() -> Result<(), String> {

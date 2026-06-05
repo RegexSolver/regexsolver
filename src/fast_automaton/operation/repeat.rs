@@ -40,11 +40,20 @@ impl FastAutomaton {
         }
 
         // Empty language: ∅⁰ = {""}, ∅ⁿ = ∅ for n ≥ 1. The general algorithm
-        // below assumes at least one accept state when installing loop-backs
-        // for unbounded repeats; bail out here before it can panic.
-        if self.accept_states.is_empty() {
+        // below assumes a non-empty language; bail out before it can panic.
+        // This must be the semantic `is_empty()` check, not just
+        // `accept_states.is_empty()`: an automaton whose accept states are
+        // all unreachable is the empty language too, and the construction
+        // below breaks on it (concatenation prunes the dead accepts, leaving
+        // stale state ids in the accept frontier).
+        if self.is_empty() {
             if min == 0 {
-                self.accept(self.start_state);
+                // ∅⁰ is exactly {""} — replace the whole automaton instead
+                // of marking the start accepting: a dead automaton can still
+                // have reachable transitions (e.g. a self-loop on a
+                // non-accepting start), and an accepting start would wrongly
+                // revive them into (label)*.
+                self.make_empty_string();
             }
             return Ok(());
         }
@@ -74,7 +83,9 @@ impl FastAutomaton {
             && max == 1
         {
             if min == 0 {
-                self.accept_states.insert(self.start_state);
+                // Through `accept()`, not a direct insert: the language
+                // changes (it gains ""), so the `minimal` flag must clear.
+                self.accept(self.start_state);
             }
             return Ok(());
         }
@@ -141,14 +152,15 @@ impl FastAutomaton {
         // copies (e.g. `(a*b){1,3}` matching "ba"). In that case we force a
         // non-merging concatenation so each boundary is a clean accept state
         // reached by an epsilon transition.
-        let force_no_merge =
-            automaton_to_repeat.in_degree(automaton_to_repeat.start_state) > 0;
+        let force_no_merge = automaton_to_repeat.in_degree(automaton_to_repeat.start_state) > 0;
         let mut end_states = self.accept_states.iter().cloned().collect::<Vec<_>>();
         for _ in cmp::max(min, 1)..max_opt.unwrap() {
             self.concat_mut_with(&automaton_to_repeat, force_no_merge)?;
             end_states.extend(self.accept_states.iter());
         }
-        self.accept_states.extend(end_states);
+        for end_state in end_states {
+            self.accept(end_state);
+        }
         if min == 0 {
             self.accept(self.start_state);
         }
@@ -179,8 +191,14 @@ impl FastAutomaton {
         let in_deg_start = self.in_degree(self.start_state) > 0;
 
         // --- REUSE CONCAT HEURISTIC HERE ---
-        // Calculate the state delta for a single concatenation.
-        let concat_cost = self.concat_state_count_heuristic(self) - v_original;
+        // Calculate the state delta for a single concatenation. The concat
+        // heuristic short-circuits to a *smaller* value than `v_original`
+        // for degenerate languages (∅ → 1, {""} → the operand size), so the
+        // delta must saturate: `repeat_mut` early-returns for those inputs
+        // right after this estimate anyway.
+        let concat_cost = self
+            .concat_state_count_heuristic(self)
+            .saturating_sub(v_original);
 
         // 2. Early state allocation for 0-minimum repeats with incoming start edges
         if min == 0 && in_deg_start {
@@ -228,8 +246,7 @@ impl FastAutomaton {
                 match self.repeat(0, None) {
                     Ok(star) => {
                         let star_states = star.get_number_of_states();
-                        let not_mergeable =
-                            star.in_degree(star.start_state) > 0 && acc_out_gt_0;
+                        let not_mergeable = star.in_degree(star.start_state) > 0 && acc_out_gt_0;
                         let final_concat_cost = if not_mergeable {
                             star_states
                         } else {
@@ -261,6 +278,81 @@ impl FastAutomaton {
 
 #[cfg(test)]
 mod tests {
+    // Regression: the r{0,1} fast path used to insert into `accept_states`
+    // directly, leaving a stale `minimal = true` on a mutated automaton —
+    // `minimize()` (which trusts the flag) then silently refused to
+    // minimize it.
+    // Regression (found by the repeat decomposition-oracle proptest): the
+    // empty-language guard checked `accept_states.is_empty()` only, so an
+    // automaton whose accepts are all unreachable (language ∅ too) fell
+    // through to the general construction, which panicked on the stale
+    // accept ids after concatenation pruned them.
+    #[test]
+    fn repeat_of_unreachable_accept_empty_language() {
+        let mut a = crate::fast_automaton::FastAutomaton::new_empty();
+        let s1 = a.new_state();
+        a.accept(s1); // unreachable accept: the language is ∅
+        assert!(a.is_empty());
+
+        let star = a.repeat(0, None).unwrap(); // ∅* = {""}
+        assert!(star.is_match(""));
+        assert!(!star.is_match("a"));
+
+        assert!(a.repeat(1, Some(2)).unwrap().is_empty()); // ∅{1,2} = ∅
+        assert!(a.repeat(2, None).unwrap().is_empty()); // ∅{2,} = ∅
+
+        // A dead automaton with REACHABLE transitions: ∅* must still be
+        // exactly {""} — marking the start accepting used to revive the
+        // dead self-loop into b*.
+        let range_b = crate::CharRange::new_from_range(
+            regex_charclass::char::Char::new('b')..=regex_charclass::char::Char::new('b'),
+        );
+        let mut dead_loop = crate::fast_automaton::FastAutomaton::new_empty();
+        dead_loop.add_transition_from_range(0, 0, &range_b).unwrap();
+        assert!(dead_loop.is_empty());
+
+        let star = dead_loop.repeat(0, None).unwrap();
+        assert!(star.is_match(""));
+        assert!(!star.is_match("b"), "∅* must not contain \"b\"");
+        assert!(dead_loop.repeat(1, None).unwrap().is_empty());
+    }
+
+    // state-count heuristic underflowed on empty-language automata with
+    // more than one state, because the concat heuristic short-circuits ∅
+    // to 1 — panicking in the public `repeat` before the empty-language
+    // early-return could run.
+    #[test]
+    fn repeat_of_multi_state_empty_language_does_not_underflow() {
+        let mut a = crate::fast_automaton::FastAutomaton::new_empty();
+        a.new_state(); // ≥ 2 states, no accept states: the empty language
+
+        let star = a.repeat(0, None).unwrap(); // ∅* = {""}
+        assert!(star.is_match(""));
+        assert!(!star.is_match("a"));
+
+        let plus = a.repeat(1, None).unwrap(); // ∅⁺ = ∅
+        assert!(plus.is_empty());
+
+        let bounded = a.repeat(2, Some(3)).unwrap(); // ∅{2,3} = ∅
+        assert!(bounded.is_empty());
+    }
+
+    #[test]
+    fn repeat_zero_or_one_clears_the_minimal_flag() {
+        let mut a = crate::regex::RegularExpression::new("ab")
+            .unwrap()
+            .to_automaton()
+            .unwrap();
+        a.minimize().unwrap();
+        assert!(a.is_minimal());
+        assert!(!a.is_match(""));
+
+        a.repeat_mut(0, Some(1)).unwrap();
+        assert!(a.is_match(""));
+        assert!(a.is_match("ab"));
+        assert!(!a.is_minimal(), "the language changed: the flag must clear");
+    }
+
     use crate::fast_automaton::FastAutomaton;
     use crate::regex::RegularExpression;
 
@@ -298,7 +390,10 @@ mod tests {
         ] {
             let r = empty_string.repeat(min, max).unwrap();
             assert!(r.is_match(""), "{{\"\"}}{{{min},{max:?}}} must match \"\"");
-            assert!(!r.is_match("a"), "{{\"\"}}{{{min},{max:?}}} must match only \"\"");
+            assert!(
+                !r.is_match("a"),
+                "{{\"\"}}{{{min},{max:?}}} must match only \"\""
+            );
         }
     }
 

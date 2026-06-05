@@ -13,11 +13,38 @@ mod builder;
 mod operation;
 
 /// Represent a regular expression.
+///
+/// The variants are public and freely constructible and matchable. Values
+/// can also be built with the parser ([`new`](Self::new) /
+/// [`parse`](Self::parse)) or the simplifying combinators
+/// ([`concat`](Self::concat), [`union`](Self::union),
+/// [`repeat`](Self::repeat)). A directly-constructed repetition whose
+/// maximum is below its minimum denotes no valid language and is rejected
+/// with [`EngineError::InvalidRepetitionBounds`] when converted by
+/// [`to_automaton`](Self::to_automaton).
+///
+/// ```
+/// use regexsolver::regex::RegularExpression;
+///
+/// let regex = RegularExpression::new("a{2,3}").unwrap();
+/// if let RegularExpression::Repetition(inner, min, max) = &regex {
+///     assert_eq!((*min, *max), (2, Some(3)));
+///     assert_eq!(inner.to_string(), "a");
+/// }
+/// ```
 #[derive(Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
+#[must_use = "regular expressions are immutable; operations return a new expression"]
 pub enum RegularExpression {
+    /// A single character drawn from the given range; an empty range denotes
+    /// the empty language `[]`.
     Character(CharRange),
+    /// `r{min,max}`; `None` means unbounded. Expected invariant: `max >= min`
+    /// when bounded (checked by [`to_automaton`](Self::to_automaton)).
     Repetition(Box<RegularExpression>, u32, Option<u32>),
+    /// The concatenation of the parts in order; no parts denotes the empty
+    /// string `""`.
     Concat(VecDeque<RegularExpression>),
+    /// The union of the parts; no parts denotes the empty language `[]`.
     Alternation(Vec<RegularExpression>),
 }
 
@@ -48,14 +75,10 @@ impl Display for RegularExpression {
                 } else {
                     multiplicator_part = format!("{{{min},}}");
                 }
-                match **regular_expression {
-                    RegularExpression::Repetition(_, _, _) => {
-                        format!("({regex_part}){multiplicator_part}")
-                    }
-                    RegularExpression::Concat(_) => {
-                        format!("({regex_part}){multiplicator_part}")
-                    }
-                    _ => format!("{regex_part}{multiplicator_part}"),
+                if RegularExpression::quantifier_needs_parens(regular_expression) {
+                    format!("({regex_part}){multiplicator_part}")
+                } else {
+                    format!("{regex_part}{multiplicator_part}")
                 }
             }
             RegularExpression::Concat(concat) => {
@@ -88,6 +111,32 @@ impl Display for RegularExpression {
 }
 
 impl RegularExpression {
+    /// Whether applying a quantifier to the printed form of `r` requires
+    /// wrapping it in a group. Singleton `Concat`/`Alternation` wrappers
+    /// print transparently, so the decision must look through them instead
+    /// of matching on the direct child's variant.
+    fn quantifier_needs_parens(r: &RegularExpression) -> bool {
+        match r {
+            // Prints as a single char or a [class]: one token.
+            RegularExpression::Character(..) => false,
+            RegularExpression::Repetition(..) => true,
+            RegularExpression::Concat(parts) => match parts.len() {
+                1 => Self::quantifier_needs_parens(&parts[0]),
+                // Covers both the empty concatenation — which prints as ""
+                // and needs the explicit group, `()*` is valid but a bare
+                // `*` is not — and real multi-part concatenations.
+                _ => true,
+            },
+            RegularExpression::Alternation(parts) => match parts.len() {
+                // The empty alternation prints as "[]": one token.
+                0 => false,
+                1 => Self::quantifier_needs_parens(&parts[0]),
+                // Multi-part alternations print self-parenthesized.
+                _ => false,
+            },
+        }
+    }
+
     /// Checks if the regular expression matches the empty language.
     pub fn is_empty(&self) -> bool {
         match self {
@@ -129,6 +178,13 @@ impl RegularExpression {
         match self {
             RegularExpression::Character(range) => Ok(FastAutomaton::new_from_range(range)),
             RegularExpression::Repetition(regular_expression, min, max_opt) => {
+                // The variants are freely constructible; invalid bounds are
+                // rejected at this boundary instead.
+                if let Some(max) = max_opt
+                    && max < min
+                {
+                    return Err(EngineError::InvalidRepetitionBounds(*min, *max));
+                }
                 let mut automaton = regular_expression.to_automaton()?;
                 automaton.repeat_mut(*min, *max_opt)?;
                 Ok(automaton)

@@ -24,52 +24,50 @@
 //! determinization / set operations under test stay cheap.
 //!
 //! While *coverage* is uniform-in-support, the *distribution* is deliberately
-//! shaped: per-automaton edge/epsilon/accept densities are sampled and the
-//! character-class strategy favors single letters, so that degenerate
-//! languages (∅, {""}) and near-complete blobs are occasional rather than
-//! dominant. All weights stay strictly inside (0, 1), preserving the
+//! shaped — the `inspect::stats` test measures the result and asserts floors:
+//!
+//! * Per-automaton edge/epsilon/accept densities are sampled, with the accept
+//!   density centered on ½ (where accepting/rejecting states are hardest to
+//!   merge, keeping minimal DFAs — and therefore the work done by minimize /
+//!   equivalence / state elimination — large).
+//! * An optional "anchor" state is forced accepting so the empty language is
+//!   an occasional edge case instead of a fifth of the sample.
+//! * A per-automaton acyclic mode (≈⅓ of cases) generates DAGs, whose finite
+//!   languages exercise the topological-sort paths of the cardinality and
+//!   max-length analyses that cyclic automata never reach.
+//! * The character-class strategy favors single letters so that a `[]`
+//!   (empty-language) leaf does not collapse most expressions.
+//!
+//! All weights stay strictly inside (0, 1), preserving the
 //! non-null-probability guarantee.
 
 use proptest::prelude::*;
 use regex_charclass::char::Char;
 use regexsolver::CharRange;
+use regexsolver::cardinality::Cardinality;
 use regexsolver::error::EngineError;
 use regexsolver::execution_profile::ExecutionProfileBuilder;
 use regexsolver::fast_automaton::FastAutomaton;
-use regexsolver::fast_automaton::condition::Condition;
-use regexsolver::fast_automaton::spanning_set::SpanningSet;
 use regexsolver::regex::RegularExpression;
 
 /// Fixed alphabet the strategies draw transition labels from.
 pub const ALPHABET: &[char] = &['a', 'b'];
 
 /// Maximum number of states a generated automaton can have.
-pub const MAX_STATES: usize = 4;
+pub const MAX_STATES: usize = 5;
 
-/// The single-character range for the `i`-th alphabet letter.
-fn letter(i: usize) -> CharRange {
-    let c = Char::new(ALPHABET[i]);
+/// The single-character range for the `i`-th letter of `alphabet`.
+fn letter_over(alphabet: &[char], i: usize) -> CharRange {
+    let c = Char::new(alphabet[i]);
     CharRange::new_from_range(c..=c)
 }
 
-/// The spanning set induced by the alphabet (one base per letter + a "rest").
-fn spanning_set() -> SpanningSet {
-    let ranges: Vec<CharRange> = (0..ALPHABET.len()).map(letter).collect();
-    SpanningSet::compute_spanning_set(&ranges)
+/// The single-character range for the `i`-th [`ALPHABET`] letter.
+fn letter(i: usize) -> CharRange {
+    letter_over(ALPHABET, i)
 }
 
-/// The transition-label bases: one [`CharRange`] per alphabet letter.
-///
-/// We deliberately exclude the spanning set's "rest" range. The spanning set's
-/// contract is that the rest holds exactly the characters that **no** transition
-/// uses, so a label may only be a subset of the alphabet letters; that is also
-/// precisely the standard "automaton over Σ" model.
-fn bases(ss: &SpanningSet) -> Vec<CharRange> {
-    let _ = ss;
-    (0..ALPHABET.len()).map(letter).collect()
-}
-
-/// Number of transition-label bases (one per alphabet letter).
+/// Number of transition-label letters (one per [`ALPHABET`] letter).
 fn num_bases() -> usize {
     ALPHABET.len()
 }
@@ -82,25 +80,22 @@ fn arb_num_states() -> impl Strategy<Value = usize> {
     (1usize..=MAX_STATES, 1usize..=MAX_STATES).prop_map(|(a, b)| a.max(b))
 }
 
-/// Builds an automaton from a structural description using only the public API.
+/// Builds an automaton over `alphabet` from a structural description using
+/// only the public API.
 ///
 /// `accepts[s]` marks state `s` accepting; each `(from, to, mask)` adds a
-/// transition whose label is the union of the bases selected by `mask`; each
-/// `(from, to)` in `eps` adds an epsilon transition. The start state is `0`.
-fn build(
+/// transition whose label is the union of the letters selected by `mask`
+/// (`add_transition_from_range` grows the automaton's spanning set as
+/// needed); each `(from, to)` in `eps` adds an epsilon transition. The start
+/// state is `0`.
+fn build_over(
+    alphabet: &[char],
     n: usize,
     accepts: &[bool],
     char_edges: &[(usize, usize, Vec<bool>)],
     eps: &[(usize, usize)],
 ) -> FastAutomaton {
-    let ss = spanning_set();
-    let bs = bases(&ss);
-
     let mut a = FastAutomaton::new_empty();
-    // `new_empty` already owns state 0; the spanning set is applied before any
-    // transition so the conditions we add line up with it.
-    a.apply_new_spanning_set(&ss)
-        .expect("applying a spanning set to an empty automaton never fails");
     for _ in 1..n {
         a.new_state();
     }
@@ -115,15 +110,11 @@ fn build(
         let mut range = CharRange::empty();
         for (i, &on) in mask.iter().enumerate() {
             if on {
-                range = range.union(&bs[i]);
+                range = range.union(&letter_over(alphabet, i));
             }
         }
-        if range.is_empty() {
-            continue;
-        }
-        let cond = Condition::from_range(&range, &ss)
-            .expect("a union of full spanning bases is always a valid condition");
-        a.add_transition(*from, *to, &cond);
+        a.add_transition_from_range(*from, *to, &range)
+            .expect("adding a union of alphabet letters never fails");
     }
 
     // Epsilon transitions are added last: `add_epsilon_transition` eagerly
@@ -135,6 +126,16 @@ fn build(
     a
 }
 
+/// [`build_over`] with the default [`ALPHABET`].
+fn build(
+    n: usize,
+    accepts: &[bool],
+    char_edges: &[(usize, usize, Vec<bool>)],
+    eps: &[(usize, usize)],
+) -> FastAutomaton {
+    build_over(ALPHABET, n, accepts, char_edges, eps)
+}
+
 /// Strategy producing every DFA over the alphabet with `1..=MAX_STATES` states.
 ///
 /// Determinism is structural: for each state and each letter we choose at most
@@ -143,22 +144,43 @@ fn build(
 /// An edge density and an accept density are sampled per automaton (both
 /// bounded away from 0 and 1, so every DFA keeps a positive probability).
 /// Mostly-total transition functions keep the states connected, which makes
-/// degenerate (∅ / {""}) languages the exception rather than the rule.
+/// degenerate (∅ / {""}) languages the exception rather than the rule. The
+/// accept density is centered on ½ because that is where accepting/rejecting
+/// states are hardest to merge, i.e. where minimal DFAs stay large.
+///
+/// A per-automaton `acyclic` flag (≈⅓ of cases) remaps every chosen target
+/// into the forward range `from+1..n`, producing a DAG and therefore a
+/// **finite** language. Without it nearly every random automaton contains a
+/// cycle, and the finite-language paths of the cardinality and max-length
+/// analyses go untested. Cyclic mode still reaches every DFA, so coverage is
+/// preserved.
 pub fn arb_dfa() -> impl Strategy<Value = FastAutomaton> {
-    (arb_num_states(), 0.6f64..0.97, 0.4f64..0.9)
-        .prop_flat_map(|(n, edge_density, accept_density)| {
+    (
+        arb_num_states(),
+        0.6f64..0.97,
+        0.25f64..0.75,
+        prop::bool::weighted(0.35),
+    )
+        .prop_flat_map(|(n, edge_density, accept_density, acyclic)| {
             let accepts = prop::collection::vec(prop::bool::weighted(accept_density), n);
+            // An "anchor" state forced accepting most of the time: without it
+            // the whole accept vector samples all-false often enough that the
+            // empty language eats a fifth of the sample. Non-start states are
+            // preferred — anchoring the start only inflates the {""} corner.
+            // The `None` branch keeps every accept subset (incl. all-false)
+            // reachable.
+            let anchor = prop::option::weighted(0.85, 1usize.min(n - 1)..n);
             // transition function: tf[state][base] = optional target state
             let tf = prop::collection::vec(
-                prop::collection::vec(
-                    prop::option::weighted(edge_density, 0usize..n),
-                    num_bases(),
-                ),
+                prop::collection::vec(prop::option::weighted(edge_density, 0usize..n), num_bases()),
                 n,
             );
-            (Just(n), accepts, tf)
+            (Just(n), accepts, anchor, tf, Just(acyclic))
         })
-        .prop_map(|(n, accepts, tf)| {
+        .prop_map(|(n, mut accepts, anchor, tf, acyclic)| {
+            if let Some(k) = anchor {
+                accepts[k] = true;
+            }
             let nb = num_bases();
             let mut edges: Vec<(usize, usize, Vec<bool>)> = Vec::new();
             for (from, row) in tf.iter().enumerate() {
@@ -168,7 +190,18 @@ pub fn arb_dfa() -> impl Strategy<Value = FastAutomaton> {
                     std::collections::BTreeMap::new();
                 for (base, target) in row.iter().enumerate() {
                     if let Some(t) = target {
-                        by_target.entry(*t).or_insert_with(|| vec![false; nb])[base] = true;
+                        let t = if acyclic {
+                            if from + 1 >= n {
+                                // the last state of a DAG has no outgoing edge
+                                continue;
+                            }
+                            // remap into the forward range; every forward
+                            // target keeps a positive probability
+                            from + 1 + (*t % (n - from - 1))
+                        } else {
+                            *t
+                        };
+                        by_target.entry(t).or_insert_with(|| vec![false; nb])[base] = true;
                     }
                 }
                 for (to, mask) in by_target {
@@ -188,36 +221,72 @@ pub fn arb_dfa() -> impl Strategy<Value = FastAutomaton> {
 /// comparable across sizes. Epsilon and accept densities are sampled too. All
 /// densities stay strictly inside (0, 1), so every NFA keeps a positive
 /// probability.
+///
+/// As in [`arb_dfa`], the accept density is centered on ½ and a per-automaton
+/// `acyclic` flag (≈⅓ of cases) keeps only forward (`from < to`) edges,
+/// producing finite languages; the density is rescaled to the smaller target
+/// pool so the out-degree stays comparable. Epsilon transitions are kept rare
+/// because [`FastAutomaton::add_epsilon_transition`] eagerly folds the target
+/// state into the source, which merges languages and shrinks minimal DFAs.
 pub fn arb_nfa() -> impl Strategy<Value = FastAutomaton> {
+    arb_nfa_over(ALPHABET)
+}
+
+/// [`arb_nfa`] generalized to an arbitrary alphabet, so two operands of a
+/// binary operation can be generated over *different* alphabets — the only
+/// way to exercise `SpanningSet::merge` and the `ConditionConverter`
+/// re-projection (same-alphabet operands share an identical spanning set and
+/// the conversion is the identity).
+pub fn arb_nfa_over(alphabet: &'static [char]) -> impl Strategy<Value = FastAutomaton> {
     (
         arb_num_states(),
         1.0f64..2.8,
-        0.02f64..0.18,
-        0.4f64..0.9,
+        0.02f64..0.12,
+        0.25f64..0.75,
+        prop::bool::weighted(0.35),
     )
-        .prop_flat_map(|(n, target_out_degree, eps_density, accept_density)| {
-            let label_density =
-                (target_out_degree / (n as f64 * num_bases() as f64)).clamp(0.02, 0.95);
-            let accepts = prop::collection::vec(prop::bool::weighted(accept_density), n);
-            // labels[from][to] = mask over the alphabet letters
-            let labels = prop::collection::vec(
-                prop::collection::vec(
-                    prop::collection::vec(prop::bool::weighted(label_density), num_bases()),
+        .prop_flat_map(
+            move |(n, target_out_degree, eps_density, accept_density, acyclic)| {
+                // In acyclic mode only the upper triangle of the matrix survives,
+                // so the average target pool is half as big.
+                let effective_targets = if acyclic {
+                    (n as f64 / 2.0).max(1.0)
+                } else {
+                    n as f64
+                };
+                let label_density = (target_out_degree
+                    / (effective_targets * alphabet.len() as f64))
+                    .clamp(0.02, 0.95);
+                let accepts = prop::collection::vec(prop::bool::weighted(accept_density), n);
+                // see arb_dfa: keeps the empty language an edge case, not a fifth
+                // of the sample
+                let anchor = prop::option::weighted(0.85, 1usize.min(n - 1)..n);
+                // labels[from][to] = mask over the alphabet letters
+                let labels = prop::collection::vec(
+                    prop::collection::vec(
+                        prop::collection::vec(prop::bool::weighted(label_density), alphabet.len()),
+                        n,
+                    ),
                     n,
-                ),
-                n,
-            );
-            // eps[from][to] = whether an epsilon transition is present
-            let eps = prop::collection::vec(
-                prop::collection::vec(prop::bool::weighted(eps_density), n),
-                n,
-            );
-            (Just(n), accepts, labels, eps)
-        })
-        .prop_map(|(n, accepts, labels, eps)| {
+                );
+                // eps[from][to] = whether an epsilon transition is present
+                let eps = prop::collection::vec(
+                    prop::collection::vec(prop::bool::weighted(eps_density), n),
+                    n,
+                );
+                (Just(n), accepts, anchor, labels, eps, Just(acyclic))
+            },
+        )
+        .prop_map(move |(n, mut accepts, anchor, labels, eps, acyclic)| {
+            if let Some(k) = anchor {
+                accepts[k] = true;
+            }
             let mut char_edges = Vec::new();
             for (from, row) in labels.iter().enumerate() {
                 for (to, mask) in row.iter().enumerate() {
+                    if acyclic && to <= from {
+                        continue;
+                    }
                     if mask.iter().any(|&b| b) {
                         char_edges.push((from, to, mask.clone()));
                     }
@@ -226,12 +295,13 @@ pub fn arb_nfa() -> impl Strategy<Value = FastAutomaton> {
             let mut eps_edges = Vec::new();
             for (from, row) in eps.iter().enumerate() {
                 for (to, &on) in row.iter().enumerate() {
-                    if on && from != to {
+                    let backward = acyclic && to <= from;
+                    if on && from != to && !backward {
                         eps_edges.push((from, to));
                     }
                 }
             }
-            build(n, &accepts, &char_edges, &eps_edges)
+            build_over(alphabet, n, &accepts, &char_edges, &eps_edges)
         })
 }
 
@@ -260,19 +330,26 @@ fn arb_charrange() -> impl Strategy<Value = CharRange> {
 
 /// Strategy producing regular expressions over the four [`RegularExpression`]
 /// variants up to a bounded recursion depth.
+///
+/// Repetition gets the heaviest weight: it is the variant that feeds the
+/// `{n,m}` expansion, the simplifier and the loop handling of state
+/// elimination, and stacking it (`(a*){2}`-style nesting) is where those
+/// paths historically break. Concat and alternation still keep substantial
+/// weight so all shapes appear.
 pub fn arb_regex() -> impl Strategy<Value = RegularExpression> {
     let leaf = arb_charrange().prop_map(RegularExpression::Character);
-    leaf.prop_recursive(3, 24, 3, |inner| {
+    leaf.prop_recursive(4, 48, 3, |inner| {
         prop_oneof![
-            (inner.clone(), 0u32..=2, 0u32..=2, any::<bool>()).prop_map(
+            3 => (inner.clone(), 0u32..=2, 0u32..=2, any::<bool>()).prop_map(
                 |(r, min, extra, has_max)| {
+                    // max is min + extra, so the bounds are always valid
                     let max = if has_max { Some(min + extra) } else { None };
                     RegularExpression::Repetition(Box::new(r), min, max)
                 }
             ),
-            prop::collection::vec(inner.clone(), 1..=3)
-                .prop_map(|v| RegularExpression::Concat(v.into_iter().collect())),
-            prop::collection::vec(inner, 1..=3).prop_map(RegularExpression::Alternation),
+            2 => prop::collection::vec(inner.clone(), 1..=3)
+                .prop_map(|v| RegularExpression::Concat(v.into())),
+            2 => prop::collection::vec(inner, 1..=3).prop_map(RegularExpression::Alternation),
         ]
     })
 }
@@ -304,14 +381,15 @@ fn complemented(a: &FastAutomaton) -> Option<FastAutomaton> {
     })
 }
 
-/// All strings up to length 4 over the alphabet (plus the empty string).
-fn probes() -> Vec<String> {
+/// All strings up to length `max_len` over `alphabet` (plus the empty
+/// string).
+fn probes_over(alphabet: &[char], max_len: usize) -> Vec<String> {
     let mut all = vec![String::new()];
     let mut frontier = vec![String::new()];
-    for _ in 0..4 {
+    for _ in 0..max_len {
         let mut next = Vec::new();
         for w in &frontier {
-            for &c in ALPHABET {
+            for &c in alphabet {
                 let mut s = w.clone();
                 s.push(c);
                 next.push(s);
@@ -321,6 +399,96 @@ fn probes() -> Vec<String> {
         frontier = next;
     }
     all
+}
+
+/// All strings up to length 4 over [`ALPHABET`] (plus the empty string).
+fn probes() -> Vec<String> {
+    probes_over(ALPHABET, 4)
+}
+
+/// Asserts that intersection / union / difference of `a` and `b` agree with
+/// the boolean combination of the operands on every probe string.
+fn assert_set_ops_membership(
+    a: &FastAutomaton,
+    b: &FastAutomaton,
+    probes: &[String],
+) -> Result<(), TestCaseError> {
+    if let Some(inter) = bounded(|| a.intersection(b)) {
+        for s in probes {
+            prop_assert_eq!(
+                inter.is_match(s),
+                a.is_match(s) && b.is_match(s),
+                "intersection membership for {:?}",
+                s
+            );
+        }
+    }
+    if let Some(union) = bounded(|| a.union(b)) {
+        for s in probes {
+            prop_assert_eq!(
+                union.is_match(s),
+                a.is_match(s) || b.is_match(s),
+                "union membership for {:?}",
+                s
+            );
+        }
+    }
+    // `difference` determinizes the subtrahend itself.
+    if let Some(diff) = bounded(|| a.difference(b)) {
+        for s in probes {
+            prop_assert_eq!(
+                diff.is_match(s),
+                a.is_match(s) && !b.is_match(s),
+                "difference membership for {:?}",
+                s
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Decomposition oracle for repetition: `s` is in L(a){min,max} iff `s`
+/// splits into k pieces, each in L(a), for some valid k. Piece counts
+/// saturate at `min` once they can only grow (relevant for unbounded
+/// maxima and for "" ∈ L(a), which allows padding with empty pieces).
+fn repeat_decomposition_oracle(a: &FastAutomaton, s: &str, min: u32, max: Option<u32>) -> bool {
+    let min = min as usize;
+    let cap = max.map(|m| m as usize).unwrap_or(min).max(min);
+    let accepts_empty = a.is_match("");
+    let len = s.len();
+
+    // reach[i][k]: the prefix of length i splits into exactly k pieces
+    // (k saturated at cap + 1 to keep the table finite).
+    let k_slots = cap + 2;
+    let mut reach = vec![vec![false; k_slots]; len + 1];
+    reach[0][0] = true;
+    for i in 0..=len {
+        for k in 0..k_slots {
+            if !reach[i][k] {
+                continue;
+            }
+            let next_k = (k + 1).min(cap + 1);
+            // Pad with an empty piece.
+            if accepts_empty {
+                reach[i][next_k] = true;
+            }
+            // Consume a non-empty piece.
+            for j in i + 1..=len {
+                if a.is_match(&s[i..j]) {
+                    reach[j][next_k] = true;
+                }
+            }
+        }
+    }
+
+    let k_ok = |k: usize| {
+        k >= min
+            && match max {
+                Some(m) => k <= m as usize,
+                None => true,
+            }
+    };
+    (0..k_slots).any(|k| reach[len][k] && k_ok(k))
 }
 
 proptest! {
@@ -382,32 +550,164 @@ proptest! {
     /// combination of the operands on every probe string.
     #[test]
     fn set_ops_membership(a in arb_nfa(), b in arb_nfa()) {
-        let ps = probes();
+        assert_set_ops_membership(&a, &b, &probes())?;
+    }
 
-        if let Some(inter) = bounded(|| a.intersection(&b)) {
-            for s in &ps {
+    /// Set operations across operands built over *overlapping but different*
+    /// alphabets ({a,b} vs {b,c}): the operands carry different spanning
+    /// sets, so `SpanningSet::merge` and the `ConditionConverter`
+    /// re-projection do real work (same-alphabet pairs convert via the
+    /// identity). The shared letter `b` keeps the intersections non-trivial.
+    #[test]
+    fn set_ops_membership_overlapping_alphabets(
+        a in arb_nfa_over(&['a', 'b']),
+        b in arb_nfa_over(&['b', 'c']),
+    ) {
+        assert_set_ops_membership(&a, &b, &probes_over(&['a', 'b', 'c'], 4))?;
+    }
+
+    /// Set operations across operands built over *disjoint* alphabets
+    /// ({a,b} vs {c,d}): the merged spanning set shares no base with either
+    /// source, the most extreme re-projection. The intersection collapses to
+    /// at most {""} — itself a worthwhile edge case.
+    #[test]
+    fn set_ops_membership_disjoint_alphabets(
+        a in arb_nfa_over(&['a', 'b']),
+        b in arb_nfa_over(&['c', 'd']),
+    ) {
+        assert_set_ops_membership(&a, &b, &probes_over(&['a', 'b', 'c', 'd'], 3))?;
+    }
+
+    /// `get_length` and `get_cardinality` agree with brute-force enumeration.
+    /// The probes cover *every* string up to length 4, so they are exactly
+    /// the language whenever the maximum length is ≤ 4, and a complete
+    /// census of its short strings otherwise.
+    #[test]
+    fn length_cardinality_match_brute_force(a in arb_nfa()) {
+        let (min, max) = a.get_length();
+        let matched_lengths: Vec<u32> = probes()
+            .iter()
+            .filter(|s| a.is_match(s))
+            .map(|s| s.chars().count() as u32)
+            .collect();
+
+        // Minimum: any string of length ≤ 4 is a probe, so a language with
+        // min ≤ 4 has a matched probe of exactly that length.
+        match (min, matched_lengths.iter().min()) {
+            (Some(min_len), Some(&shortest)) => {
+                prop_assert_eq!(min_len, shortest, "min length disagrees with enumeration");
+            }
+            (Some(min_len), None) => {
+                prop_assert!(min_len > 4, "min ≤ 4 but no probe matched");
+            }
+            (None, Some(_)) => prop_assert!(false, "empty language matched a probe"),
+            (None, None) => {}
+        }
+
+        if let Some(max_len) = max
+            && max_len <= 4
+        {
+            // The probes enumerate the whole language.
+            prop_assert_eq!(
+                Some(max_len),
+                matched_lengths.iter().max().copied(),
+                "max length disagrees with enumeration"
+            );
+            if let Some(cardinality) = bounded(|| a.get_cardinality()) {
                 prop_assert_eq!(
-                    inter.is_match(s), a.is_match(s) && b.is_match(s),
-                    "intersection membership for {:?}", s
+                    cardinality,
+                    Cardinality::Integer(matched_lengths.len() as u32),
+                    "cardinality disagrees with enumeration"
+                );
+            }
+        } else if max.is_none()
+            && min.is_some()
+            && let Some(cardinality) = bounded(|| a.get_cardinality())
+        {
+            // A cycle on an accepting path means infinitely many strings.
+            prop_assert_eq!(
+                cardinality,
+                Cardinality::Infinite,
+                "infinite language with non-infinite cardinality"
+            );
+        }
+    }
+
+    /// `FastAutomaton::concat` agrees with the split-membership oracle:
+    /// s ∈ L(a)·L(b) iff some split s = u·v has u ∈ L(a) and v ∈ L(b).
+    #[test]
+    fn automaton_concat_matches_split_oracle(a in arb_nfa(), b in arb_nfa()) {
+        if let Some(concat) = bounded(|| a.concat(&b)) {
+            for s in probes() {
+                let expected =
+                    (0..=s.len()).any(|i| a.is_match(&s[..i]) && b.is_match(&s[i..]));
+                prop_assert_eq!(
+                    concat.is_match(&s), expected,
+                    "concat membership for {:?}", s
                 );
             }
         }
-        if let Some(union) = bounded(|| a.union(&b)) {
-            for s in &ps {
+    }
+
+    /// `FastAutomaton::repeat` agrees with a decomposition oracle computed by
+    /// dynamic programming over (position, piece-count) — independent of the
+    /// engine's own repeat construction (which the regex route would reuse).
+    #[test]
+    fn automaton_repeat_matches_decomposition_oracle(
+        a in arb_nfa(),
+        min in 0u32..3,
+        extra in 0u32..2,
+        unbounded in any::<bool>(),
+    ) {
+        let max = if unbounded { None } else { Some(min + extra) };
+        if let Some(repeated) = bounded(|| a.repeat(min, max)) {
+            for s in probes() {
+                let expected = repeat_decomposition_oracle(&a, &s, min, max);
                 prop_assert_eq!(
-                    union.is_match(s), a.is_match(s) || b.is_match(s),
-                    "union membership for {:?}", s
+                    repeated.is_match(&s), expected,
+                    "repeat({}, {:?}) membership for {:?}", min, max, s
                 );
             }
         }
-        // `difference` determinizes the subtrahend itself.
-        if let Some(diff) = bounded(|| a.difference(&b)) {
-            for s in &ps {
-                prop_assert_eq!(
-                    diff.is_match(s), a.is_match(s) && !b.is_match(s),
-                    "difference membership for {:?}", s
-                );
+    }
+
+    /// `Term::union` / `Term::intersection` over more than 3 operands (the
+    /// parallel dispatch path when the `parallel` feature is on) agree with
+    /// sequential pairwise folds.
+    #[test]
+    fn many_operand_term_ops_match_pairwise_folds(
+        a in arb_nfa(), b in arb_nfa(), c in arb_nfa(), d in arb_nfa(), e in arb_nfa(),
+    ) {
+        use regexsolver::Term;
+
+        let operands: Vec<Term> = [&b, &c, &d, &e]
+            .into_iter()
+            .map(|x| Term::from_automaton(x.clone()))
+            .collect();
+        let first = Term::from_automaton(a.clone());
+
+        if let Some(many) = bounded(|| {
+            Ok(first.union(&operands)?.to_automaton()?.into_owned())
+        }) && let Some(pairwise) = bounded(|| {
+            let mut acc = a.clone();
+            for x in [&b, &c, &d, &e] {
+                acc = acc.union(x)?;
             }
+            Ok(acc)
+        }) && let Some(eq) = bounded(|| many.equivalent(&pairwise)) {
+            prop_assert!(eq, "5-operand union disagrees with pairwise folds");
+        }
+
+        if let Some(many) = bounded(|| {
+            Ok(first.intersection(&operands)?.to_automaton()?.into_owned())
+        }) && let Some(pairwise) = bounded(|| {
+            let mut acc = a.clone();
+            for x in [&b, &c, &d, &e] {
+                acc = acc.intersection(x)?;
+            }
+            Ok(acc)
+        }) && let Some(eq) = bounded(|| many.equivalent(&pairwise)) {
+            prop_assert!(eq, "5-operand intersection disagrees with pairwise folds");
         }
     }
 
@@ -477,6 +777,7 @@ mod inspect {
     use super::*;
     use proptest::strategy::{Strategy, ValueTree};
     use proptest::test_runner::TestRunner;
+    use regex_charclass::CharacterClass;
 
     fn samples<S: Strategy>(strat: S, n: usize) -> Vec<S::Value> {
         let mut runner = TestRunner::deterministic();
@@ -506,61 +807,369 @@ mod inspect {
         }
     }
 
-    /// Classifies the language of an automaton for the quality summary.
-    fn classify(a: &FastAutomaton) -> &'static str {
-        if a.is_empty() {
-            "empty"
-        } else if a.is_empty_string() {
-            "{\"\"}"
-        } else if a
-            .determinize()
-            .map(|d| d.is_total())
-            .unwrap_or(false)
-        {
-            "total"
+    /// The language class of a generated entity, ordered from degenerate to
+    /// rich.
+    ///
+    /// `Empty`, `EmptyString` and `Total` are the corners of the language
+    /// lattice: useful as occasional edge cases (they hit the `is_empty` /
+    /// complement / difference fast paths) but they exercise nothing else.
+    /// `Finite` languages take the topological-sort path of the cardinality
+    /// and max-length analyses; `Infinite` ones take the cycle paths of state
+    /// elimination and repeat synthesis. A quality sample needs both in bulk.
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+    enum LangClass {
+        Empty,
+        EmptyString,
+        Total,
+        Finite,
+        Infinite,
+    }
+
+    /// Reduces an automaton to its canonical minimal DFA.
+    fn minimal_dfa(a: &FastAutomaton) -> FastAutomaton {
+        let mut m = determinized(a).expect("generated automata always determinize in budget");
+        bounded(|| m.minimize()).expect("generated automata always minimize in budget");
+        m
+    }
+
+    /// Classifies the language of a **minimal DFA**.
+    ///
+    /// Unlike the trivial-vs-"interesting" split this used to be, the
+    /// non-trivial bulk is split into finite and infinite languages, which
+    /// exercise disjoint code paths (see [`LangClass`]).
+    fn classify(m: &FastAutomaton) -> LangClass {
+        if m.is_empty() {
+            LangClass::Empty
+        } else if m.is_empty_string() {
+            LangClass::EmptyString
+        } else if m.is_total() {
+            // exact on a DFA
+            LangClass::Total
+        } else if m.get_length().1.is_some() {
+            LangClass::Finite
         } else {
-            "interesting"
+            LangClass::Infinite
         }
     }
 
-    fn automaton_stats(name: &str, autos: &[FastAutomaton]) {
-        let n = autos.len() as f64;
-        let mut counts = std::collections::BTreeMap::new();
-        let mut states = 0usize;
-        let mut edges = 0usize;
-        for a in autos {
-            *counts.entry(classify(a)).or_insert(0usize) += 1;
-            states += a.get_number_of_states();
-            edges += a
-                .states_vec()
-                .iter()
-                .map(|&s| a.transitions_from_vec(s).len())
-                .sum::<usize>();
+    /// Canonical fingerprint of a language: the minimal DFA, renumbered in
+    /// BFS order with the outgoing transitions of each state sorted by label.
+    /// Minimal DFAs are unique up to isomorphism, so two automata share a key
+    /// iff they accept the same language — this is what lets the stats count
+    /// *distinct* languages instead of distinct syntax trees.
+    fn language_key(m: &FastAutomaton) -> String {
+        use std::fmt::Write;
+        let ss = m.get_spanning_set();
+        let mut order = vec![m.get_start_state()];
+        let mut ids = std::collections::HashMap::new();
+        ids.insert(m.get_start_state(), 0usize);
+        let mut key = String::new();
+        let mut i = 0;
+        while i < order.len() {
+            let s = order[i];
+            i += 1;
+            // In a DFA the labels leaving a state are disjoint, hence unique,
+            // so sorting by label gives a deterministic traversal order.
+            let mut out: Vec<(String, usize)> = m
+                .transitions_from_vec(s)
+                .into_iter()
+                .map(|(c, t)| {
+                    (
+                        c.to_range(ss)
+                            .expect("condition always converts to a range")
+                            .to_regex(),
+                        t,
+                    )
+                })
+                .collect();
+            out.sort();
+            write!(key, "{}", if m.is_accepted(s) { 'A' } else { 'r' }).unwrap();
+            for (label, t) in out {
+                let id = match ids.get(&t) {
+                    Some(&id) => id,
+                    None => {
+                        let id = order.len();
+                        ids.insert(t, id);
+                        order.push(t);
+                        id
+                    }
+                };
+                write!(key, " {label}>{id}").unwrap();
+            }
+            key.push(';');
         }
-        let pct = |k: &str| 100.0 * *counts.get(k).unwrap_or(&0) as f64 / n;
+        key
+    }
+
+    /// Everything we measure about one generated automaton.
+    struct Measure {
+        // Structure of the generated entity itself.
+        edges: usize,
+        multi_base_edges: usize,
+        deterministic: bool,
+        // Properties of its *language*, computed on the minimal DFA.
+        class: LangClass,
+        minimal_states: usize,
+        accepts_empty_string: bool,
+        key: String,
+    }
+
+    fn measure(a: &FastAutomaton) -> Measure {
+        let mut edges = 0;
+        let mut multi_base_edges = 0;
+        for s in a.states_vec() {
+            for (cond, _) in a.transitions_from_vec(s) {
+                edges += 1;
+                if cond
+                    .get_binary_representation()
+                    .iter()
+                    .filter(|&&b| b)
+                    .count()
+                    > 1
+                {
+                    multi_base_edges += 1;
+                }
+            }
+        }
+        let m = minimal_dfa(a);
+        Measure {
+            edges,
+            multi_base_edges,
+            deterministic: a.is_deterministic(),
+            class: classify(&m),
+            minimal_states: m.get_number_of_states(),
+            accepts_empty_string: m.is_match(""),
+            key: language_key(&m),
+        }
+    }
+
+    /// Aggregated quality metrics over a sample; what the strategies are
+    /// evaluated (and asserted) on.
+    struct Quality {
+        /// Share of `Empty` + `EmptyString` + `Total` languages. Wanted as a
+        /// small minority: present (they are real edge cases) but not eating
+        /// the sample.
+        degenerate_pct: f64,
+        finite_pct: f64,
+        infinite_pct: f64,
+        /// Distinct languages (by canonical minimal DFA) over sample size.
+        /// Duplicates re-test the same language and are wasted cases.
+        distinct_pct: f64,
+        /// Average minimal-DFA size: the number of Myhill-Nerode classes is
+        /// what minimize / equivalence / state elimination actually scale
+        /// with, so this — not the raw state count — is language complexity.
+        avg_minimal_states: f64,
+        /// Share of languages needing a minimal DFA of ≥ 3 states.
+        rich_pct: f64,
+        accepts_empty_string_pct: f64,
+        /// Share of transitions whose condition spans more than one base of
+        /// the spanning set (exercises the bitvector paths beyond single
+        /// bits).
+        multi_base_edge_pct: f64,
+        /// Share of genuinely nondeterministic automata (only meaningful for
+        /// the NFA strategy: a "NFA" that is already deterministic never
+        /// exercises subset construction).
+        nondeterministic_pct: f64,
+    }
+
+    fn quality(name: &str, measures: &[Measure]) -> Quality {
+        let n = measures.len() as f64;
+        let count = |f: &dyn Fn(&Measure) -> bool| {
+            100.0 * measures.iter().filter(|m| f(m)).count() as f64 / n
+        };
+
+        let distinct: std::collections::HashSet<&str> =
+            measures.iter().map(|m| m.key.as_str()).collect();
+        let edges: usize = measures.iter().map(|m| m.edges).sum();
+        let multi: usize = measures.iter().map(|m| m.multi_base_edges).sum();
+
+        let mut histogram = std::collections::BTreeMap::new();
+        for m in measures {
+            *histogram.entry(m.minimal_states).or_insert(0usize) += 1;
+        }
+
+        let q = Quality {
+            degenerate_pct: count(&|m| {
+                matches!(
+                    m.class,
+                    LangClass::Empty | LangClass::EmptyString | LangClass::Total
+                )
+            }),
+            finite_pct: count(&|m| m.class == LangClass::Finite),
+            infinite_pct: count(&|m| m.class == LangClass::Infinite),
+            distinct_pct: 100.0 * distinct.len() as f64 / n,
+            avg_minimal_states: measures.iter().map(|m| m.minimal_states).sum::<usize>() as f64 / n,
+            rich_pct: count(&|m| m.minimal_states >= 3),
+            accepts_empty_string_pct: count(&|m| m.accepts_empty_string),
+            multi_base_edge_pct: 100.0 * multi as f64 / edges.max(1) as f64,
+            nondeterministic_pct: count(&|m| !m.deterministic),
+        };
+
         println!(
-            "{name}: empty {:>5.1}% | {{\"\"}} {:>5.1}% | total {:>5.1}% | interesting {:>5.1}% | avg states {:.2} | avg edges {:.2}",
-            pct("empty"), pct("{\"\"}"), pct("total"), pct("interesting"),
-            states as f64 / n, edges as f64 / n,
+            "{name}: degenerate {:>4.1}% (∅ {:.1}% | {{\"\"}} {:.1}% | Σ* {:.1}%) | finite {:>4.1}% | infinite {:>4.1}%",
+            q.degenerate_pct,
+            count(&|m| m.class == LangClass::Empty),
+            count(&|m| m.class == LangClass::EmptyString),
+            count(&|m| m.class == LangClass::Total),
+            q.finite_pct,
+            q.infinite_pct,
         );
+        println!(
+            "{name}: distinct languages {:>4.1}% | accepts \"\" {:>4.1}% | nondet {:>4.1}% | multi-base edges {:>4.1}%",
+            q.distinct_pct,
+            q.accepts_empty_string_pct,
+            q.nondeterministic_pct,
+            q.multi_base_edge_pct,
+        );
+        println!(
+            "{name}: minimal-DFA states avg {:.2}, ≥3 {:>4.1}%, histogram {:?}",
+            q.avg_minimal_states, q.rich_pct, histogram,
+        );
+        q
     }
 
-    /// Quantitative quality summary over a larger sample.
+    /// Operator coverage of a generated regular expression; the round-trip
+    /// (state elimination) and simplification code paths are keyed on these
+    /// shapes.
+    #[derive(Default)]
+    struct RegexFacets {
+        unbounded_repetition: bool,
+        bounded_repetition: bool,
+        nested_repetition: bool,
+        alternation: bool,
+        multi_char_class: bool,
+    }
+
+    fn regex_facets(r: &RegularExpression, inside_repetition: bool, f: &mut RegexFacets) {
+        match r {
+            RegularExpression::Character(range) => {
+                let letters = (0..ALPHABET.len())
+                    .filter(|&i| !range.intersection(&letter(i)).is_empty())
+                    .count();
+                if letters > 1 || range.is_total() {
+                    f.multi_char_class = true;
+                }
+            }
+            RegularExpression::Repetition(inner, _, max) => {
+                if max.is_some() {
+                    f.bounded_repetition = true;
+                } else {
+                    f.unbounded_repetition = true;
+                }
+                if inside_repetition {
+                    f.nested_repetition = true;
+                }
+                regex_facets(inner, true, f);
+            }
+            RegularExpression::Concat(parts) => {
+                for p in parts {
+                    regex_facets(p, inside_repetition, f);
+                }
+            }
+            RegularExpression::Alternation(parts) => {
+                f.alternation = true;
+                for p in parts {
+                    regex_facets(p, inside_repetition, f);
+                }
+            }
+        }
+    }
+
+    /// Quantitative quality summary over a larger sample, with floors the
+    /// strategies must keep. The sample runner is deterministic, so the
+    /// numbers — and therefore the assertions — are reproducible.
     #[test]
     fn stats() {
         const N: usize = 300;
 
         let regexes = samples(arb_regex(), N);
-        let regex_autos: Vec<FastAutomaton> = regexes
+        let regex_measures: Vec<Measure> = regexes
             .iter()
-            .map(|r| r.to_automaton().expect("small regexes always convert"))
+            .map(|r| measure(&r.to_automaton().expect("small regexes always convert")))
             .collect();
-        let avg_len =
-            regexes.iter().map(|r| r.to_string().len()).sum::<usize>() as f64 / N as f64;
-        automaton_stats("regex", &regex_autos);
-        println!("regex: avg pattern length {avg_len:.1}");
+        let regex_q = quality("regex", &regex_measures);
 
-        automaton_stats("dfa  ", &samples(arb_dfa(), N));
-        automaton_stats("nfa  ", &samples(arb_nfa(), N));
+        let avg_len = regexes.iter().map(|r| r.to_string().len()).sum::<usize>() as f64 / N as f64;
+        let mut facet_counts = [0usize; 5];
+        for r in &regexes {
+            let mut f = RegexFacets::default();
+            regex_facets(r, false, &mut f);
+            for (i, hit) in [
+                f.unbounded_repetition,
+                f.bounded_repetition,
+                f.nested_repetition,
+                f.alternation,
+                f.multi_char_class,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                facet_counts[i] += hit as usize;
+            }
+        }
+        let fpct = |i: usize| 100.0 * facet_counts[i] as f64 / N as f64;
+        println!(
+            "regex: avg pattern length {avg_len:.1} | unbounded-rep {:.1}% | bounded-rep {:.1}% | nested-rep {:.1}% | alternation {:.1}% | multi-char class {:.1}%",
+            fpct(0),
+            fpct(1),
+            fpct(2),
+            fpct(3),
+            fpct(4),
+        );
+
+        let dfa_q = quality(
+            "dfa  ",
+            &samples(arb_dfa(), N)
+                .iter()
+                .map(measure)
+                .collect::<Vec<_>>(),
+        );
+        let nfa_q = quality(
+            "nfa  ",
+            &samples(arb_nfa(), N)
+                .iter()
+                .map(measure)
+                .collect::<Vec<_>>(),
+        );
+
+        for (name, q) in [("regex", &regex_q), ("dfa", &dfa_q), ("nfa", &nfa_q)] {
+            // The trivial corner languages should be present but a minority.
+            assert!(
+                q.degenerate_pct < 25.0,
+                "{name}: too many degenerate languages"
+            );
+            // Both bulk classes must be well represented.
+            assert!(
+                q.finite_pct >= 15.0,
+                "{name}: finite languages under-represented"
+            );
+            assert!(
+                q.infinite_pct >= 15.0,
+                "{name}: infinite languages under-represented"
+            );
+            // The sample must not keep re-testing the same languages.
+            assert!(
+                q.distinct_pct >= 45.0,
+                "{name}: not enough distinct languages"
+            );
+            // Language complexity: minimal DFAs must not collapse to 1-2 states.
+            assert!(q.rich_pct >= 35.0, "{name}: minimal DFAs too small");
+            // Both "" ∈ L and "" ∉ L need bulk representation.
+            assert!(
+                (20.0..=80.0).contains(&q.accepts_empty_string_pct),
+                "{name}: empty-string acceptance unbalanced"
+            );
+            // Conditions spanning several bases must show up regularly.
+            assert!(
+                q.multi_base_edge_pct >= 10.0,
+                "{name}: multi-base conditions too rare"
+            );
+        }
+        // An NFA strategy that mostly produces DFAs never exercises subset
+        // construction.
+        assert!(
+            nfa_q.nondeterministic_pct >= 50.0,
+            "nfa: mostly deterministic"
+        );
     }
 }

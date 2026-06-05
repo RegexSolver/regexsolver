@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use condition::converter::ConditionConverter;
@@ -32,6 +33,9 @@ impl FastAutomaton {
     }
 
     /// Computes in parallel the intersection of all automata in the given iterator.
+    ///
+    /// Only available with the `parallel` feature (enabled by default).
+    #[cfg(feature = "parallel")]
     pub fn intersection_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(
         automata: I,
     ) -> Result<Self, EngineError> {
@@ -160,6 +164,7 @@ impl FastAutomaton {
 
         while let Some(p) = worklist.pop_front() {
             execution_profile.assert_not_timed_out()?;
+            execution_profile.assert_max_number_of_states(new_states.len())?;
             if self.accept_states.contains(&p.1) && other.accept_states.contains(&p.2) {
                 return Ok(true);
             }
@@ -212,6 +217,33 @@ impl FastAutomaton {
 #[cfg(test)]
 mod tests {
     use crate::regex::RegularExpression;
+
+    // Regression: `has_intersection` enforced the timeout but not the state
+    // budget, unlike `intersection` — the product pair map could grow
+    // unchecked.
+    #[test]
+    fn has_intersection_respects_state_budget() {
+        use crate::error::EngineError;
+        use crate::execution_profile::ExecutionProfileBuilder;
+
+        let a = RegularExpression::parse("abcd", false)
+            .unwrap()
+            .to_automaton()
+            .unwrap();
+        let b = RegularExpression::parse("abcd", false)
+            .unwrap()
+            .to_automaton()
+            .unwrap();
+
+        let result = ExecutionProfileBuilder::new()
+            .max_number_of_states(2)
+            .build()
+            .run(|| a.has_intersection(&b));
+        assert!(matches!(
+            result,
+            Err(EngineError::AutomatonHasTooManyStates)
+        ));
+    }
 
     // a* ∩ a* = a*: the intersection keeps the (infinite) looping language.
     #[test]

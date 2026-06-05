@@ -4,6 +4,10 @@ use super::*;
 
 impl FastAutomaton {
     /// Returns `true` if all strings accepted by `self` are also accepted by `other`.
+    ///
+    /// A non-deterministic `other` is determinized internally — unless the
+    /// execution profile disables implicit determinization, in which case
+    /// [`EngineError::DeterministicAutomatonRequired`] is returned.
     pub fn subset(&self, other: &FastAutomaton) -> Result<bool, EngineError> {
         if self.is_empty() || other.is_total() || self == other {
             return Ok(true);
@@ -13,10 +17,10 @@ impl FastAutomaton {
             // self ⊆ other iff Σ* ⊆ other iff other = Σ*. We already failed
             // the cheap `other.is_total()` check above; that check is sound
             // but conservative on NFAs, so retry on the determinized form.
-            return Ok(other.determinize()?.is_total());
+            return Ok(other.determinize_implicit()?.is_total());
         }
 
-        let mut other = other.determinize()?.into_owned();
+        let mut other = other.determinize_implicit()?.into_owned();
         other.complement()?;
 
         Ok(!self.has_intersection(&other)?)
@@ -90,13 +94,7 @@ mod tests {
         let automaton_2 = regex_2.to_automaton().unwrap();
         assert!(automaton_2.subset(&automaton_2).unwrap());
 
-        assert_eq!(
-            expected_1_2,
-            automaton_1.subset(&automaton_2).unwrap()
-        );
-        assert_eq!(
-            expected_2_1,
-            automaton_2.subset(&automaton_1).unwrap()
-        );
+        assert_eq!(expected_1_2, automaton_1.subset(&automaton_2).unwrap());
+        assert_eq!(expected_2_1, automaton_2.subset(&automaton_1).unwrap());
     }
 }

@@ -4,6 +4,10 @@ use super::*;
 
 impl FastAutomaton {
     /// Returns `true` if both automata accept the same language.
+    ///
+    /// Non-deterministic operands are determinized internally — unless the
+    /// execution profile disables implicit determinization, in which case
+    /// [`EngineError::DeterministicAutomatonRequired`] is returned.
     pub fn equivalent(&self, other: &FastAutomaton) -> Result<bool, EngineError> {
         if self.is_empty() != other.is_empty() && self.is_total() != other.is_total() {
             return Ok(false);
@@ -11,14 +15,14 @@ impl FastAutomaton {
             return Ok(true);
         }
 
-        let mut other_complement = other.determinize()?.into_owned();
+        let mut other_complement = other.determinize_implicit()?.into_owned();
         other_complement.complement()?;
 
         if self.has_intersection(&other_complement)? {
             return Ok(false);
         }
 
-        let mut self_complement = self.determinize()?.into_owned();
+        let mut self_complement = self.determinize_implicit()?.into_owned();
         self_complement.complement()?;
 
         Ok(!self_complement.has_intersection(other)?)
@@ -77,9 +81,6 @@ mod tests {
         let automaton_2 = regex_2.to_automaton().unwrap();
         assert!(automaton_2.equivalent(&automaton_2).unwrap());
 
-        assert_eq!(
-            expected,
-            automaton_1.equivalent(&automaton_2).unwrap()
-        );
+        assert_eq!(expected, automaton_1.equivalent(&automaton_2).unwrap());
     }
 }

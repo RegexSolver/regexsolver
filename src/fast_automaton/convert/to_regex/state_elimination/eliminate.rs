@@ -21,45 +21,54 @@ impl Gnfa {
             .filter(|&s| s != self.start_state && s != self.accept_state)
             .collect();
 
-        states
+        let score_state = |state: usize| -> Option<(u128, usize)> {
+            let preds = self.transitions_to_vec(state);
+            let succs = self.transitions_from_vec(state);
+
+            let in_deg = preds.len() as u128;
+            let out_deg = succs.len() as u128;
+
+            if in_deg == 0 || out_deg == 0 {
+                let score = (state as u128) & 0xFF;
+                return Some((score, state));
+            }
+
+            let mut score: u128 = in_deg * out_deg;
+
+            if self.has_self_loop(state) {
+                score = score + (score >> 1);
+            }
+
+            let mut label_cost: u128 = 0;
+
+            for (_, regex) in &preds {
+                label_cost += regex.evaluate_complexity() as u128;
+            }
+            for (regex, _) in &succs {
+                label_cost += regex.evaluate_complexity() as u128;
+            }
+            if let Some(re) = self.get_transition(state, state) {
+                label_cost += (re.evaluate_complexity() as u128) * 2;
+            }
+
+            score = score.saturating_add(label_cost);
+
+            let tie = (state as u128) & 0xFFFF;
+            Some((score.saturating_add(tie), state))
+        };
+
+        #[cfg(feature = "parallel")]
+        let best = states
             .into_par_iter()
-            .filter_map(|state| {
-                let preds = self.transitions_to_vec(state);
-                let succs = self.transitions_from_vec(state);
+            .filter_map(score_state)
+            .reduce_with(|a, b| if a.0 < b.0 { a } else { b });
+        #[cfg(not(feature = "parallel"))]
+        let best = states
+            .into_iter()
+            .filter_map(score_state)
+            .reduce(|a, b| if a.0 < b.0 { a } else { b });
 
-                let in_deg = preds.len() as u128;
-                let out_deg = succs.len() as u128;
-
-                if in_deg == 0 || out_deg == 0 {
-                    let score = (state as u128) & 0xFF;
-                    return Some((score, state));
-                }
-
-                let mut score: u128 = in_deg * out_deg;
-
-                if self.has_self_loop(state) {
-                    score = score + (score >> 1);
-                }
-
-                let mut label_cost: u128 = 0;
-
-                for (_, regex) in &preds {
-                    label_cost += regex.evaluate_complexity() as u128;
-                }
-                for (regex, _) in &succs {
-                    label_cost += regex.evaluate_complexity() as u128;
-                }
-                if let Some(re) = self.get_transition(state, state) {
-                    label_cost += (re.evaluate_complexity() as u128) * 2;
-                }
-
-                score = score.saturating_add(label_cost);
-
-                let tie = (state as u128) & 0xFFFF;
-                Some((score.saturating_add(tie), state))
-            })
-            .reduce_with(|a, b| if a.0 < b.0 { a } else { b })
-            .map(|(_, state)| state)
+        best.map(|(_, state)| state)
     }
 
     fn eliminate_state(&mut self, k: usize) {

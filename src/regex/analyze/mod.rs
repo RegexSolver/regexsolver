@@ -7,6 +7,7 @@ mod number_of_states;
 
 impl RegularExpression {
     /// Returns the minimum and maximum length of possible matched strings.
+    #[must_use]
     pub fn get_length(&self) -> (Option<u32>, Option<u32>) {
         match self {
             RegularExpression::Character(range) => {
@@ -171,7 +172,9 @@ mod tests {
         assert_length("(at?)");
         assert_length("(ot){3,4}");
         assert_length("(ot?d){1,4}");
-        assert_length("((aad|ads|a)*abc.*def.*uif(aad|ads|x)*abc.*oxs.*def(aad|ads|ax)*abc.*def.*ksd|q){1,100}");
+        assert_length(
+            "((aad|ads|a)*abc.*def.*uif(aad|ads|x)*abc.*oxs.*def(aad|ads|ax)*abc.*def.*ksd|q){1,100}",
+        );
 
         assert_eq!(
             FastAutomaton::new_empty().get_length(),
@@ -214,7 +217,9 @@ mod tests {
         assert_cardinality("(ot){3,4}");
         assert_cardinality("(t){1,3}");
         assert_cardinality("(ot?d){1,4}");
-        assert_cardinality("((aad|ads|a)*abc.*def.*uif(aad|ads|x)*abc.*oxs.*def(aad|ads|ax)*abc.*def.*ksd|q){1,100}");
+        assert_cardinality(
+            "((aad|ads|a)*abc.*def.*uif(aad|ads|x)*abc.*oxs.*def(aad|ads|ax)*abc.*def.*ksd|q){1,100}",
+        );
         Ok(())
     }
 
@@ -225,17 +230,10 @@ mod tests {
         let cardinality = regex.get_cardinality();
 
         let automaton = regex.to_automaton().unwrap();
-        // `get_cardinality` needs a DFA for an exact finite count, but returns
-        // `Infinite` for cyclic automata without requiring determinism. Only
-        // determinize the finite (bounded-length) ones — determinizing a large
-        // cyclic automaton can blow up.
-        let automaton = if automaton.get_length().1.is_some() {
-            automaton.determinize().unwrap().into_owned()
-        } else {
-            automaton
-        };
-
-        let expected = automaton.get_cardinality();
+        // `get_cardinality` returns `Infinite` for cyclic automata without
+        // determinizing and only determinizes the finite (acyclic)
+        // non-deterministic ones internally.
+        let expected = automaton.get_cardinality().unwrap();
 
         assert_eq!(expected, cardinality);
     }

@@ -2,6 +2,7 @@ use std::fmt::{self};
 
 /// An error thrown by the engine.
 #[derive(Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EngineError {
     /// Invalid character used in regex.
     InvalidCharacterInRegex,
@@ -13,6 +14,13 @@ pub enum EngineError {
     RegexSyntaxError(String),
     /// The provided range can not be built from the spanning set.
     ConditionInvalidRange,
+    /// The repetition bounds are invalid: the maximum is below the minimum.
+    InvalidRepetitionBounds(u32, u32),
+    /// The condition does not match the spanning set it is evaluated against.
+    IncompatibleSpanningSet,
+    /// The operation requires a deterministic automaton, and implicit
+    /// determinization is disabled by the execution profile.
+    DeterministicAutomatonRequired,
 }
 
 impl fmt::Display for EngineError {
@@ -27,6 +35,18 @@ impl fmt::Display for EngineError {
             EngineError::ConditionInvalidRange => write!(
                 f,
                 "The provided range can not be built from the spanning set."
+            ),
+            EngineError::InvalidRepetitionBounds(min, max) => write!(
+                f,
+                "The repetition maximum ({max}) is below its minimum ({min})."
+            ),
+            EngineError::IncompatibleSpanningSet => write!(
+                f,
+                "The condition does not match the spanning set it is evaluated against."
+            ),
+            EngineError::DeterministicAutomatonRequired => write!(
+                f,
+                "The operation requires a deterministic automaton, and implicit determinization is disabled by the execution profile."
             ),
         }
     }

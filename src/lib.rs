@@ -9,6 +9,7 @@ use cardinality::Cardinality;
 use error::EngineError;
 use fast_automaton::FastAutomaton;
 use nohash_hasher::NoHashHasher;
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use regex::RegularExpression;
 use regex_charclass::{char::Char, irange::RangeSet};
@@ -62,11 +63,11 @@ pub type CharRange = RangeSet<Char>;
 ///
 ///     // Analyze
 ///     assert_eq!(rep.get_length(), (Some(6), Some(12)));
-///     assert!(!rep.is_empty().unwrap());
+///     assert!(!rep.is_empty()?);
 ///
 ///     // Generate examples
 ///     let samples = Term::from_pattern("(x|y){1,3}")?
-///         .generate_strings(5, 0, false)?;
+///         .generate_strings(5, 0)?;
 ///     println!("Some matches: {:?}", samples);
 ///
 ///     // Equivalence & subset
@@ -82,6 +83,7 @@ pub type CharRange = RangeSet<Char>;
 ///
 /// To put constraint and limitation on the execution of operations please refer to [`ExecutionProfile`].
 #[derive(Clone, PartialEq, Eq, Debug)]
+#[must_use = "terms are immutable; operations return a new term"]
 pub enum Term {
     RegularExpression(RegularExpression),
     Automaton(FastAutomaton),
@@ -97,6 +99,17 @@ impl Display for Term {
 }
 
 impl Term {
+    /// `Term` operations manage the underlying representation themselves, so
+    /// the determinizations they perform are by definition explicit:
+    /// they run with the profile's `implicit_determinization` setting
+    /// re-enabled (that knob targets direct [`FastAutomaton`] usage). The
+    /// rest of the profile — deadline, state budget — is preserved.
+    fn run_with_implicit_determinization<R>(f: impl FnOnce() -> R) -> R {
+        ExecutionProfile::get()
+            .with_implicit_determinization(true)
+            .apply(f)
+    }
+
     /// Creates a term that matches the empty language.
     pub fn new_empty() -> Self {
         Term::RegularExpression(RegularExpression::new_empty())
@@ -217,17 +230,20 @@ impl Term {
         }
 
         if has_automaton {
-            let parallel = terms.len() > 3;
+            let parallel = cfg!(feature = "parallel") && terms.len() > 3;
 
             let automaton_list = self.get_automata(terms, parallel)?;
 
             let automaton_list = automaton_list.iter().map(AsRef::as_ref).collect::<Vec<_>>();
 
+            #[cfg(feature = "parallel")]
             let return_automaton = if parallel {
                 FastAutomaton::union_all_par(automaton_list)
             } else {
                 FastAutomaton::union_all(automaton_list)
             }?;
+            #[cfg(not(feature = "parallel"))]
+            let return_automaton = FastAutomaton::union_all(automaton_list)?;
 
             Ok(Term::Automaton(return_automaton))
         } else {
@@ -261,22 +277,31 @@ impl Term {
     /// }
     /// ```
     pub fn intersection(&self, terms: &[Term]) -> Result<Term, EngineError> {
-        let parallel = terms.len() > 3;
+        let parallel = cfg!(feature = "parallel") && terms.len() > 3;
 
         let automaton_list = self.get_automata(terms, parallel)?;
 
         let automaton_list = automaton_list.iter().map(AsRef::as_ref).collect::<Vec<_>>();
 
+        #[cfg(feature = "parallel")]
         let return_automaton = if parallel {
             FastAutomaton::intersection_all_par(automaton_list)
         } else {
             FastAutomaton::intersection_all(automaton_list)
         }?;
+        #[cfg(not(feature = "parallel"))]
+        let return_automaton = FastAutomaton::intersection_all(automaton_list)?;
 
         Ok(Term::Automaton(return_automaton))
     }
 
     /// Computes the difference between `self` and `other`.
+    ///
+    /// Unlike [`union`](Self::union) and [`intersection`](Self::intersection)
+    /// this deliberately takes a single operand: difference is neither
+    /// associative nor commutative, so a variadic form would be ambiguous
+    /// (`a - b - c` could mean `(a - b) - c` or `a - (b - c)`). Chain calls —
+    /// or subtract a union — to remove several languages.
     ///
     /// # Example:
     ///
@@ -293,12 +318,14 @@ impl Term {
     /// }
     /// ```
     pub fn difference(&self, other: &Term) -> Result<Term, EngineError> {
-        let minuend_automaton = self.to_automaton()?;
-        let subtrahend_automaton = other.to_automaton()?;
-        // `FastAutomaton::difference` determinizes the subtrahend itself.
-        let return_automaton = minuend_automaton.difference(&subtrahend_automaton)?;
+        Self::run_with_implicit_determinization(|| {
+            let minuend_automaton = self.to_automaton()?;
+            let subtrahend_automaton = other.to_automaton()?;
+            // `FastAutomaton::difference` determinizes the subtrahend itself.
+            let return_automaton = minuend_automaton.difference(&subtrahend_automaton)?;
 
-        Ok(Term::Automaton(return_automaton))
+            Ok(Term::Automaton(return_automaton))
+        })
     }
 
     /// Computes the complement of `self`.
@@ -316,11 +343,13 @@ impl Term {
     /// assert!(term.union(&[complement]).unwrap().is_total().unwrap());
     /// ```
     pub fn complement(&self) -> Result<Term, EngineError> {
-        // `FastAutomaton::complement` determinizes `self` itself.
-        let mut automaton = self.to_automaton()?.into_owned();
-        automaton.complement()?;
+        Self::run_with_implicit_determinization(|| {
+            // `FastAutomaton::complement` determinizes `self` itself.
+            let mut automaton = self.to_automaton()?.into_owned();
+            automaton.complement()?;
 
-        Ok(Term::Automaton(automaton))
+            Ok(Term::Automaton(automaton))
+        })
     }
 
     /// Computes the repetition of the current term between `min` and `max_opt` times; if `max_opt` is `None`, the repetition is unbounded.
@@ -358,56 +387,53 @@ impl Term {
 
     /// Generates up to `limit` distinct strings matched by the term, skipping the first `offset` strings.
     ///
-    /// When paginating through a large set of generated strings, you should set `return_stable_term`
-    /// to `true` on the initial call. This instructs the engine to compile the term into a deterministic
-    /// and minimized state (a "stable term").
+    /// Strings are only guaranteed to be distinct **within a single call**:
+    /// the offset fast-skips by counting paths, and in a non-deterministic
+    /// automaton the same string can be reached through several paths, so
+    /// calls with different offsets may repeat strings (or skip some). The
+    /// enumeration order also depends on the automaton's structure, so
+    /// offsets are only consistent across calls made on the same term.
     ///
-    /// Replacing your current term with this returned stable term for subsequent calls guarantees
-    /// that no strings are repeated.
-    ///
-    /// The stable term is returned as the first element of the tuple (`Some(Term)`). If the term is
-    /// already stable, or if `return_stable_term` is `false`, it returns `None` to save resources.
+    /// For reliable pagination, call [`minimize`](Self::minimize) once and
+    /// generate from the minimized term: it is deterministic — paths and
+    /// strings are then one-to-one, making pages disjoint — and its fixed
+    /// structure keeps offsets consistent, without re-converting the term on
+    /// every page.
     ///
     /// # Example:
     ///
     /// ```
     /// use regexsolver::Term;
     ///
-    /// let mut term = Term::from_pattern("(abc|de){2}").unwrap();
+    /// // Minimize once, then paginate with consistent offsets.
+    /// let term = Term::from_pattern("(abc|de){2}").unwrap().minimize().unwrap();
     ///
-    /// // Generate the first 2 matched strings and request a stable term
-    /// let (stable_term, batch) = term.generate_strings(2, 0, true).unwrap();
+    /// let batch = term.generate_strings(2, 0).unwrap();
     /// assert_eq!(2, batch.len()); // ["dede", "deabc"]
     ///
-    /// // Update the term if a newly compiled stable term was returned
-    /// if let Some(t) = stable_term {
-    ///     term = t;
-    /// }
-    ///
-    /// // Generate the next 2 matched strings by setting the offset using the stable term
-    /// let (_, batch) = term.generate_strings(2, 2, false).unwrap();
+    /// let batch = term.generate_strings(2, 2).unwrap();
     /// assert_eq!(2, batch.len()); // ["abcde", "abcabc"]
     /// ```
     pub fn generate_strings(
         &self,
         limit: usize,
         offset: usize,
-        return_stable_term: bool,
-    ) -> Result<(Option<Term>, Vec<String>), EngineError> {
-        let automaton = self.to_automaton()?;
-        if !return_stable_term || automaton.is_deterministic() {
-            Ok((None, self.to_automaton()?.generate_strings(limit, offset)?))
-        } else {
-            // `minimize` determinizes first, yielding the deterministic,
-            // minimal "stable" automaton.
-            let mut automaton = automaton.into_owned();
-            if !automaton.is_minimal() {
-                automaton.minimize()?;
-            }
+    ) -> Result<Vec<String>, EngineError> {
+        self.to_automaton()?.generate_strings(limit, offset)
+    }
 
-            let generated_strings = automaton.generate_strings(limit, offset)?;
-            Ok((Some(Term::Automaton(automaton)), generated_strings))
-        }
+    /// Returns an equivalent term backed by the minimal deterministic
+    /// automaton.
+    ///
+    /// Useful before paginating with
+    /// [`generate_strings`](Self::generate_strings) (see there), or to
+    /// compact a term after a chain of operations.
+    pub fn minimize(&self) -> Result<Term, EngineError> {
+        Self::run_with_implicit_determinization(|| {
+            let mut automaton = self.to_automaton()?.into_owned();
+            automaton.minimize()?;
+            Ok(Term::Automaton(automaton))
+        })
     }
 
     /// Returns `true` if both terms accept the same language.
@@ -427,9 +453,11 @@ impl Term {
             return Ok(true);
         }
 
-        let automaton_1 = self.to_automaton()?;
-        let automaton_2 = term.to_automaton()?;
-        automaton_1.equivalent(&automaton_2)
+        Self::run_with_implicit_determinization(|| {
+            let automaton_1 = self.to_automaton()?;
+            let automaton_2 = term.to_automaton()?;
+            automaton_1.equivalent(&automaton_2)
+        })
     }
 
     /// Returns `true` if all strings matched by the current term are also matched by the given term.
@@ -449,9 +477,11 @@ impl Term {
             return Ok(true);
         }
 
-        let automaton_1 = self.to_automaton()?;
-        let automaton_2 = term.to_automaton()?;
-        automaton_1.subset(&automaton_2)
+        Self::run_with_implicit_determinization(|| {
+            let automaton_1 = self.to_automaton()?;
+            let automaton_2 = term.to_automaton()?;
+            automaton_1.subset(&automaton_2)
+        })
     }
 
     /// Checks if the term matches the empty language.
@@ -472,6 +502,8 @@ impl Term {
                 } else if automaton.is_deterministic() {
                     Ok(false)
                 } else {
+                    // `Term` manages the representation itself: this is an
+                    // explicit determinization, never gated by the profile.
                     Ok(automaton.determinize()?.is_total())
                 }
             }
@@ -487,6 +519,7 @@ impl Term {
     }
 
     /// Returns the minimum and maximum length of matched strings.
+    #[must_use]
     pub fn get_length(&self) -> (Option<u32>, Option<u32>) {
         match self {
             Term::RegularExpression(regex) => regex.get_length(),
@@ -498,11 +531,9 @@ impl Term {
     pub fn get_cardinality(&self) -> Result<Cardinality<u32>, EngineError> {
         match self {
             Term::RegularExpression(regex) => Ok(regex.get_cardinality()),
-            Term::Automaton(automaton) => Ok(if !automaton.is_deterministic() {
-                automaton.determinize()?.get_cardinality()
-            } else {
-                automaton.get_cardinality()
-            }),
+            Term::Automaton(automaton) => {
+                Self::run_with_implicit_determinization(|| automaton.get_cardinality())
+            }
         }
     }
 
@@ -515,6 +546,7 @@ impl Term {
     }
 
     /// Converts the term to a [`RegularExpression`].
+    #[must_use]
     pub fn to_regex(&self) -> Cow<'_, RegularExpression> {
         match self {
             Term::RegularExpression(regex) => Cow::Borrowed(regex),
@@ -523,6 +555,7 @@ impl Term {
     }
 
     /// Converts the term to a regular expression pattern.
+    #[must_use]
     pub fn to_pattern(&self) -> String {
         self.to_regex().to_string()
     }
@@ -535,6 +568,7 @@ impl Term {
         let mut automaton_list = Vec::with_capacity(terms.len() + 1);
         automaton_list.push(self.to_automaton()?);
 
+        #[cfg(feature = "parallel")]
         let mut terms_automata = if parallel {
             let execution_profile = ExecutionProfile::get();
             terms
@@ -547,6 +581,14 @@ impl Term {
                 .map(Term::to_automaton)
                 .collect::<Result<Vec<_>, _>>()
         }?;
+        #[cfg(not(feature = "parallel"))]
+        let mut terms_automata = {
+            let _ = parallel;
+            terms
+                .iter()
+                .map(Term::to_automaton)
+                .collect::<Result<Vec<_>, EngineError>>()?
+        };
         automaton_list.append(&mut terms_automata);
 
         Ok(automaton_list)

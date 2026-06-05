@@ -31,11 +31,11 @@ impl RegularExpression {
         };
 
         match (front, back) {
-            (RegularExpression::Concat(_), RegularExpression::Concat(_)) => {
+            (RegularExpression::Concat(..), RegularExpression::Concat(..)) => {
                 Self::opconcat_concat_and_concat(front, back)
             }
-            (RegularExpression::Concat(_), _) => Self::opconcat_concat_and_other(front, back),
-            (_, RegularExpression::Concat(_)) => Self::opconcat_other_and_concat(front, back),
+            (RegularExpression::Concat(..), _) => Self::opconcat_concat_and_other(front, back),
+            (_, RegularExpression::Concat(..)) => Self::opconcat_other_and_concat(front, back),
             (_, _) => Self::opconcat_other_and_other(front, back),
         }
     }
@@ -67,12 +67,14 @@ impl RegularExpression {
                 return merged;
             }
 
-            let mut vec = that_elements.clone();
-            let that_index = 0;
-
-            if let Some(merged) = Self::opconcat_can_be_merged(this, &that_elements[that_index]) {
-                vec[that_index] = merged;
+            // Clone the surviving elements only: the boundary element is
+            // either replaced by the merge or kept alongside `this`.
+            let mut vec: VecDeque<RegularExpression>;
+            if let Some(merged) = Self::opconcat_can_be_merged(this, &that_elements[0]) {
+                vec = that_elements.iter().skip(1).cloned().collect();
+                vec.push_front(merged);
             } else {
+                vec = that_elements.clone();
                 vec.push_front(this.clone());
             }
 
@@ -99,12 +101,14 @@ impl RegularExpression {
                 return merged;
             }
 
-            let mut vec = this_elements.clone();
+            // Clone the surviving elements only (see opconcat_other_and_concat).
             let this_index = this_elements.len() - 1;
-
+            let mut vec: VecDeque<RegularExpression>;
             if let Some(merged) = Self::opconcat_can_be_merged(&this_elements[this_index], that) {
-                vec[this_index] = merged;
+                vec = this_elements.iter().take(this_index).cloned().collect();
+                vec.push_back(merged);
             } else {
+                vec = this_elements.clone();
                 vec.push_back(that.clone());
             }
 
@@ -137,15 +141,17 @@ impl RegularExpression {
                 return merged;
             }
 
-            let mut vec = this_elements.clone();
+            // Clone the surviving elements only (see opconcat_other_and_concat).
             let (this_index, that_index) = (this_elements.len() - 1, 0);
-
+            let mut vec: VecDeque<RegularExpression>;
             if let Some(merged) =
                 Self::opconcat_can_be_merged(&this_elements[this_index], &that_elements[that_index])
             {
-                vec[this_index] = merged;
+                vec = this_elements.iter().take(this_index).cloned().collect();
+                vec.push_back(merged);
                 vec.extend(that_elements.iter().skip(1).cloned());
             } else {
+                vec = this_elements.clone();
                 vec.extend(that_elements.iter().cloned());
             }
 
@@ -159,6 +165,24 @@ impl RegularExpression {
         }
     }
 
+    /// Merges the bounds of two adjacent repetitions of the same expression,
+    /// `r{a,b}r{c,d}` → `r{a+c,b+d}`. Returns `None` — "cannot be merged",
+    /// falling back to plain concatenation — when an addition would overflow.
+    fn merge_repetition_bounds(
+        this_min: u32,
+        this_max_opt: &Option<u32>,
+        that_min: u32,
+        that_max_opt: &Option<u32>,
+    ) -> Option<(u32, Option<u32>)> {
+        let new_min = this_min.checked_add(that_min)?;
+        let new_max_opt = if let (Some(this_max), Some(that_max)) = (this_max_opt, that_max_opt) {
+            Some(this_max.checked_add(*that_max)?)
+        } else {
+            None
+        };
+        Some((new_min, new_max_opt))
+    }
+
     fn opconcat_can_be_merged(
         this: &RegularExpression,
         that: &RegularExpression,
@@ -169,13 +193,12 @@ impl RegularExpression {
                 RegularExpression::Repetition(_, that_min, that_max_opt),
             ) = (this, that)
             {
-                let new_min = this_min + that_min;
-                let new_max_opt =
-                    if let (Some(this_max), Some(that_max)) = (this_max_opt, that_max_opt) {
-                        Some(this_max + that_max)
-                    } else {
-                        None
-                    };
+                let (new_min, new_max_opt) = Self::merge_repetition_bounds(
+                    *this_min,
+                    this_max_opt,
+                    *that_min,
+                    that_max_opt,
+                )?;
                 Some(this_regex.repeat(new_min, new_max_opt))
             } else {
                 Some(this.repeat(2, Some(2)))
@@ -186,22 +209,19 @@ impl RegularExpression {
         ) = (this, that)
         {
             if this_regex == that_regex {
-                let new_min = this_min + that_min;
-                let new_max_opt =
-                    if let (Some(this_max), Some(that_max)) = (this_max_opt, that_max_opt) {
-                        Some(this_max + that_max)
-                    } else {
-                        None
-                    };
-
+                let (new_min, new_max_opt) = Self::merge_repetition_bounds(
+                    *this_min,
+                    this_max_opt,
+                    *that_min,
+                    that_max_opt,
+                )?;
                 Some(this_regex.repeat(new_min, new_max_opt))
             } else if let (
                 RegularExpression::Character(this_range),
                 RegularExpression::Character(that_range),
-            ) = (*this_regex.clone(), *that_regex.clone())
+            ) = (&**this_regex, &**that_regex)
             {
-                if this_range.contains_all(&that_range) && that_min == &0 && this_max_opt.is_none()
-                {
+                if this_range.contains_all(that_range) && that_min == &0 && this_max_opt.is_none() {
                     Some(this.clone())
                 } else {
                     None
@@ -211,16 +231,16 @@ impl RegularExpression {
             }
         } else if let RegularExpression::Repetition(this_regex, this_min, this_max_opt) = this {
             if **this_regex == *that {
-                let new_min = this_min + 1;
-                let new_max_opt = this_max_opt.as_ref().map(|this_max| this_max + 1);
+                let (new_min, new_max_opt) =
+                    Self::merge_repetition_bounds(*this_min, this_max_opt, 1, &Some(1))?;
                 Some(this_regex.repeat(new_min, new_max_opt))
             } else {
                 None
             }
         } else if let RegularExpression::Repetition(that_regex, that_min, that_max_opt) = that {
             if **that_regex == *this {
-                let new_min = that_min + 1;
-                let new_max_opt = that_max_opt.as_ref().map(|this_max| this_max + 1);
+                let (new_min, new_max_opt) =
+                    Self::merge_repetition_bounds(*that_min, that_max_opt, 1, &Some(1))?;
                 Some(that_regex.repeat(new_min, new_max_opt))
             } else {
                 None
@@ -234,6 +254,20 @@ impl RegularExpression {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Regression: merging adjacent repetitions used to add bounds unchecked;
+    // huge (but valid) bounds must fall back to plain concatenation instead
+    // of overflowing.
+    #[test]
+    fn concat_merge_bound_overflow_falls_back_to_concat() {
+        let a = RegularExpression::new("a").unwrap();
+        let big = RegularExpression::Repetition(Box::new(a), u32::MAX, None);
+        let result = big.concat(&big, true);
+        assert!(matches!(
+            &result,
+            RegularExpression::Concat(parts) if parts.len() == 2
+        ));
+    }
 
     #[test]
     fn test_concat() -> Result<(), String> {

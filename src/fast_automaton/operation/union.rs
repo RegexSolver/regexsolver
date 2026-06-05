@@ -1,6 +1,7 @@
 use std::hash::BuildHasherDefault;
 
 use condition::converter::ConditionConverter;
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use crate::{error::EngineError, execution_profile::ExecutionProfile};
@@ -25,6 +26,9 @@ impl FastAutomaton {
     }
 
     /// Computes in parallel the union of all automata in the given iterator.
+    ///
+    /// Only available with the `parallel` feature (enabled by default).
+    #[cfg(feature = "parallel")]
     pub fn union_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(
         automata: I,
     ) -> Result<Self, EngineError> {
@@ -334,12 +338,19 @@ mod tests {
 
         let u = empty_string.union(&a_plus).unwrap();
         assert!(u.is_match(""), "union must keep \"\"");
-        assert!(u.is_match("a"), "union dropped the other operand's language");
+        assert!(
+            u.is_match("a"),
+            "union dropped the other operand's language"
+        );
         assert!(u.is_match("aaa"));
 
         // It must be equivalent regardless of operand order.
         let u2 = a_plus.union(&empty_string).unwrap();
-        assert!(Term::from_automaton(u).equivalent(&Term::from_automaton(u2)).unwrap());
+        assert!(
+            Term::from_automaton(u)
+                .equivalent(&Term::from_automaton(u2))
+                .unwrap()
+        );
     }
 
     // Regression: `prepare_accept_states` merges accept states without

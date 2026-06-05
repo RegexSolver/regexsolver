@@ -42,49 +42,49 @@ impl RegularExpression {
                 RegularExpression::Character(self_range),
                 RegularExpression::Character(other_range),
             ) => RegularExpression::Character(self_range.union(other_range)),
-            (RegularExpression::Character(_), RegularExpression::Repetition(_, _, _)) => {
+            (RegularExpression::Character(..), RegularExpression::Repetition(..)) => {
                 Self::opunion_character_and_repetition(self, other)
             }
-            (RegularExpression::Character(_), RegularExpression::Concat(_)) => {
+            (RegularExpression::Character(..), RegularExpression::Concat(..)) => {
                 Self::opunion_character_and_concat(self, other)
             }
-            (RegularExpression::Character(_), RegularExpression::Alternation(_)) => {
+            (RegularExpression::Character(..), RegularExpression::Alternation(..)) => {
                 Self::opunion_character_and_alternation(self, other)
             }
-            (RegularExpression::Repetition(_, _, _), RegularExpression::Character(_)) => {
+            (RegularExpression::Repetition(..), RegularExpression::Character(..)) => {
                 Self::opunion_character_and_repetition(other, self)
             }
-            (RegularExpression::Repetition(_, _, _), RegularExpression::Repetition(_, _, _)) => {
+            (RegularExpression::Repetition(..), RegularExpression::Repetition(..)) => {
                 Self::opunion_repetition_and_repetition(self, other)
             }
-            (RegularExpression::Repetition(_, _, _), RegularExpression::Concat(_)) => {
+            (RegularExpression::Repetition(..), RegularExpression::Concat(..)) => {
                 Self::opunion_concat_and_repetition(other, self)
             }
-            (RegularExpression::Repetition(_, _, _), RegularExpression::Alternation(_)) => {
+            (RegularExpression::Repetition(..), RegularExpression::Alternation(..)) => {
                 Self::opunion_repetition_and_alternation(self, other)
             }
-            (RegularExpression::Concat(_), RegularExpression::Character(_)) => {
+            (RegularExpression::Concat(..), RegularExpression::Character(..)) => {
                 Self::opunion_character_and_concat(other, self)
             }
-            (RegularExpression::Concat(_), RegularExpression::Repetition(_, _, _)) => {
+            (RegularExpression::Concat(..), RegularExpression::Repetition(..)) => {
                 Self::opunion_concat_and_repetition(self, other)
             }
-            (RegularExpression::Concat(_), RegularExpression::Concat(_)) => {
+            (RegularExpression::Concat(..), RegularExpression::Concat(..)) => {
                 Self::opunion_common_affixes(self, other)
             }
-            (RegularExpression::Concat(_), RegularExpression::Alternation(_)) => {
+            (RegularExpression::Concat(..), RegularExpression::Alternation(..)) => {
                 Self::opunion_concat_and_alternation(self, other)
             }
-            (RegularExpression::Alternation(_), RegularExpression::Character(_)) => {
+            (RegularExpression::Alternation(..), RegularExpression::Character(..)) => {
                 Self::opunion_character_and_alternation(other, self)
             }
-            (RegularExpression::Alternation(_), RegularExpression::Repetition(_, _, _)) => {
+            (RegularExpression::Alternation(..), RegularExpression::Repetition(..)) => {
                 Self::opunion_repetition_and_alternation(other, self)
             }
-            (RegularExpression::Alternation(_), RegularExpression::Concat(_)) => {
+            (RegularExpression::Alternation(..), RegularExpression::Concat(..)) => {
                 Self::opunion_concat_and_alternation(other, self)
             }
-            (RegularExpression::Alternation(self_elements), RegularExpression::Alternation(_)) => {
+            (RegularExpression::Alternation(self_elements), RegularExpression::Alternation(..)) => {
                 let mut new_alternation = Cow::Borrowed(other);
                 for self_element in self_elements {
                     new_alternation = new_alternation.union_(self_element);
@@ -100,7 +100,7 @@ impl RegularExpression {
         that_repetition: &RegularExpression,
     ) -> RegularExpression {
         if let (
-            RegularExpression::Character(_),
+            RegularExpression::Character(..),
             RegularExpression::Repetition(that_regex, that_min, that_max_opt),
         ) = (this_character, that_repetition)
         {
@@ -168,10 +168,10 @@ impl RegularExpression {
                 if let RegularExpression::Character(range) = element {
                     set.insert(RegularExpression::Character(this_range.union(range)));
                     had_character_union = true;
-                } else if matches!(element, RegularExpression::Repetition(_, _, _)) {
+                } else if matches!(element, RegularExpression::Repetition(..)) {
                     let repetition =
                         Self::opunion_character_and_repetition(this_character, element);
-                    if matches!(repetition, RegularExpression::Repetition(_, _, _)) {
+                    if matches!(repetition, RegularExpression::Repetition(..)) {
                         set.insert(repetition);
                         had_character_union = true;
                     } else {
@@ -194,7 +194,7 @@ impl RegularExpression {
         this_character: &RegularExpression,
         that_concat: &RegularExpression,
     ) -> RegularExpression {
-        if let (RegularExpression::Character(_), RegularExpression::Concat(that_elements)) =
+        if let (RegularExpression::Character(..), RegularExpression::Concat(that_elements)) =
             (this_character, that_concat)
         {
             if that_elements.len() == 1 && that_elements[0] == *this_character {
@@ -212,7 +212,7 @@ impl RegularExpression {
         that_repetition: &RegularExpression,
     ) -> RegularExpression {
         if let (
-            RegularExpression::Concat(_),
+            RegularExpression::Concat(..),
             RegularExpression::Repetition(that_regex, that_min, that_max_opt),
         ) = (this_concat, that_repetition)
         {
@@ -230,16 +230,16 @@ impl RegularExpression {
         this_concat: &RegularExpression,
         that_alternation: &RegularExpression,
     ) -> RegularExpression {
-        if let (RegularExpression::Concat(_), RegularExpression::Alternation(that_elements)) =
+        if let (RegularExpression::Concat(..), RegularExpression::Alternation(that_elements)) =
             (this_concat, that_alternation)
         {
             let mut set = BTreeSet::new();
 
             let mut had_concat_union = false;
             for element in that_elements {
-                if matches!(element, RegularExpression::Repetition(_, _, _)) {
+                if matches!(element, RegularExpression::Repetition(..)) {
                     let repetition = Self::opunion_concat_and_repetition(this_concat, element);
-                    if matches!(repetition, RegularExpression::Repetition(_, _, _)) {
+                    if matches!(repetition, RegularExpression::Repetition(..)) {
                         set.insert(repetition);
                         had_concat_union = true;
                     } else {
@@ -320,28 +320,28 @@ impl RegularExpression {
 
                 let mut had_repetition_union = false;
                 for element in that_elements {
-                    if matches!(element, RegularExpression::Repetition(_, _, _)) {
+                    if matches!(element, RegularExpression::Repetition(..)) {
                         let repetition =
                             Self::opunion_repetition_and_repetition(this_repetition, element);
-                        if matches!(repetition, RegularExpression::Repetition(_, _, _)) {
+                        if matches!(repetition, RegularExpression::Repetition(..)) {
                             set.insert(repetition);
                             had_repetition_union = true;
                         } else {
                             set.insert(element.clone());
                         }
-                    } else if matches!(element, RegularExpression::Character(_)) {
+                    } else if matches!(element, RegularExpression::Character(..)) {
                         let repetition =
                             Self::opunion_character_and_repetition(element, this_repetition);
-                        if matches!(repetition, RegularExpression::Repetition(_, _, _)) {
+                        if matches!(repetition, RegularExpression::Repetition(..)) {
                             set.insert(repetition);
                             had_repetition_union = true;
                         } else {
                             set.insert(element.clone());
                         }
-                    } else if matches!(element, RegularExpression::Concat(_)) {
+                    } else if matches!(element, RegularExpression::Concat(..)) {
                         let repetition =
                             Self::opunion_concat_and_repetition(element, this_repetition);
-                        if matches!(repetition, RegularExpression::Repetition(_, _, _)) {
+                        if matches!(repetition, RegularExpression::Repetition(..)) {
                             set.insert(repetition);
                             had_repetition_union = true;
                         } else {

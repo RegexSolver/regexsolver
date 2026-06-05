@@ -24,6 +24,7 @@ pub mod spanning_set;
 
 /// Represent a finite state automaton.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[must_use = "non-`_mut` operations return a new automaton"]
 pub struct FastAutomaton {
     transitions: Vec<Transitions>,
     transitions_in: IntMap<usize, IntSet<usize>>,
@@ -68,15 +69,13 @@ impl Display for FastAutomaton {
                 writeln!(sb, "\tinitial -> {from_state}")?;
             }
             for (cond, to_state) in self.transitions_from(from_state) {
-                writeln!(
-                    sb,
-                    "\t{from_state} -> {to_state} [label=\"{}\"]",
-                    cond.to_range(&self.spanning_set)
-                        .expect("Cannot convert condition to range.")
-                        .to_regex()
-                        .replace('\\', "\\\\")
-                        .replace('"', "\\\"")
-                )?;
+                // The automata most worth printing are the broken ones:
+                // never panic mid-format, label desynced conditions instead.
+                let label = match cond.to_range(&self.spanning_set) {
+                    Ok(range) => range.to_regex().replace('\\', "\\\\").replace('"', "\\\""),
+                    Err(_) => String::from("<invalid condition>"),
+                };
+                writeln!(sb, "\t{from_state} -> {to_state} [label=\"{label}\"]")?;
             }
         }
         write!(sb, "}}")
@@ -141,13 +140,19 @@ impl FastAutomaton {
 
     /// Returns a vector of transitions to the given state.
     pub fn transitions_to_vec(&self, state: State) -> Vec<(State, Condition)> {
+        // Direct `(from, state)` lookups: scanning each predecessor's whole
+        // out-list made this O(predecessors × out-degree), and `minimize`
+        // builds its inverse-transition table through here.
+        if !self.has_state(state) {
+            return vec![];
+        }
         let mut in_transitions = vec![];
         for from_state in self.transitions_in.get(&state).unwrap_or(&IntSet::new()) {
-            for (condition, to_state) in self.transitions_from_vec(*from_state) {
-                if to_state == state {
-                    in_transitions.push((*from_state, condition));
-                    break;
-                }
+            if !self.has_state(*from_state) {
+                continue;
+            }
+            if let Some(condition) = self.get_condition(*from_state, state) {
+                in_transitions.push((*from_state, condition.clone()));
             }
         }
         in_transitions

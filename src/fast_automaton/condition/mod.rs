@@ -69,6 +69,13 @@ impl Condition {
     }
 
     pub fn to_range(&self, spanning_set: &SpanningSet) -> Result<CharRange, EngineError> {
+        // A condition only carries meaning relative to the spanning set it
+        // was built from. Evaluating it against a differently-sized one used
+        // to panic (too short) or silently drop bits (too long).
+        if self.0.len() != spanning_set.spanning_ranges_with_rest_len() {
+            return Err(EngineError::IncompatibleSpanningSet);
+        }
+
         let mut range = CharRange::empty();
 
         for (i, base) in spanning_set
@@ -181,6 +188,46 @@ mod tests {
             ]),
             CharRange::new_from_range(Char::new('\u{9}')..=Char::new('\u{9}')),
         ]
+    }
+
+    // Regression: a condition evaluated against a spanning set it was not
+    // built from used to panic (when too short) or silently drop bits (when
+    // too long); it now reports the incompatibility.
+    #[test]
+    fn to_range_rejects_incompatible_spanning_set() {
+        let small = SpanningSet::compute_spanning_set(&[CharRange::new_from_range(
+            Char::new('a')..=Char::new('a'),
+        )]);
+        let large = get_spanning_set();
+
+        let condition = Condition::total(&small);
+        assert_eq!(
+            condition.to_range(&large),
+            Err(EngineError::IncompatibleSpanningSet)
+        );
+
+        let condition = Condition::total(&large);
+        assert_eq!(
+            condition.to_range(&small),
+            Err(EngineError::IncompatibleSpanningSet)
+        );
+    }
+
+    // Regression: `ConditionConverter::convert` used to panic on a condition
+    // that was not built over its source spanning set.
+    #[test]
+    fn convert_rejects_incompatible_condition() {
+        let small = SpanningSet::compute_spanning_set(&[CharRange::new_from_range(
+            Char::new('a')..=Char::new('a'),
+        )]);
+        let merged = small.merge(&get_spanning_set());
+        let converter = ConditionConverter::new(&small, &merged).unwrap();
+
+        let foreign = Condition::total(&merged);
+        assert_eq!(
+            converter.convert(&foreign),
+            Err(EngineError::IncompatibleSpanningSet)
+        );
     }
 
     #[test]

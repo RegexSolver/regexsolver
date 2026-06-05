@@ -80,8 +80,22 @@ impl FastBitVec {
         self.fix_last_block();
     }
 
+    /// The binary operations combine blocks pairwise with `zip`, which would
+    /// silently truncate to the shorter operand if two bitvectors built over
+    /// different spanning sets were ever combined — producing a wrong
+    /// language instead of a loud failure. Catch that in debug builds (and
+    /// therefore in every test run).
+    #[inline]
+    fn assert_same_len(&self, other: &Self) {
+        debug_assert_eq!(
+            self.n, other.n,
+            "conditions built over different spanning sets cannot be combined"
+        );
+    }
+
     #[inline]
     pub fn union(&mut self, other: &Self) {
+        self.assert_same_len(other);
         for (a, b) in self.bits.iter_mut().zip(&other.bits) {
             let w = *a | b;
             *a = w;
@@ -90,6 +104,7 @@ impl FastBitVec {
 
     #[inline]
     pub fn intersection(&mut self, other: &Self) {
+        self.assert_same_len(other);
         for (a, b) in self.bits.iter_mut().zip(&other.bits) {
             let w = *a & b;
             *a = w;
@@ -98,6 +113,7 @@ impl FastBitVec {
 
     #[inline]
     pub fn has_intersection(&self, other: &Self) -> bool {
+        self.assert_same_len(other);
         for (a, b) in self.bits.iter().zip(&other.bits) {
             if *a & b != 0 {
                 return true;

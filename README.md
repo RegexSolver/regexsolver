@@ -1,265 +1,178 @@
 # RegexSolver
+
 [![Crates.io Version](https://img.shields.io/crates/v/regexsolver)](https://crates.io/crates/regexsolver)
+[![docs.rs](https://img.shields.io/docsrs/regexsolver)](https://docs.rs/regexsolver)
+[![CI](https://github.com/RegexSolver/regexsolver/actions/workflows/rust.yml/badge.svg)](https://github.com/RegexSolver/regexsolver/actions/workflows/rust.yml)
+[![License: MIT](https://img.shields.io/crates/l/regexsolver)](LICENSE)
 
-**RegexSolver** is a Rust library for building, combining, and analyzing regular expressions and finite automata. It is designed for constraint solvers, test generators, and other systems that need advanced regex and automaton operations.
-
-## Table of Contents
-
- - [Installation](#installation)
- - [Example](#example)
- - [Key Concepts & Limitations](#key-concepts--limitations)
- - [API](#api)
-    - [Term](#term)
-    - [FastAutomaton](#fastautomaton)
-    - [RegularExpression](#regularexpression)
- - [Bound Execution](#bound-execution)
- - [Cross-Language Support](#cross-language-support)
- - [License](#license)
-
-## Installation
-
-Add to your `Cargo.toml`:
-
-```toml
-[dependencies]
-regexsolver = "1"
-```
-
-## Example
+The `regex` crate tells you whether a *string* matches a pattern. **RegexSolver treats patterns as the sets of strings they match** — so you can intersect, subtract, compare, complement, and enumerate them, and get the result back as a regex.
 
 ```rust
 use regexsolver::Term;
-use regexsolver::error::EngineError;
 
-fn main() -> Result<(), EngineError> {
-    // Create terms from regex
-    let t1 = Term::from_pattern("abc.*")?;
-    let t2 = Term::from_pattern(".*xyz")?;
+let a = Term::from_pattern("(ab|xy){2}")?;
+let b = Term::from_pattern(".*xy")?;
 
-    // Concatenate
-    let concat = t1.concat(&[t2])?;
-    assert_eq!(concat.to_pattern(), "abc.*xyz");
+// Which strings match BOTH patterns? Get the answer as a regex:
+let both = a.intersection(&[b])?;
+assert_eq!(both.to_pattern(), "(ab|xy)xy");
 
-    // Union
-    let union = t1.union(&[Term::from_pattern("fgh")?])?;
-    assert_eq!(union.to_pattern(), "(abc.*|fgh)");
-
-    // Intersection
-    let inter = Term::from_pattern("(ab|xy){2}")?
-        .intersection(&[Term::from_pattern(".*xy")?])?;
-    assert_eq!(inter.to_pattern(), "(ab|xy)xy");
-
-    // Difference
-    let diff = Term::from_pattern("a*")?
-        .difference(&Term::from_pattern("")?)?;
-    assert_eq!(diff.to_pattern(), "a+");
-
-    // Repetition
-    let rep = Term::from_pattern("abc")?
-        .repeat(2, Some(4))?;
-    assert_eq!(rep.to_pattern(), "(abc){2,4}");
-
-    // Analyze
-    assert_eq!(rep.get_length(), (Some(6), Some(12)));
-    assert!(!rep.is_empty());
-
-    // Generate examples
-    let samples = Term::from_pattern("(x|y){1,3}")?
-        .generate_strings(5, 0)?;
-    println!("Some matches: {:?}", samples);
-
-    // Equivalence & subset
-    let a = Term::from_pattern("a+")?;
-    let b = Term::from_pattern("a*")?;
-    assert!(!a.equivalent(&b)?);
-    assert!(a.subset(&b)?);
-
-    Ok(())
-}
+// ...and sample them:
+assert_eq!(both.generate_strings(2, 0)?, ["xyxy", "abxy"]);
 ```
 
-## Key Concepts & Limitations
+## What would you use this for?
 
-RegexSolver supports a subset of regular expressions that adhere to the principles of regular languages. Here are the key characteristics and limitations of the regular expressions supported by RegexSolver:
-- **Anchored Expressions:** All regular expressions in RegexSolver are anchored. This means that the expressions are treated as if they start and end at the boundaries of the input text. For example, the expression `abc` will match the string "abc" but not "xabc" or "abcx".
-- **Lookahead/Lookbehind:** RegexSolver does not support lookahead (`(?=...)`) or lookbehind (`(?<=...)`) assertions. Using them returns an error.
-- **Pure Regular Expressions:** RegexSolver focuses on pure regular expressions as defined in regular language theory. This means features that extend beyond regular languages, such as backreferences (`\1`, `\2`, etc.), are not supported. Any use of backreference would return an error.
-- **Greedy/Ungreedy Quantifiers:** The concept of ungreedy (`*?`, `+?`, `??`) quantifiers is not supported. All quantifiers are treated as greedy. For example, `a*` or `a*?` will match the longest possible sequence of "a"s.
-- **Line Feed and Dot:** RegexSolver handles all characters the same way. The dot `.` matches any Unicode character including line feed (`\n`).
-- **Empty Regular Expressions:** The empty language (matches no string) is represented by constructs like `[]` (empty character class). This is distinct from the empty string.
+- **Safe migrations** — `old_rule.subset(&new_rule)?`: does the new validation pattern accept *everything* the old one did?
+- **Test-data generation** — `term.generate_strings(100, 0)?`: produce strings matching any pattern, with pagination.
+- **Rule analysis** — find shadowed or overlapping routes, firewall rules, and validators with `intersection` / `difference`.
+- **Equivalence proofs** — `a.equivalent(&b)?`: show that two differently-written patterns match exactly the same strings.
+- **Pattern simplification** — every operation returns a `Term` you can turn back into a clean pattern with `to_pattern()`.
+
+Under the hood, every pattern compiles to a finite automaton:
+
+<p align="center"><img src="https://raw.githubusercontent.com/RegexSolver/regexsolver/main/assets/automaton.svg" alt="the minimal automaton of (ab|cd)*"/></p>
+<p align="center"><sub><code>(ab|cd)*</code> compiled to its minimal automaton — generated with this library's <code>as_dot()</code></sub></p>
+
+## Try it
+
+```bash
+git clone https://github.com/RegexSolver/regexsolver && cd regexsolver
+
+# How do two patterns relate? (equivalence, subsets, intersection, differences)
+cargo run --example relate -- "(ab|xy){2}" ".*xy"
+
+# Sample strings matching a pattern
+cargo run --example generate -- "[a-z]{2}[0-9]" 20
+```
+
+```text
+a = (ab|xy){2}
+b = .*xy
+
+equivalent:    no
+a subset of b: false
+b subset of a: false
+
+a ∩ b = (ab|xy)xy
+        e.g. ["xyxy", "abxy"]
+a - b = (ab|xy)ab
+b - a = (x{1,2}|ax|([^ax]|a[^b]|x[^y]).*x|(ab|xy)(x{2}|ax|([^ax]|a[^b]|x[^y]|(ab|xy).).*x|(ab|xy)x))y
+```
+
+Or in your own project:
+
+```bash
+cargo add regexsolver
+```
+
+By default the `parallel` feature is enabled: unions/intersections of more than 3 operands and parts of the automaton-to-regex conversion run on [rayon](https://crates.io/crates/rayon). Disable it for a leaner dependency tree on single-threaded workloads:
+
+```toml
+regexsolver = { version = "1", default-features = false }
+```
+
+## Semantics in 30 seconds
+
+RegexSolver implements **pure regular languages**, which differs from typical regex engines in two ways that surprise people:
+
+- **Everything is anchored**: `abc` matches the string "abc" — not "xabc" or "abcx". Patterns describe *whole strings*.
+- **`.` matches any character**, including line feed (`\n`).
+
+The rest follows from regular-language theory:
+
+- **Backreferences** (`\1`, `\2`, ...) go beyond regular languages and return an error, as do **lookahead/lookbehind** assertions (`(?=...)`, `(?<=...)`).
+- **All quantifiers are greedy**: ungreedy markers (`*?`, `+?`, `??`) are ignored — as *sets of strings*, `a*` and `a*?` are the same language.
+- **The empty language** (matches no string at all) is written `[]` (empty character class). This is distinct from the empty string `""`.
 
 RegexSolver is based on the [regex-syntax](https://docs.rs/regex-syntax/0.8.5/regex_syntax/) library for parsing patterns. Unsupported features are parsed but ignored; they do not raise an error unless they affect semantics that cannot be represented (e.g., backreferences). This allows for some flexibility in writing regular expressions, but it is important to be aware of the unsupported features to avoid unexpected behavior.
 
-## API
+## A tour of the API
 
-### Term
+[`Term`](https://docs.rs/regexsolver/latest/regexsolver/enum.Term.html) is the type you'll interact with: it wraps either a regular expression or an automaton and picks the best representation for each operation. The essentials:
 
-`Term` is an enum designed to represent either a regular expression or an automaton. Used when working with both regular expressions and automata, allowing operations to be performed transparently regardless of the underlying representation.
+| Method | Description |
+| -------- | ------- |
+| `Term::from_pattern(pattern)` | Parses a pattern into a term. |
+| `intersection(&self, terms)` / `union(&self, terms)` | Set operations over any number of terms. |
+| `difference(&self, other)` / `complement(&self)` | What `self` matches and `other` doesn't / everything `self` doesn't match. |
+| `concat(&self, terms)` / `repeat(&self, min, max)` | Sequence and repeat languages. |
+| `equivalent(&self, other)` / `subset(&self, other)` | Compare languages. |
+| `is_empty()` / `is_total()` / `get_length()` / `get_cardinality()` | Analyze a language: matches nothing? everything? string lengths? how many strings? |
+| `generate_strings(limit, offset)` | Enumerate matching strings (call `minimize()` once first when paginating). |
+| `to_pattern()` / `to_automaton()` / `to_regex()` | Convert back out. |
 
-#### Build
-| Method | Return | Description |
-| -------- | ------- | ------- |
-| `from_automaton(automaton: FastAutomaton)` | `Term` | Creates a new `Term` holding the provided `FastAutomaton`. |
-| `from_pattern(pattern: &str)` | `Result<Term, EngineError>` | Parses and simplifies the provided pattern and returns a new `Term` holding the resulting `RegularExpression`. |
-| `from_regex(regex: RegularExpression)` | `Term` | Creates a new `Term` holding the provided `RegularExpression`. |
-| `new_empty()` | `Term` | Creates a term that matches the empty language. |
-| `new_empty_string()` | `Term` | Creates a term that only matches the empty string `""`. |
-| `new_total()` | `Term` | Creates a term that matches all possible strings. |
+All fallible operations return `Result<_, EngineError>` — nothing panics on adversarial input.
 
-#### Manipulate
-| Method | Return | Description |
-| -------- | ------- | ------- |
-| `concat(&self, terms: &[Term])` | `Result<Term, EngineError>` | Computes the concatenation of the given terms. |
-| `difference(&self, other: &Term)` | `Result<Term, EngineError>` | Computes the difference between `self` and `other`. |
-| `intersection(&self, terms: &[Term])` | `Result<Term, EngineError>` | Computes the intersection of the given terms. |
-| `repeat(&self, min: u32, max_opt: Option<u32>)` | `Result<Term, EngineError>` | Computes the repetition of the current term between `min` and `max_opt` times; if `max_opt` is `None`, the repetition is unbounded. |
-| `union(&self, terms: &[Term])` | `Result<Term, EngineError>` | Computes the union of the given terms. |
-
-#### Analyze
-| Method | Return | Description |
-| -------- | ------- | ------- |
-| `equivalent(&self, term: &Term)` | `Result<bool, EngineError>` | Returns `true` if both terms accept the same language. |
-| `generate_strings(&self, count: usize, offset: usize)` | `Result<Vec<String>, EngineError>` | Generates `count` strings matched by the term, skipping the first `offset` strings. |
-| `get_cardinality(&self)` | `Result<Cardinality<u32>, EngineError>` | Returns the cardinality of the term (i.e., the number of possible matched strings). |
-| `get_length(&self)` | `(Option<u32>, Option<u32>)` | Returns the minimum and maximum length of matched strings. |
-| `is_empty(&self)` | `bool` | Checks if the term matches the empty language. |
-| `is_empty_string(&self)` | `bool` | Checks if the term matches only the empty string `""`. |
-| `is_total(&self)` | `bool` | Checks if the term matches all possible strings. |
-| `subset(&self, term: &Term)` | `Result<bool, EngineError>` | Returns `true` if all strings matched by the current term are also matched by the given term. |
-| `to_automaton(&self)` | `Result<Cow<FastAutomaton>, EngineError>` | Converts the term to a `FastAutomaton`. |
-| `to_pattern(&self)` | `String` | Converts the term to a regular expression pattern. |
-| `to_regex(&self)` | `Cow<RegularExpression>` | Converts the term to a `RegularExpression`. |
-
-### FastAutomaton
+### Building automata by hand
 
 `FastAutomaton` is used to directly build, manipulate and analyze automata. To convert an automaton to a `RegularExpression` the method `to_regex()` can be used.
 
-When building or modifying an automaton you might come to use the method `add_transition(&mut self, from_state: State, to_state: State, new_cond: &Condition)`. This method accepts a `Condition` rather than a raw character set. To build a `Condition`, call:
+States are created with `new_state()` and transitions with `add_transition_from_range`, which labels the transition with a plain `CharRange`:
+
 ```rust
-Condition::from_range(&range, &spanning_set);
-```
-where `spanning_set` is the automaton's current `SpanningSet`. The `CharRange` you pass must be fully covered by that spanning set. If it isn't, you have two options:
+use regexsolver::CharRange;
+use regexsolver::fast_automaton::FastAutomaton;
+use regex_charclass::char::Char;
 
-1. Merge an existing spanning set with another:
+// Build an automaton matching "[a-c][0-9]*" by hand:
+let mut automaton = FastAutomaton::new_empty();
+let s1 = automaton.new_state();
+automaton.accept(s1);
+
+let a_to_c = CharRange::new_from_range(Char::new('a')..=Char::new('c'));
+let digits = CharRange::new_from_range(Char::new('0')..=Char::new('9'));
+automaton.add_transition_from_range(0, s1, &a_to_c)?;
+automaton.add_transition_from_range(s1, s1, &digits)?;
+
+assert!(automaton.is_match("b42"));
+assert_eq!(automaton.to_regex().to_string(), "[a-c][0-9]*");
+```
+
+Internally, transition labels are bitvector `Condition`s over the automaton's `SpanningSet` of disjoint character ranges — that is what makes label union/intersection/complement O(1) ([article](https://alexvbrdn.me/post/optimizing-transition-conditions-automaton-representation)). `add_transition_from_range` maintains that representation for you; for full manual control over conditions and spanning sets, see the [`add_transition` documentation](https://docs.rs/regexsolver/latest/regexsolver/fast_automaton/struct.FastAutomaton.html#method.add_transition).
+
+Everything `Term` does is also available directly on [`FastAutomaton`](https://docs.rs/regexsolver/latest/regexsolver/fast_automaton/struct.FastAutomaton.html) — `determinize`, `minimize`, the set operations, `equivalent`/`subset`, the analyses, `generate_strings`, `to_regex` — plus low-level construction (`new_state`, `accept`, `add_epsilon_transition`, ...) and inspection (`states`, `transitions_from`, `as_dot`, ...).
+
+### Working with patterns as ASTs
+
+`RegularExpression` is the parsed pattern itself: a plain AST enum (`Character` / `Repetition` / `Concat` / `Alternation`) you can analyze and walk directly. Set operations like intersection and difference live on `FastAutomaton` (or, more conveniently, on `Term`); convert with `to_automaton()`.
+
 ```rust
-let new_set = SpanningSet::merge(&old_set, &other_set);
+use regexsolver::cardinality::Cardinality;
+use regexsolver::regex::RegularExpression;
+
+// A validation pattern for an order id, e.g. "ORD-2024-12345".
+let pattern = RegularExpression::new("ORD-20[0-9]{2}-[0-9]{4,6}")?;
+
+// How long can matching ids get? Size your database column accordingly.
+assert_eq!(pattern.get_length(), (Some(13), Some(15)));
+
+// How many distinct ids does the pattern allow?
+assert_eq!(pattern.get_cardinality(), Cardinality::Integer(111_000_000));
+
+// The AST is a plain enum: walk it to lint patterns, e.g. reject
+// validation rules that accept unboundedly long input.
+fn has_unbounded_repetition(regex: &RegularExpression) -> bool {
+    match regex {
+        RegularExpression::Character(_) => false,
+        RegularExpression::Repetition(inner, _, max) => {
+            max.is_none() || has_unbounded_repetition(inner)
+        }
+        RegularExpression::Concat(parts) => parts.iter().any(has_unbounded_repetition),
+        RegularExpression::Alternation(parts) => parts.iter().any(has_unbounded_repetition),
+    }
+}
+assert!(!has_unbounded_repetition(&pattern));
+assert!(has_unbounded_repetition(&RegularExpression::new(".*@example\\.com")?));
 ```
 
-2. Recompute from a list of ranges:
-```rust
-let new_set = SpanningSet::compute_spanning_set(&[range_set1, range_set2, …]);
-```
+The variants are freely constructible too; a hand-built repetition whose maximum is below its minimum denotes no valid language and is rejected with `EngineError::InvalidRepetitionBounds` when converted by `to_automaton()`.
 
-After constructing `new_set`, apply it to the automaton:
-```rust
-fast_automaton.apply_new_spanning_set(&new_set);
-```
-
-This design allows us to perform unions, intersections, and complements of transition conditions in O(1) time, but it does add some complexity to automaton construction. For more details, you can check [this article](https://alexvbrdn.me/post/optimizing-transition-conditions-automaton-representation).
-
-#### Build
-| Method | Return | Description |
-| -------- | ------- | ------- |
-| `accept(&mut self, state: State)` | `()` | Marks the provided state as an accepting (final) state. |
-| `add_epsilon_transition(&mut self, from_state: State, to_state: State)` | `()` | Creates a new epsilon transition between the two states. |
-| `add_transition(&mut self, from_state: State, to_state: State, new_cond: &Condition)` | `()` | Creates a new transition with the given condition; the condition must follow the automaton’s current spanning set. |
-| `apply_new_spanning_set(&mut self, new_spanning_set: &SpanningSet)` | `Result<(), EngineError>` | Applies the provided spanning set and projects all existing conditions onto it. |
-| `new_empty()` | `FastAutomaton` | Creates an automaton that matches the empty language. |
-| `new_empty_string()` | `FastAutomaton` | Creates an automaton that only matches the empty string `""`. |
-| `new_from_range(range: &CharRange)` | `FastAutomaton` | Creates an automaton that matches one of the characters in the given `CharRange`. |
-| `new_state(&mut self)` | `State` | Creates a new state and returns its identifier. |
-| `new_total()` | `FastAutomaton` | Creates an automaton that matches all possible strings. |
-| `remove_state(&mut self, state: State)` | `()` | Removes the state and its connected transitions; panics if it's a start state. |
-| `remove_states(&mut self, states: &IntSet<State>)` | `()` | Removes the given states and their connected transitions; panics if any is a start state. |
-| `remove_transition(&mut self, from_state: State, to_state: State)` | `()` | Removes the transition between the two provided states if it exists. |
-
-#### Manipulate
-| Method | Return | Description |
-| -------- | ------- | ------- |
-| `complement(&mut self)` | `Result<(), EngineError>` | Complements the automaton; it must be deterministic. |
-| `concat(&self, other: &FastAutomaton)` | `Result<FastAutomaton, EngineError>` | Computes the concatenation between `self` and `other`. |
-| `concat_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(automata: I)` | `Result<FastAutomaton, EngineError>` | Computes the concatenation of all automata in the given iterator. |
-| `determinize(&self)` | `Result<Cow<FastAutomaton>, EngineError>` | Determinizes the automaton and returns the result. |
-| `difference(&self, other: &FastAutomaton)` | `Result<FastAutomaton, EngineError>` | Computes the difference between `self` and `other`. |
-| `has_intersection(&self, other: &FastAutomaton)` | `Result<bool, EngineError>` | Returns `true` if the two automata have a non-empty intersection. |
-| `intersection(&self, other: &FastAutomaton)` | `Result<FastAutomaton, EngineError>` | Computes the intersection between `self` and `other`. |
-| `intersection_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(automata: I)` | `Result<FastAutomaton, EngineError>` | Computes the intersection of all automata in the given iterator. |
-| `intersection_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(automata: I)` | `Result<FastAutomaton, EngineError>` | Computes in parallel the intersection of all automata in the given iterator. |
-| `repeat(&self, min: u32, max_opt: Option<u32>)` | `Result<FastAutomaton, EngineError>` | Computes the repetition of the automaton between `min` and `max_opt` times; if `max_opt` is `None`, the repetition is unbounded. |
-| `union(&self, other: &FastAutomaton)` | `Result<FastAutomaton, EngineError>` | Computes the union between `self` and `other`. |
-| `union_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(automata: I)` | `Result<FastAutomaton, EngineError>` | Computes the union of all automata in the given iterator. |
-| `union_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(automata: I)` | `Result<FastAutomaton, EngineError>` | Computes in parallel the union of all automata in the given iterator. |
-
-#### Analyze
-| Method | Return | Description |
-| -------- | ------- | ------- |
-| `as_dot(&self)` | `String` | Returns the automaton's DOT representation. |
-| `direct_states(&self, state: State)` | `impl Iterator<Item = State>` | Returns an iterator over states directly reachable from the given state in one transition. |
-| `direct_states_vec(&self, state: State)` | `Vec<State>` | Returns a vector of states directly reachable from the given state in one transition. |
-| `equivalent(&self, other: &FastAutomaton)` | `Result<bool, EngineError>` | Returns `true` if both automata accept the same language. |
-| `generate_strings(&self, count: usize, offset: usize)` | `Result<Vec<String>, EngineError>` | Generates `count` strings matched by the automaton, skipping the first `offset` strings. |
-| `get_accept_states(&self)` | `&IntSet<State>` | Returns a reference to the set of accept (final) states. |
-| `get_cardinality(&self)` | `Cardinality<u32>` | Returns the cardinality of the automaton (i.e., the number of possible matched strings). |
-| `get_condition(&self, from_state: State, to_state: State)` | `Option<&Condition>` | Returns a reference to the condition of the directed transition between the two states, if any. |
-| `get_length(&self)` | `(Option<u32>, Option<u32>)` | Returns the minimum and maximum length of matched strings. |
-| `get_number_of_states(&self)` | `usize` | Returns the number of states in the automaton. |
-| `get_live_states(&self)` | `IntSet<State>` | Returns the set of "live" states: those that can reach an accept state. |
-| `get_spanning_set(&self)` | `&SpanningSet` | Returns a reference to the automaton's spanning set. |
-| `get_start_state(&self)` | `State` | Returns the start state. |
-| `has_state(&self, state: State)` | `bool` | Returns `true` if the automaton contains the given state. |
-| `has_transition(&self, from_state: State, to_state: State)` | `bool` | Returns `true` if there is a directed transition from `from_state` to `to_state`. |
-| `in_degree(&self, state: State)` | `usize` | Returns the number of transitions to the provided state. |
-| `is_accepted(&self, state: State)` | `bool` | Returns `true` if the given state is one of the accept states. |
-| `is_deterministic(&self)` | `bool` | Returns `true` if the automaton is deterministic. |
-| `is_empty(&self)` | `bool` | Checks if the automaton matches the empty language. |
-| `is_empty_string(&self)` | `bool` | Checks if the automaton only matches the empty string `""`. |
-| `is_match(&self, string: &str)` | `bool` | Returns `true` if the automaton matches the given string. |
-| `is_total(&self)` | `bool` | Checks if the automaton matches all possible strings. |
-| `out_degree(&self, state: State)` | `usize` | Returns the number of transitions from the provided state. |
-| `print_dot(&self)` | `()` | Prints the automaton's DOT representation. |
-| `states(&self)` | `impl Iterator<Item = State>` | Returns an iterator over the automaton’s states. |
-| `states_vec(&self)` | `Vec<State>` | Returns a vector containing the automaton’s states. |
-| `subset(&self, other: &FastAutomaton)` | `Result<bool, EngineError>` | Returns `true` if all strings accepted by `self` are also accepted by `other`. |
-| `to_regex(&self)` | `RegularExpression` | Converts the term to a `RegularExpression`. |
-| `transitions_from(&self, state: State)` | `impl Iterator<Item = (&Condition, &State)>` | Returns an iterator over transitions from the given state. |
-| `transitions_from_vec(&self, state: State)` | `Vec<(Condition, State)>` | Returns a vector of transitions from the given state. |
-| `transitions_to_vec(&self, state: State)` | `Vec<(State, Condition)>` | Returns a vector of transitions to the given state. |
-
-
-### RegularExpression
-
-`RegularExpression` is used to directly build, manipulate and analyze regular expression patterns. Not all the set operations are available, for more advanced operation such as intersection, subtraction/difference and complement it is necessary to convert into a `FastAutomaton` with the method `to_automaton()`.
-
-#### Build/Manipulate
-| Method | Return | Description |
-| -------- | ------- | ------- |
-| `concat(&self, other: &RegularExpression, append_back: bool)` | `RegularExpression` | Returns a new regular expression representing the concatenation of `self` and `other`; `append_back` determines their order. |
-| `concat_all<'a, I: IntoIterator<Item = &'a RegularExpression>>(patterns: I)` | `RegularExpression` | Returns a regular expression that is the concatenation of all expressions in `patterns`. |
-| `new(pattern: &str)` | `Result<RegularExpression, EngineError>` | Parses and simplifies the provided pattern and returns the resulting `RegularExpression`. |
-| `new_empty()` | `RegularExpression` | Creates a regular expression that matches the empty language. |
-| `new_empty_string()` | `RegularExpression` | Creates a regular expression that matches only the empty string `""`. |
-| `new_total()` | `RegularExpression` | Creates a regular expression that matches all possible strings. |
-| `parse(pattern: &str, simplify: bool)` | `Result<RegularExpression, EngineError>` | Parses the provided pattern and returns the resulting `RegularExpression`. If `simplify` is `true`, the expression is simplified during parsing. |
-| `repeat(&self, min: u32, max_opt: Option<u32>)` | `RegularExpression` | Computes the repetition of the automaton between `min` and `max_opt` times; if `max_opt` is `None`, the repetition is unbounded. |
-| `simplify(&self)` | `RegularExpression` | Returns a simplified version by eliminating redundant constructs and applying canonical reductions. |
-| `union(&self, other: &RegularExpression)` | `RegularExpression` | Returns a regular expression matching the union of `self` and `other`. |
-| `union_all<'a, I: IntoIterator<Item = &'a RegularExpression>>(patterns: I)` | `RegularExpression` | Returns a regular expression that is the union of all expressions in `patterns`. |
-
-#### Analyze
-| Method | Return | Description |
-| -------- | ------- | ------- |
-| `evaluate_complexity(&self)` | `f64` | Returns a heuristic score for the readability of the pattern. |
-| `get_cardinality(&self)` | `Cardinality<u32>` | Returns the cardinality of the regular expression (i.e., the number of possible matched strings). |
-| `get_length(&self)` | `(Option<u32>, Option<u32>)` | Returns the minimum and maximum length of possible matched strings. |
-| `is_empty(&self)` | `bool` | Checks if the regular expression matches the empty language. |
-| `is_empty_string(&self)` | `bool` | Checks if the regular expression only matches the empty string `""`. |
-| `is_total(&self)` | `bool` | Checks if the regular expression matches all possible strings. |
-| `to_automaton(&self)` | `Result<FastAutomaton, EngineError>` | Converts the regular expression to an equivalent `FastAutomaton`. |
-
+Parsing (`new`, `parse`), the simplifying combinators (`concat`, `union`, `repeat`, `simplify`) and the analyses (`get_length`, `get_cardinality`, `evaluate_complexity`) are documented on [`RegularExpression`](https://docs.rs/regexsolver/latest/regexsolver/regex/enum.RegularExpression.html).
 
 ## Bound Execution
 
-Use a thread-local `ExecutionProfile` to cap runtime or state explosion; hitting a limit returns a specific `EngineError`.
+Automaton operations can blow up on adversarial inputs, so the engine is built to run untrusted patterns safely: a thread-local `ExecutionProfile` caps runtime and state explosion, and controls when the engine may determinize or minimize on its own. Hitting a limit returns a specific `EngineError` instead of hanging or panicking.
 
 ### Time-Bounded Execution
 
@@ -274,7 +187,7 @@ let execution_profile = ExecutionProfileBuilder::new()
 
 // We run the operation with the defined limitation
 execution_profile.run(|| {
-	assert_eq!(EngineError::OperationTimeOutError, term.generate_strings(1000).unwrap_err());
+	assert_eq!(EngineError::OperationTimeOutError, term.generate_strings(1000, 1_000_000).unwrap_err());
 });
 ```
 
@@ -295,6 +208,52 @@ execution_profile.run(|| {
 	assert_eq!(EngineError::AutomatonHasTooManyStates, term1.intersection(&[term2]).unwrap_err());
 });
 ```
+
+### Disabling Implicit Determinization
+
+`FastAutomaton` operations that require a deterministic automaton (`minimize`, `complement`, `difference`, `equivalent`, `subset`, `get_cardinality`, ...) determinize a non-deterministic input on their own by default. Since subset construction can blow up exponentially, this can be disabled: those operations then return `EngineError::DeterministicAutomatonRequired` instead, and determinization only happens through an explicit `determinize()` call. Deterministic inputs are always accepted, and the whole `Term` API keeps working — that layer manages the underlying representation itself, so its determinizations count as explicit.
+
+```rust
+use regexsolver::execution_profile::ExecutionProfileBuilder;
+use regexsolver::error::EngineError;
+
+let execution_profile = ExecutionProfileBuilder::new()
+	.implicit_determinization(false) // default is true
+	.build();
+
+// `nfa` is any non-deterministic FastAutomaton
+execution_profile.run(|| {
+	assert_eq!(EngineError::DeterministicAutomatonRequired, nfa.clone().minimize().unwrap_err());
+
+	// Determinizing explicitly is always allowed.
+	let mut dfa = nfa.determinize().unwrap().into_owned();
+	assert!(dfa.minimize().is_ok());
+});
+```
+
+### Minimizing After Determinization
+
+Every determinization can be followed automatically by a minimization of the result (off by default: it costs an extra Hopcroft pass, but keeps downstream operations working on the smallest possible automata). Inputs that are already deterministic are returned untouched.
+
+```rust
+use regexsolver::execution_profile::ExecutionProfileBuilder;
+
+let execution_profile = ExecutionProfileBuilder::new()
+	.minimize_after_determinization(true) // default is false
+	.build();
+
+// `nfa` is any non-deterministic FastAutomaton
+execution_profile.run(|| {
+	let dfa = nfa.determinize().unwrap();
+	assert!(dfa.is_minimal());
+});
+```
+
+## How it works
+
+- Patterns are parsed with [regex-syntax](https://docs.rs/regex-syntax/latest/regex_syntax/) and simplified into a small regular-expression AST; set operations run on finite automata; results convert back to patterns via state elimination.
+- Transition labels are bitvectors over a per-automaton "spanning set" of disjoint character ranges, making label union/intersection/complement O(1): see [Optimizing Automaton Representation with Transition Conditions](https://alexvbrdn.me/post/optimizing-transition-conditions-automaton-representation).
+- Correctness is cross-validated against the `regex` crate and exercised by property-based tests over randomly generated automata and expressions, with brute-force oracles for the analyses.
 
 ## Cross-Language Support
 
