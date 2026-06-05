@@ -85,11 +85,6 @@ impl FastAutomaton {
             }
         }
 
-        // Optionally fold the freshly built DFA down to its minimal form
-        if execution_profile.should_minimize_after_determinization() {
-            new_automaton.minimize()?;
-        }
-
         Ok(Cow::Owned(new_automaton))
     }
 }

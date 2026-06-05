@@ -23,16 +23,16 @@ assert_eq!(both.generate_strings(2, 0)?, ["xyxy", "abxy"]);
 
 ## What would you use this for?
 
-- **Safe migrations** — `old_rule.subset(&new_rule)?`: does the new validation pattern accept *everything* the old one did?
-- **Test-data generation** — `term.generate_strings(100, 0)?`: produce strings matching any pattern, with pagination.
-- **Rule analysis** — find shadowed or overlapping routes, firewall rules, and validators with `intersection` / `difference`.
-- **Equivalence proofs** — `a.equivalent(&b)?`: show that two differently-written patterns match exactly the same strings.
-- **Pattern simplification** — every operation returns a `Term` you can turn back into a clean pattern with `to_pattern()`.
+- **Safe migrations** - `old_rule.subset(&new_rule)?`: does the new validation pattern accept *everything* the old one did?
+- **Test-data generation** - `term.generate_strings(100, 0)?`: produce strings matching any pattern, with pagination.
+- **Rule analysis**: find shadowed or overlapping routes, firewall rules, and validators with `intersection` / `difference`.
+- **Equivalence proofs** - `a.equivalent(&b)?`: show that two differently-written patterns match exactly the same strings.
+- **Pattern simplification**: every operation returns a `Term` you can turn back into a clean pattern with `to_pattern()`.
 
 Under the hood, every pattern compiles to a finite automaton:
 
 <p align="center"><img src="https://raw.githubusercontent.com/RegexSolver/regexsolver/refs/heads/v1/assets/automaton.svg" alt="the minimal automaton of (ab|cd)*"/></p>
-<p align="center"><sub><code>(ab|cd)*</code> compiled to its minimal automaton — generated with this library's <code>as_dot()</code></sub></p>
+<p align="center"><sub><code>(ab|cd)*</code> compiled to its minimal automaton, generated with this library's <code>as_dot()</code></sub></p>
 
 ## Try it
 
@@ -42,22 +42,8 @@ git clone https://github.com/RegexSolver/regexsolver && cd regexsolver
 # How do two patterns relate? (equivalence, subsets, intersection, differences)
 cargo run --example relate -- "(ab|xy){2}" ".*xy"
 
-# Sample strings matching a pattern
+# Generate n sample strings matching a pattern
 cargo run --example generate -- "[a-z]{2}[0-9]" 20
-```
-
-```text
-a = (ab|xy){2}
-b = .*xy
-
-equivalent:    no
-a subset of b: false
-b subset of a: false
-
-a ∩ b = (ab|xy)xy
-        e.g. ["xyxy", "abxy"]
-a - b = (ab|xy)ab
-b - a = (x{1,2}|ax|([^ax]|a[^b]|x[^y]).*x|(ab|xy)(x{2}|ax|([^ax]|a[^b]|x[^y]|(ab|xy).).*x|(ab|xy)x))y
 ```
 
 Or in your own project:
@@ -74,15 +60,15 @@ regexsolver = { version = "1", default-features = false }
 
 ## Semantics in 30 seconds
 
-RegexSolver implements **pure regular languages**, which differs from typical regex engines in two ways that surprise people:
+RegexSolver implements **pure regular languages**, which differs from typical regex engines in two ways:
 
-- **Everything is anchored**: `abc` matches the string "abc" — not "xabc" or "abcx". Patterns describe *whole strings*.
+- **Everything is anchored**: `abc` matches the string "abc", not "xabc" or "abcx". Patterns describe *whole strings*.
 - **`.` matches any character**, including line feed (`\n`).
 
 The rest follows from regular-language theory:
 
 - **Backreferences** (`\1`, `\2`, ...) go beyond regular languages and return an error, as do **lookahead/lookbehind** assertions (`(?=...)`, `(?<=...)`).
-- **All quantifiers are greedy**: ungreedy markers (`*?`, `+?`, `??`) are ignored — as *sets of strings*, `a*` and `a*?` are the same language.
+- **All quantifiers are greedy**: ungreedy markers (`*?`, `+?`, `??`) are ignored as *sets of strings*, `a*` and `a*?` are the same language.
 - **The empty language** (matches no string at all) is written `[]` (empty character class). This is distinct from the empty string `""`.
 
 RegexSolver is based on the [regex-syntax](https://docs.rs/regex-syntax/0.8.5/regex_syntax/) library for parsing patterns. Unsupported features are parsed but ignored; they do not raise an error unless they affect semantics that cannot be represented (e.g., backreferences). This allows for some flexibility in writing regular expressions, but it is important to be aware of the unsupported features to avoid unexpected behavior.
@@ -102,7 +88,7 @@ RegexSolver is based on the [regex-syntax](https://docs.rs/regex-syntax/0.8.5/re
 | `generate_strings(limit, offset)` | Enumerate matching strings (call `minimize()` once first when paginating). |
 | `to_pattern()` / `to_automaton()` / `to_regex()` | Convert back out. |
 
-All fallible operations return `Result<_, EngineError>` — nothing panics on adversarial input.
+All fallible operations return `Result<_, EngineError>`.
 
 ### Building automata by hand
 
@@ -129,9 +115,9 @@ assert!(automaton.is_match("b42"));
 assert_eq!(automaton.to_regex().to_string(), "[a-c][0-9]*");
 ```
 
-Internally, transition labels are bitvector `Condition`s over the automaton's `SpanningSet` of disjoint character ranges — that is what makes label union/intersection/complement O(1) ([article](https://alexvbrdn.me/post/optimizing-transition-conditions-automaton-representation)). `add_transition_from_range` maintains that representation for you; for full manual control over conditions and spanning sets, see the [`add_transition` documentation](https://docs.rs/regexsolver/latest/regexsolver/fast_automaton/struct.FastAutomaton.html#method.add_transition).
+Internally, transition labels are bitvector `Condition`s over the automaton's `SpanningSet` of disjoint character ranges, that is what makes label union/intersection/complement O(1) ([article](https://alexvbrdn.me/post/optimizing-transition-conditions-automaton-representation)). `add_transition_from_range` maintains that representation for you; for full manual control over conditions and spanning sets, see the [`add_transition` documentation](https://docs.rs/regexsolver/latest/regexsolver/fast_automaton/struct.FastAutomaton.html#method.add_transition).
 
-Everything `Term` does is also available directly on [`FastAutomaton`](https://docs.rs/regexsolver/latest/regexsolver/fast_automaton/struct.FastAutomaton.html) — `determinize`, `minimize`, the set operations, `equivalent`/`subset`, the analyses, `generate_strings`, `to_regex` — plus low-level construction (`new_state`, `accept`, `add_epsilon_transition`, ...) and inspection (`states`, `transitions_from`, `as_dot`, ...).
+Everything `Term` does is also available directly on [`FastAutomaton`](https://docs.rs/regexsolver/latest/regexsolver/fast_automaton/struct.FastAutomaton.html), including `determinize`, `minimize`, the set operations, `equivalent`/`subset`, the analyses, `generate_strings`, `to_regex`, plus low-level construction (`new_state`, `accept`, `add_epsilon_transition`, ...) and inspection (`states`, `transitions_from`, `as_dot`, ...).
 
 ### Working with patterns as ASTs
 
@@ -211,7 +197,7 @@ execution_profile.run(|| {
 
 ### Disabling Implicit Determinization
 
-`FastAutomaton` operations that require a deterministic automaton (`minimize`, `complement`, `difference`, `equivalent`, `subset`, `get_cardinality`, ...) determinize a non-deterministic input on their own by default. Since subset construction can blow up exponentially, this can be disabled: those operations then return `EngineError::DeterministicAutomatonRequired` instead, and determinization only happens through an explicit `determinize()` call. Deterministic inputs are always accepted, and the whole `Term` API keeps working — that layer manages the underlying representation itself, so its determinizations count as explicit.
+`FastAutomaton` operations that require a deterministic automaton (`minimize`, `complement`, `difference`, `equivalent`, `subset`, `get_cardinality`, ...) determinize a non-deterministic input on their own by default. Since subset construction can blow up exponentially, this can be disabled: those operations then return `EngineError::DeterministicAutomatonRequired` instead, and determinization only happens through an explicit `determinize()` call. Deterministic inputs are always accepted, and the whole `Term` API keeps working since that layer manages the underlying representation itself, so its determinizations count as explicit.
 
 ```rust
 use regexsolver::execution_profile::ExecutionProfileBuilder;
@@ -228,24 +214,6 @@ execution_profile.run(|| {
 	// Determinizing explicitly is always allowed.
 	let mut dfa = nfa.determinize().unwrap().into_owned();
 	assert!(dfa.minimize().is_ok());
-});
-```
-
-### Minimizing After Determinization
-
-Every determinization can be followed automatically by a minimization of the result (off by default: it costs an extra Hopcroft pass, but keeps downstream operations working on the smallest possible automata). Inputs that are already deterministic are returned untouched.
-
-```rust
-use regexsolver::execution_profile::ExecutionProfileBuilder;
-
-let execution_profile = ExecutionProfileBuilder::new()
-	.minimize_after_determinization(true) // default is false
-	.build();
-
-// `nfa` is any non-deterministic FastAutomaton
-execution_profile.run(|| {
-	let dfa = nfa.determinize().unwrap();
-	assert!(dfa.is_minimal());
 });
 ```
 

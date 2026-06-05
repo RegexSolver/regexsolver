@@ -100,11 +100,6 @@ pub struct ExecutionProfile {
     /// an explicit `determinize()` call. [`Term`](crate::Term) methods
     /// always work: that layer manages the representation itself.
     implicit_determinization: bool,
-    /// Whether every determinization is followed by a minimization of the
-    /// resulting automaton. Off by default: minimization costs an extra
-    /// Hopcroft pass, but keeps downstream operations working on the
-    /// smallest possible automata.
-    minimize_after_determinization: bool,
 }
 
 impl PartialEq for ExecutionProfile {
@@ -112,7 +107,6 @@ impl PartialEq for ExecutionProfile {
         self.max_number_of_states == other.max_number_of_states
             && self.execution_timeout == other.execution_timeout
             && self.implicit_determinization == other.implicit_determinization
-            && self.minimize_after_determinization == other.minimize_after_determinization
     }
 }
 
@@ -184,17 +178,6 @@ impl ExecutionProfile {
         self
     }
 
-    pub fn with_minimize_after_determinization(mut self, enabled: bool) -> Self {
-        self.minimize_after_determinization = enabled;
-        self
-    }
-
-    /// Whether every determinization should be followed by a minimization of
-    /// the result.
-    pub(crate) fn should_minimize_after_determinization(&self) -> bool {
-        self.minimize_after_determinization
-    }
-
     pub fn set(&self) -> &Self {
         self
     }
@@ -240,9 +223,6 @@ pub struct ExecutionProfileBuilder {
     /// Whether operations requiring a deterministic automaton may determinize
     /// a non-deterministic input on their own. Defaults to `true`.
     implicit_determinization: bool,
-    /// Whether every determinization is followed by a minimization of the
-    /// result. Defaults to `false`.
-    minimize_after_determinization: bool,
 }
 impl Default for ExecutionProfileBuilder {
     fn default() -> Self {
@@ -256,7 +236,6 @@ impl ExecutionProfileBuilder {
             max_number_of_states: None,
             execution_timeout: None,
             implicit_determinization: true,
-            minimize_after_determinization: false,
         }
     }
 
@@ -282,23 +261,12 @@ impl ExecutionProfileBuilder {
         self
     }
 
-    /// Whether every determinization is followed by a minimization of the
-    /// resulting automaton. Off by default: minimization costs an extra
-    /// Hopcroft pass, but keeps downstream operations working on the
-    /// smallest possible automata. Inputs that are already deterministic are
-    /// not touched.
-    pub fn minimize_after_determinization(mut self, enabled: bool) -> Self {
-        self.minimize_after_determinization = enabled;
-        self
-    }
-
     pub fn build(self) -> ExecutionProfile {
         ExecutionProfile {
             max_number_of_states: self.max_number_of_states,
             execution_timeout: self.execution_timeout,
             execution_deadline: None,
             implicit_determinization: self.implicit_determinization,
-            minimize_after_determinization: self.minimize_after_determinization,
         }
     }
 }
@@ -310,7 +278,6 @@ impl ThreadLocalParams {
         static EXECUTION_DEADLINE: RefCell<Option<Instant>> = const { RefCell::new(None) };
         static EXECUTION_TIMEOUT: RefCell<Option<u64>> = const { RefCell::new(None) };
         static IMPLICIT_DETERMINIZATION: RefCell<bool> = const { RefCell::new(true) };
-        static MINIMIZE_AFTER_DETERMINIZATION: RefCell<bool> = const { RefCell::new(false) };
     }
 
     /// Store on the current thread [`ExecutionProfile`].
@@ -330,10 +297,6 @@ impl ThreadLocalParams {
         ThreadLocalParams::IMPLICIT_DETERMINIZATION.with(|cell| {
             *cell.borrow_mut() = profile.implicit_determinization;
         });
-
-        ThreadLocalParams::MINIMIZE_AFTER_DETERMINIZATION.with(|cell| {
-            *cell.borrow_mut() = profile.minimize_after_determinization;
-        });
     }
 
     fn get_max_number_of_states() -> Option<usize> {
@@ -352,10 +315,6 @@ impl ThreadLocalParams {
         ThreadLocalParams::IMPLICIT_DETERMINIZATION.with(|cell| *cell.borrow())
     }
 
-    fn get_minimize_after_determinization() -> bool {
-        ThreadLocalParams::MINIMIZE_AFTER_DETERMINIZATION.with(|cell| *cell.borrow())
-    }
-
     /// Return the [`ExecutionProfile`] stored on the current thread.
     fn get_execution_profile() -> ExecutionProfile {
         ExecutionProfile {
@@ -363,7 +322,6 @@ impl ThreadLocalParams {
             execution_deadline: Self::get_execution_deadline(),
             execution_timeout: Self::get_execution_timeout(),
             implicit_determinization: Self::get_implicit_determinization(),
-            minimize_after_determinization: Self::get_minimize_after_determinization(),
         }
     }
 }
@@ -471,57 +429,6 @@ mod tests {
             });
     }
 
-    #[test]
-    fn test_minimize_after_determinization() {
-        use crate::CharRange;
-        use crate::fast_automaton::FastAutomaton;
-        use crate::fast_automaton::condition::Condition;
-        use crate::fast_automaton::spanning_set::SpanningSet;
-        use regex_charclass::char::Char;
-
-        // NFA over base 'a' + rest whose subset construction yields two
-        // distinct but language-equivalent accept states ({f1, f3} on 'a',
-        // {f2} on [^a]) — 3 determinized states, 2 after minimization.
-        let range_a = CharRange::new_from_range(Char::new('a')..=Char::new('a'));
-        let ss = SpanningSet::compute_spanning_set(std::slice::from_ref(&range_a));
-        let mut nfa = FastAutomaton::new_empty();
-        nfa.apply_new_spanning_set(&ss).unwrap();
-        let f1 = nfa.new_state();
-        let f2 = nfa.new_state();
-        let f3 = nfa.new_state();
-        let cond_a = Condition::from_range(&range_a, &ss).unwrap();
-        let cond_rest = cond_a.complement();
-        nfa.add_transition(0, f1, &cond_a);
-        nfa.add_transition(0, f3, &cond_a); // overlaps with f1: non-deterministic
-        nfa.add_transition(0, f2, &cond_rest);
-        nfa.accept(f1);
-        nfa.accept(f2);
-        nfa.accept(f3);
-        assert!(!nfa.is_deterministic());
-
-        // Default: determinize alone does not minimize.
-        let plain = nfa.determinize().unwrap().into_owned();
-        assert!(plain.is_deterministic());
-        assert!(!plain.is_minimal());
-        assert_eq!(plain.get_number_of_states(), 3);
-
-        ExecutionProfileBuilder::new()
-            .minimize_after_determinization(true)
-            .build()
-            .run(|| {
-                let minimized = nfa.determinize().unwrap().into_owned();
-                assert!(minimized.is_deterministic());
-                assert!(minimized.is_minimal());
-                assert_eq!(minimized.get_number_of_states(), 2);
-                assert!(minimized.equivalent(&plain).unwrap());
-
-                // Already-deterministic inputs are returned untouched: the
-                // flag only applies when a determinization actually happens.
-                let same = plain.determinize().unwrap();
-                assert!(!same.is_minimal());
-            });
-    }
-
     /// The `implicit_determinization` knob targets direct `FastAutomaton`
     /// usage; `Term` manages the underlying representation itself, so its
     /// whole public API must keep working when the knob is off.
@@ -565,30 +472,6 @@ mod tests {
                     nondeterministic_automaton().minimize().unwrap_err(),
                     EngineError::DeterministicAutomatonRequired
                 );
-            });
-    }
-
-    /// The two determinization knobs compose: implicit determinization
-    /// stays gated, while an explicit `determinize()` both works and
-    /// minimizes its result.
-    #[test]
-    fn test_minimize_after_determinization_with_implicit_disabled() {
-        let nfa = nondeterministic_automaton();
-
-        ExecutionProfileBuilder::new()
-            .implicit_determinization(false)
-            .minimize_after_determinization(true)
-            .build()
-            .run(|| {
-                assert_eq!(
-                    nfa.clone().minimize().unwrap_err(),
-                    EngineError::DeterministicAutomatonRequired
-                );
-
-                let dfa = nfa.determinize().unwrap();
-                assert!(dfa.is_deterministic());
-                assert!(dfa.is_minimal());
-                assert!(dfa.equivalent(&nfa.determinize().unwrap()).unwrap());
             });
     }
 
