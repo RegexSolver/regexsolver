@@ -31,7 +31,7 @@ assert_eq!(both.generate_strings(2, 0)?, ["xyxy", "abxy"]);
 
 Under the hood, every pattern compiles to a finite automaton:
 
-<p align="center"><img src="https://raw.githubusercontent.com/RegexSolver/regexsolver/main/assets/automaton.svg" alt="the minimal automaton of (ab|cd)*"/></p>
+<p align="center"><img src="https://raw.githubusercontent.com/RegexSolver/regexsolver/refs/heads/v1/assets/automaton.svg" alt="the minimal automaton of (ab|cd)*"/></p>
 <p align="center"><sub><code>(ab|cd)*</code> compiled to its minimal automaton — generated with this library's <code>as_dot()</code></sub></p>
 
 ## Try it
