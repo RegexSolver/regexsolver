@@ -10,12 +10,15 @@ The `regex` crate tells you whether a *string* matches a pattern. **RegexSolver 
 ```rust
 use regexsolver::Term;
 
-let a = Term::from_pattern("(ab|xy){2}")?;
-let b = Term::from_pattern(".*xy")?;
+let a: Term = "(ab|xy){2}".parse()?;
+let b: Term = ".*xy".parse()?;
 
 // Which strings match BOTH patterns? Get the answer as a regex:
-let both = a.intersection(&[b])?;
+let both = a.intersection([&b])?;
 assert_eq!(both.to_pattern(), "(ab|xy)xy");
+
+// Test a concrete string against the result (matching is anchored):
+assert!(both.matches("abxy")?);
 
 // ...and sample them:
 assert_eq!(both.generate_strings(2, 0)?, ["xyxy", "abxy"]);
@@ -27,7 +30,7 @@ assert_eq!(both.generate_strings(2, 0)?, ["xyxy", "abxy"]);
 - **Test-data generation** - `term.generate_strings(100, 0)?`: produce strings matching any pattern, with pagination.
 - **Rule analysis**: find shadowed or overlapping routes, firewall rules, and validators with `intersection` / `difference`.
 - **Equivalence proofs** - `a.equivalent(&b)?`: show that two differently-written patterns match exactly the same strings.
-- **Pattern simplification**: every operation returns a `Term` you can turn back into a clean pattern with `to_pattern()`.
+- **Pattern simplification**: every operation returns a `Term` you can turn back into a regex pattern with `to_pattern()`.
 
 Under the hood, every pattern compiles to a finite automaton:
 
@@ -82,10 +85,11 @@ RegexSolver is based on the [regex-syntax](https://docs.rs/regex-syntax/0.8.5/re
 | `Term::from_pattern(pattern)` | Parses a pattern into a term. |
 | `intersection(&self, terms)` / `union(&self, terms)` | Set operations over any number of terms. |
 | `difference(&self, other)` / `complement(&self)` | What `self` matches and `other` doesn't / everything `self` doesn't match. |
-| `concat(&self, terms)` / `repeat(&self, min, max)` | Sequence and repeat languages. |
+| `concat(&self, terms)` / `repeat(&self, range)` | Sequence and repeat languages; `range` is any Rust range expression (`2..=5`, `1..`, `..3`, ...). |
 | `equivalent(&self, other)` / `subset(&self, other)` | Compare languages. |
 | `is_empty()` / `is_total()` / `get_length()` / `get_cardinality()` | Analyze a language: matches nothing? everything? string lengths? how many strings? |
-| `generate_strings(limit, offset)` | Enumerate matching strings (call `minimize()` once first when paginating). |
+| `generate_strings(limit, offset)` | Enumerate matching strings eagerly (call `minimize()` once first when paginating). |
+| `iter_strings()` | Lazy iterator equivalent; computes the automaton once and yields strings in batches. |
 | `to_pattern()` / `to_automaton()` / `to_regex()` | Convert back out. |
 
 All fallible operations return `Result<_, EngineError>`.

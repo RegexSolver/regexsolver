@@ -12,7 +12,7 @@ mod analyze;
 mod builder;
 mod operation;
 
-/// Represent a regular expression.
+/// Represents a regular expression.
 ///
 /// The variants are public and freely constructible and matchable. Values
 /// can also be built with the parser ([`new`](Self::new) /
@@ -122,9 +122,9 @@ impl RegularExpression {
             RegularExpression::Repetition(..) => true,
             RegularExpression::Concat(parts) => match parts.len() {
                 1 => Self::quantifier_needs_parens(&parts[0]),
-                // Covers both the empty concatenation — which prints as ""
-                // and needs the explicit group, `()*` is valid but a bare
-                // `*` is not — and real multi-part concatenations.
+                // Covers both the empty concatenation (which prints as ""
+                // and needs the explicit group; `()*` is valid but a bare
+                // `*` is not) and real multi-part concatenations.
                 _ => true,
             },
             RegularExpression::Alternation(parts) => match parts.len() {
@@ -137,7 +137,7 @@ impl RegularExpression {
         }
     }
 
-    /// Checks if the regular expression matches the empty language.
+    /// Returns `true` if the regular expression matches the empty language.
     pub fn is_empty(&self) -> bool {
         match self {
             RegularExpression::Alternation(alternation) => alternation.is_empty(),
@@ -146,7 +146,7 @@ impl RegularExpression {
         }
     }
 
-    /// Checks if the regular expression only matches the empty string `""`.
+    /// Returns `true` if the regular expression matches only the empty string `""`.
     pub fn is_empty_string(&self) -> bool {
         match self {
             RegularExpression::Concat(concat) => concat.is_empty(),
@@ -154,7 +154,7 @@ impl RegularExpression {
         }
     }
 
-    /// Checks if the regular expression matches all possible strings.
+    /// Returns `true` if the regular expression matches all possible strings.
     pub fn is_total(&self) -> bool {
         match self {
             RegularExpression::Repetition(regular_expression, min, max_opt) => {

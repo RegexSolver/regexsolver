@@ -166,8 +166,8 @@ impl RegularExpression {
     }
 
     /// Merges the bounds of two adjacent repetitions of the same expression,
-    /// `r{a,b}r{c,d}` → `r{a+c,b+d}`. Returns `None` — "cannot be merged",
-    /// falling back to plain concatenation — when an addition would overflow.
+    /// `r{a,b}r{c,d}` → `r{a+c,b+d}`. Returns `None` ("cannot be merged",
+    /// falling back to plain concatenation) when an addition would overflow.
     fn merge_repetition_bounds(
         this_min: u32,
         this_max_opt: &Option<u32>,

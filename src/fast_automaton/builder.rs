@@ -178,7 +178,7 @@ impl FastAutomaton {
     ///
     /// An empty range matches no character, so no transition is added.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use regexsolver::CharRange;
@@ -206,8 +206,8 @@ impl FastAutomaton {
         }
 
         // Fast path: the range is exactly expressible in the current
-        // spanning set. `Condition::from_range` alone cannot tell us that —
-        // it silently drops partially-covered bases — so round-trip the
+        // spanning set. `Condition::from_range` alone cannot tell us that
+        // (it silently drops partially-covered bases), so round-trip the
         // condition to check exactness.
         if let Ok(condition) = Condition::from_range(range, &self.spanning_set)
             && condition.to_range(&self.spanning_set)? == *range
@@ -263,7 +263,6 @@ impl FastAutomaton {
         Ok(())
     }
 
-    /// Creates a new epsilon transition between the two states.
     /// Adds an epsilon transition by eagerly folding `to_state`'s **current**
     /// transitions (and acceptance) into `from_state`.
     ///

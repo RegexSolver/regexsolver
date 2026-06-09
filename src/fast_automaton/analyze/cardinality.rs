@@ -7,7 +7,7 @@ impl FastAutomaton {
     ///
     /// Works on non-deterministic automata too: acyclic NFAs are determinized
     /// internally (the only fallible step, subject to the
-    /// [`crate::execution_profile::ExecutionProfile`] budget — and rejected
+    /// [`crate::execution_profile::ExecutionProfile`] budget, and rejected
     /// with [`EngineError::DeterministicAutomatonRequired`] when the profile
     /// disables implicit determinization).
     ///

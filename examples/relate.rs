@@ -29,7 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("b subset of a: {}", b_term.subset(&a_term)?);
     println!();
 
-    let intersection = a_term.intersection(std::slice::from_ref(&b_term))?;
+    let intersection = a_term.intersection([&b_term])?;
     if intersection.is_empty()? {
         println!("a ∩ b = [] (no string matches both)");
     } else {

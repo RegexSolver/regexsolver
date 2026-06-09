@@ -11,7 +11,7 @@ mod repeat;
 mod union;
 
 impl FastAutomaton {
-    /// Removes "dead" states — those that cannot reach any accept state — since
+    /// Removes "dead" states (those that cannot reach any accept state), since
     /// they never contribute to the language. If the language is empty the whole
     /// automaton collapses to the canonical empty automaton.
     pub fn remove_dead_states(&mut self) {

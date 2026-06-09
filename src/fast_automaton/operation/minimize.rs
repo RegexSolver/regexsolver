@@ -5,7 +5,7 @@ use super::*;
 impl FastAutomaton {
     /// Minimizes the automaton using Hopcroft's Algorithm.
     ///
-    /// If `self` is non-deterministic, it is determinized in place first —
+    /// If `self` is non-deterministic, it is determinized in place first,
     /// unless the [`ExecutionProfile`] disables implicit determinization, in
     /// which case [`EngineError::DeterministicAutomatonRequired`] is
     /// returned.
@@ -23,7 +23,7 @@ impl FastAutomaton {
         let execution_profile = ExecutionProfile::get();
 
         // Drop states unreachable from the start. A minimal automaton has none,
-        // and downstream invariants rely on it — in particular `is_empty`'s
+        // and downstream invariants rely on it; in particular `is_empty`'s
         // fast path treats any minimal automaton with an accept state as
         // non-empty, which only holds if every accept state is reachable.
         let reachable = self.forward_reachable_states();

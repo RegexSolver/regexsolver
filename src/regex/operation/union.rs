@@ -281,8 +281,8 @@ impl RegularExpression {
                 } else {
                     // At least one side is unbounded. The union collapses to
                     // r{min(m1,m2),} only when the ranges overlap or are
-                    // adjacent — i.e. the unbounded side starts no later than
-                    // one past the bounded side's end. Otherwise there is a
+                    // adjacent (i.e. the unbounded side starts no later than
+                    // one past the bounded side's end). Otherwise there is a
                     // gap (e.g. a? ∪ a{3,} must NOT become a*).
                     let mergeable = match (this_max_opt, that_max_opt) {
                         (None, None) => true,

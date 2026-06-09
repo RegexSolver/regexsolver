@@ -66,7 +66,7 @@ impl FastAutomaton {
     ) -> Result<IntSet<usize>, EngineError> {
         let mut imcomplete_states = IntSet::with_capacity(other.out_degree(other.start_state) + 1);
         // If `other` accepts the empty string we must make the union's *entry*
-        // state accepting — but only after the start state is finalized below.
+        // state accepting, but only after the start state is finalized below.
         // Marking the current start eagerly is wrong when it has incoming edges
         // (e.g. a self-loop) and is about to be demoted behind a fresh start:
         // the demoted state would then wrongly accept the strings on its loop.

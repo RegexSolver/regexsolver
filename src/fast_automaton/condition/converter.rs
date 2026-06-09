@@ -77,7 +77,7 @@ impl<'a, 'b> ConditionConverter<'a, 'b> {
         // The one invariant every legitimate use (refining and coarsening
         // alike) must uphold: the projection denotes the same character set.
         // A violation means a condition referenced a base the target spanning
-        // set cannot express — a silent language corruption in release.
+        // set cannot express, causing silent language corruption in release.
         debug_assert_eq!(
             condition
                 .to_range(self.from_spanning_set)

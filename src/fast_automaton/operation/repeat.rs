@@ -48,7 +48,7 @@ impl FastAutomaton {
         // stale state ids in the accept frontier).
         if self.is_empty() {
             if min == 0 {
-                // ∅⁰ is exactly {""} — replace the whole automaton instead
+                // ∅⁰ is exactly {""}: replace the whole automaton instead
                 // of marking the start accepting: a dead automaton can still
                 // have reachable transitions (e.g. a self-loop on a
                 // non-accepting start), and an accepting start would wrongly
@@ -279,7 +279,7 @@ impl FastAutomaton {
 #[cfg(test)]
 mod tests {
     // Regression: the r{0,1} fast path used to insert into `accept_states`
-    // directly, leaving a stale `minimal = true` on a mutated automaton —
+    // directly, leaving a stale `minimal = true` on a mutated automaton;
     // `minimize()` (which trusts the flag) then silently refused to
     // minimize it.
     // Regression (found by the repeat decomposition-oracle proptest): the
@@ -302,7 +302,7 @@ mod tests {
         assert!(a.repeat(2, None).unwrap().is_empty()); // ∅{2,} = ∅
 
         // A dead automaton with REACHABLE transitions: ∅* must still be
-        // exactly {""} — marking the start accepting used to revive the
+        // exactly {""}; marking the start accepting used to revive the
         // dead self-loop into b*.
         let range_b = crate::CharRange::new_from_range(
             regex_charclass::char::Char::new('b')..=regex_charclass::char::Char::new('b'),
@@ -319,7 +319,7 @@ mod tests {
 
     // state-count heuristic underflowed on empty-language automata with
     // more than one state, because the concat heuristic short-circuits ∅
-    // to 1 — panicking in the public `repeat` before the empty-language
+    // to 1, panicking in the public `repeat` before the empty-language
     // early-return could run.
     #[test]
     fn repeat_of_multi_state_empty_language_does_not_underflow() {
@@ -357,7 +357,7 @@ mod tests {
     use crate::regex::RegularExpression;
 
     // Regression: `repeat(0, Some(0))` on a non-empty language used to return
-    // L ∪ {""} instead of just {""} — the general path left the original
+    // L ∪ {""} instead of just {""}; the general path left the original
     // language reachable and only made the start accepting. r⁰ must be {""}.
     #[test]
     fn bug_repeat_zero_zero_on_non_empty() {

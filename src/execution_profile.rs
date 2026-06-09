@@ -5,9 +5,9 @@ use std::{
 
 use crate::error::EngineError;
 
-/// Hold settings about limitations and constraints of operations execution within the engine.
+/// Holds settings that constrain how operations execute within the engine.
 ///
-/// # Examples:
+/// # Examples
 ///
 /// ## Limiting the number of states
 /// ```
@@ -111,7 +111,7 @@ impl PartialEq for ExecutionProfile {
 }
 
 impl ExecutionProfile {
-    /// Retrieve the current thread-local execution profile.
+    /// Retrieves the current thread-local execution profile.
     pub fn get() -> ExecutionProfile {
         ThreadLocalParams::get_execution_profile()
     }
@@ -163,26 +163,33 @@ impl ExecutionProfile {
         }
     }
 
+    /// Returns a copy of this profile with the execution timeout set to
+    /// `execution_timeout_in_ms` milliseconds. Use these `with_*` methods to
+    /// derive a variant of an existing profile (e.g. one from
+    /// [`get`](Self::get)); to build one from scratch, prefer
+    /// [`ExecutionProfileBuilder`]. See
+    /// [`ExecutionProfileBuilder::execution_timeout`].
     pub fn with_execution_timeout(mut self, execution_timeout_in_ms: u64) -> Self {
         self.execution_timeout = Some(execution_timeout_in_ms);
         self
     }
 
+    /// Returns a copy of this profile with the maximum number of states set to
+    /// `max_number_of_states`. See
+    /// [`ExecutionProfileBuilder::max_number_of_states`].
     pub fn with_max_number_of_states(mut self, max_number_of_states: usize) -> Self {
         self.max_number_of_states = Some(max_number_of_states);
         self
     }
 
+    /// Returns a copy of this profile with implicit determinization enabled or
+    /// disabled. See [`ExecutionProfileBuilder::implicit_determinization`].
     pub fn with_implicit_determinization(mut self, allowed: bool) -> Self {
         self.implicit_determinization = allowed;
         self
     }
 
-    pub fn set(&self) -> &Self {
-        self
-    }
-
-    /// Run the given closure with this profile at thread level, setting its start time to now.
+    /// Runs the given closure with this profile installed for the current thread, setting its start time to now.
     pub fn run<F, R>(&self, f: F) -> R
     where
         F: FnOnce() -> R,
@@ -201,7 +208,7 @@ impl ExecutionProfile {
         result
     }
 
-    /// Like [`ExecutionProfile::run`], but does *not* reset its start time. Useful if you want to pass a profile state to a new thread.
+    /// Runs the closure like [`run`](Self::run), but does not reset the start time. Use this to propagate an already-started profile to worker threads without restarting the clock.
     pub fn apply<F, R>(&self, f: F) -> R
     where
         F: FnOnce() -> R,
@@ -231,6 +238,9 @@ impl Default for ExecutionProfileBuilder {
 }
 
 impl ExecutionProfileBuilder {
+    /// Creates a builder with no limits set and implicit determinization
+    /// enabled (i.e. the defaults, equivalent to the ambient profile when none
+    /// has been installed).
     pub fn new() -> Self {
         Self {
             max_number_of_states: None,
@@ -239,11 +249,19 @@ impl ExecutionProfileBuilder {
         }
     }
 
+    /// Sets the longest time, in milliseconds, that an operation may run before
+    /// it aborts with [`EngineError::OperationTimeOutError`]. Enforcement is
+    /// best-effort (checked between internal steps), so the exact deadline is
+    /// not guaranteed. Unset by default (no timeout).
     pub fn execution_timeout(mut self, execution_timeout_in_ms: u64) -> Self {
         self.execution_timeout = Some(execution_timeout_in_ms);
         self
     }
 
+    /// Caps the number of states an automaton may reach; operations that would
+    /// exceed it abort with [`EngineError::AutomatonHasTooManyStates`]. This
+    /// bounds the exponential blow-up of conversions such as determinization.
+    /// Unset by default (no cap).
     pub fn max_number_of_states(mut self, max_number_of_states: usize) -> Self {
         self.max_number_of_states = Some(max_number_of_states);
         self
@@ -254,13 +272,15 @@ impl ExecutionProfileBuilder {
     /// non-deterministic input on their own (the default). When set to
     /// `false`, those operations return
     /// [`EngineError::DeterministicAutomatonRequired`] instead; explicit
-    /// `determinize()` calls — and [`Term`](crate::Term) methods, which
-    /// manage the representation themselves — are always allowed.
+    /// `determinize()` calls and [`Term`](crate::Term) methods (which
+    /// manage the representation themselves) are always allowed.
     pub fn implicit_determinization(mut self, allowed: bool) -> Self {
         self.implicit_determinization = allowed;
         self
     }
 
+    /// Builds the [`ExecutionProfile`]. Install it around a unit of work with
+    /// [`ExecutionProfile::run`].
     pub fn build(self) -> ExecutionProfile {
         ExecutionProfile {
             max_number_of_states: self.max_number_of_states,
@@ -458,7 +478,7 @@ mod tests {
                 assert!(term.concat(std::slice::from_ref(&other)).is_ok());
                 assert!(term.union(std::slice::from_ref(&other)).is_ok());
                 assert!(term.intersection(std::slice::from_ref(&other)).is_ok());
-                assert!(term.repeat(0, Some(2)).is_ok());
+                assert!(term.repeat(0..=2).is_ok());
                 assert!(term.is_empty().is_ok());
                 assert!(term.is_empty_string().is_ok());
                 let _ = term.get_length();

@@ -108,7 +108,7 @@ impl AbstractNFAMetadata {
                     // An automaton always has at least one state. Degenerate
                     // sub-expressions denoting {""} (e.g. an unsimplified
                     // `(a{0,0})*`) reach this point with a single state, and
-                    // the merge discount must not drive the count to zero —
+                    // the merge discount must not drive the count to zero;
                     // every later `- 1` in this module relies on counts
                     // staying >= 1.
                     (self.number_of_states - 1).max(1)
@@ -318,8 +318,8 @@ mod tests {
     }
 
     // Regression: directly-constructed (unsimplified) repetitions over {""}
-    // sub-expressions — shapes the string parser simplifies away but any user
-    // of the public enum can build — used to drive the abstract state count
+    // sub-expressions (shapes the string parser simplifies away but any user
+    // of the public enum can build) used to drive the abstract state count
     // to zero, after which the merge discounts underflowed and panicked.
     #[test]
     fn degenerate_repetitions_do_not_underflow() {

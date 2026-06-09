@@ -219,7 +219,7 @@ mod tests {
     use crate::regex::RegularExpression;
 
     // Regression: `has_intersection` enforced the timeout but not the state
-    // budget, unlike `intersection` — the product pair map could grow
+    // budget, unlike `intersection`: the product pair map could grow
     // unchecked.
     #[test]
     fn has_intersection_respects_state_budget() {

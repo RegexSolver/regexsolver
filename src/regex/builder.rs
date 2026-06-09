@@ -30,8 +30,8 @@ impl RegularExpression {
     /// Strips inline flag groups like `(?i)`, `(?m-s)` or `(?-s)` from the
     /// pattern: the engine treats all characters uniformly, so the flags are
     /// meaningless here. Equivalent to deleting every match of
-    /// `\(\?[imsx]*-?[imsx]*\)`; anything else — including non-capturing
-    /// groups `(?:...)` — is left untouched.
+    /// `\(\?[imsx]*-?[imsx]*\)`; anything else (including non-capturing
+    /// groups `(?:...)`) is left untouched.
     fn remove_flags(regex: &str) -> String {
         let bytes = regex.as_bytes();
         let mut result = String::with_capacity(regex.len());
@@ -226,7 +226,7 @@ mod tests {
 
     // Regression (found by the proptest generators): singleton
     // Alternation/Concat wrappers print transparently, so quantified
-    // expressions must be parenthesized by looking through them —
+    // expressions must be parenthesized by looking through them:
     // `((.a))*` used to print as `.a*` instead of `(.a)*`, changing the
     // language.
     #[test]

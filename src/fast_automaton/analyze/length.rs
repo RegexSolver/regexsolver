@@ -21,7 +21,7 @@ impl FastAutomaton {
             return (None, None);
         }
 
-        // BFS from the start over live states only — every state on an
+        // BFS from the start over live states only; every state on an
         // accepting path is live, so this loses no accepting path. BFS visits
         // in non-decreasing depth, hence the first accept hit is the minimum.
         // The visited set (reachable ∩ live) is exactly the subgraph relevant
@@ -158,7 +158,7 @@ mod tests {
     }
 
     // Regression: `get_length` used to enumerate paths with a cloned `seen`
-    // set per branch — exponential time and memory on branching DAGs. A chain
+    // set per branch (exponential time and memory on branching DAGs). A chain
     // of diamonds has 2^k paths; the linear algorithm must handle it
     // instantly.
     #[test]

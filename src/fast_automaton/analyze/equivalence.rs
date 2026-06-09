@@ -5,7 +5,7 @@ use super::*;
 impl FastAutomaton {
     /// Returns `true` if both automata accept the same language.
     ///
-    /// Non-deterministic operands are determinized internally — unless the
+    /// Non-deterministic operands are determinized internally, unless the
     /// execution profile disables implicit determinization, in which case
     /// [`EngineError::DeterministicAutomatonRequired`] is returned.
     pub fn equivalent(&self, other: &FastAutomaton) -> Result<bool, EngineError> {

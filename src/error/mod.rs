@@ -10,9 +10,9 @@ pub enum EngineError {
     OperationTimeOutError,
     /// The automaton has too many states.
     AutomatonHasTooManyStates,
-    /// The regular expression can not be parsed.
+    /// The regular expression cannot be parsed.
     RegexSyntaxError(String),
-    /// The provided range can not be built from the spanning set.
+    /// The provided range cannot be built from the spanning set.
     ConditionInvalidRange,
     /// The repetition bounds are invalid: the maximum is below the minimum.
     InvalidRepetitionBounds(u32, u32),
@@ -34,7 +34,7 @@ impl fmt::Display for EngineError {
             EngineError::RegexSyntaxError(err) => write!(f, "{err}."),
             EngineError::ConditionInvalidRange => write!(
                 f,
-                "The provided range can not be built from the spanning set."
+                "The provided range cannot be built from the spanning set."
             ),
             EngineError::InvalidRepetitionBounds(min, max) => write!(
                 f,

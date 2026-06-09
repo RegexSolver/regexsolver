@@ -82,7 +82,7 @@ impl FastBitVec {
 
     /// The binary operations combine blocks pairwise with `zip`, which would
     /// silently truncate to the shorter operand if two bitvectors built over
-    /// different spanning sets were ever combined — producing a wrong
+    /// different spanning sets were ever combined, producing a wrong
     /// language instead of a loud failure. Catch that in debug builds (and
     /// therefore in every test run).
     #[inline]

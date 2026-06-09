@@ -54,7 +54,7 @@ impl FastAutomaton {
     ///
     /// Sound and complete for **deterministic** automata: a DFA's language
     /// equals Σ\* iff every reachable state is accepting AND its outgoing
-    /// conditions union to Σ. For NFAs this is sound but conservative —
+    /// conditions union to Σ. For NFAs this is sound but conservative:
     /// alternative paths may cover a character that no single reachable
     /// state covers, so callers that need an exact answer on an NFA should
     /// determinize first.
@@ -155,7 +155,7 @@ impl FastAutomaton {
     /// accept state** by following non-empty transitions. Computed by a reverse
     /// traversal from the accept states.
     ///
-    /// This is co-reachability — note it is *not* the set of states reachable
+    /// This is co-reachability; note it is *not* the set of states reachable
     /// from the start state.
     pub fn get_live_states(&self) -> IntSet<State> {
         let mut states_map: IntMap<usize, IntSet<usize>> =
@@ -193,7 +193,7 @@ impl FastAutomaton {
         live
     }
 
-    /// Returns one [`Condition`] per base of the spanning set — including the
+    /// Returns one [`Condition`] per base of the spanning set, including the
     /// "rest" range when it is non-empty.
     ///
     /// The bases must partition the whole alphabet Σ: subset construction

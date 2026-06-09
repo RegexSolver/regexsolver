@@ -11,7 +11,7 @@ use super::*;
 
 pub(crate) type Transitions = IntMap<State, Condition>;
 
-/// The identifier of state in an [`FastAutomaton`]
+/// The identifier of a state in a [`FastAutomaton`].
 pub type State = usize;
 
 mod analyze;
@@ -22,7 +22,7 @@ mod generate;
 mod operation;
 pub mod spanning_set;
 
-/// Represent a finite state automaton.
+/// Represents a finite-state automaton.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[must_use = "non-`_mut` operations return a new automaton"]
 pub struct FastAutomaton {

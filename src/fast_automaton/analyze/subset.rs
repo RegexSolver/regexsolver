@@ -5,7 +5,7 @@ use super::*;
 impl FastAutomaton {
     /// Returns `true` if all strings accepted by `self` are also accepted by `other`.
     ///
-    /// A non-deterministic `other` is determinized internally — unless the
+    /// A non-deterministic `other` is determinized internally, unless the
     /// execution profile disables implicit determinization, in which case
     /// [`EngineError::DeterministicAutomatonRequired`] is returned.
     pub fn subset(&self, other: &FastAutomaton) -> Result<bool, EngineError> {

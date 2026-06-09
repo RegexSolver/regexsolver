@@ -1,4 +1,4 @@
-/// Represent a number.
+/// Represents a cardinality: either a specific integer, a number too large to represent exactly, or infinite.
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Cardinality<U> {
     /// An infinite number.

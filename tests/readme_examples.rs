@@ -33,8 +33,11 @@ fn readme_hero_example() -> Result<(), EngineError> {
     let b = Term::from_pattern(".*xy")?;
 
     // Which strings match BOTH patterns? Get the answer as a regex:
-    let both = a.intersection(&[b])?;
+    let both = a.intersection([&b])?;
     assert_eq!(both.to_pattern(), "(ab|xy)xy");
+
+    // Test a concrete string against the result (matching is anchored):
+    assert!(both.matches("abxy")?);
 
     // ...and sample them:
     assert_eq!(both.generate_strings(2, 0)?, ["xyxy", "abxy"]);

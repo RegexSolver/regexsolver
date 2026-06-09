@@ -47,7 +47,7 @@ impl FastAutomaton {
 
     /// Complements the automaton.
     ///
-    /// If `self` is non-deterministic, it is determinized in place first —
+    /// If `self` is non-deterministic, it is determinized in place first,
     /// unless the execution profile disables implicit determinization, in
     /// which case [`EngineError::DeterministicAutomatonRequired`] is
     /// returned.
@@ -71,7 +71,7 @@ impl FastAutomaton {
 
     /// Computes the difference between `self` and `other`.
     ///
-    /// If `other` is non-deterministic, it is determinized first — unless
+    /// If `other` is non-deterministic, it is determinized first, unless
     /// the execution profile disables implicit determinization, in which
     /// case [`EngineError::DeterministicAutomatonRequired`] is returned.
     pub fn difference(&self, other: &FastAutomaton) -> Result<FastAutomaton, EngineError> {

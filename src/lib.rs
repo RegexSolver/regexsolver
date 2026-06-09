@@ -1,8 +1,10 @@
 use std::{
-    borrow::Cow,
-    collections::{HashMap, HashSet},
+    borrow::{Borrow, Cow},
+    collections::{HashMap, HashSet, VecDeque},
     fmt::Display,
     hash::BuildHasherDefault,
+    ops::{Bound, RangeBounds},
+    str::FromStr,
 };
 
 use cardinality::Cardinality;
@@ -28,7 +30,7 @@ pub type CharRange = RangeSet<Char>;
 
 /// Represents a term that can be either a regular expression or a finite automaton. This term can be manipulated with a wide range of operations.
 ///
-/// # Example
+/// # Examples
 /// ```rust
 /// use regexsolver::Term;
 /// use regexsolver::error::EngineError;
@@ -58,7 +60,7 @@ pub type CharRange = RangeSet<Char>;
 ///
 ///     // Repetition
 ///     let rep = Term::from_pattern("abc")?
-///         .repeat(2, Some(4))?;
+///         .repeat(2..=4)?;
 ///     assert_eq!(rep.to_pattern(), "(abc){2,4}");
 ///
 ///     // Analyze
@@ -82,11 +84,28 @@ pub type CharRange = RangeSet<Char>;
 /// ```
 ///
 /// To put constraint and limitation on the execution of operations please refer to [`ExecutionProfile`].
+///
+/// # Equality
+///
+/// `PartialEq`/`Eq` (`==`) compare the **underlying representation**, not the
+/// language. Two terms that match exactly the same strings can compare
+/// unequal (for example, an automaton and an equivalent regular expression, or
+/// two differently-written regexes for the same language). To compare
+/// *languages*, use [`equivalent`](Self::equivalent); for `self ⊆ other`, use
+/// [`subset`](Self::subset).
 #[derive(Clone, PartialEq, Eq, Debug)]
 #[must_use = "terms are immutable; operations return a new term"]
 pub enum Term {
     RegularExpression(RegularExpression),
     Automaton(FastAutomaton),
+}
+
+/// The default term is the empty language (matches nothing), the identity for
+/// [`union`](Term::union). See [`new_empty`](Term::new_empty).
+impl Default for Term {
+    fn default() -> Self {
+        Term::new_empty()
+    }
 }
 
 impl Display for Term {
@@ -98,12 +117,42 @@ impl Display for Term {
     }
 }
 
+/// Parses a pattern into a [`Term`], so patterns can be built with
+/// [`str::parse`].
+///
+/// # Examples
+///
+/// ```
+/// use regexsolver::Term;
+///
+/// let term: Term = ".*abc.*".parse().unwrap();
+/// ```
+impl FromStr for Term {
+    type Err = EngineError;
+
+    fn from_str(pattern: &str) -> Result<Self, Self::Err> {
+        Term::from_pattern(pattern)
+    }
+}
+
+impl From<RegularExpression> for Term {
+    fn from(regex: RegularExpression) -> Self {
+        Term::RegularExpression(regex)
+    }
+}
+
+impl From<FastAutomaton> for Term {
+    fn from(automaton: FastAutomaton) -> Self {
+        Term::Automaton(automaton)
+    }
+}
+
 impl Term {
     /// `Term` operations manage the underlying representation themselves, so
     /// the determinizations they perform are by definition explicit:
     /// they run with the profile's `implicit_determinization` setting
     /// re-enabled (that knob targets direct [`FastAutomaton`] usage). The
-    /// rest of the profile — deadline, state budget — is preserved.
+    /// rest of the profile is preserved.
     fn run_with_implicit_determinization<R>(f: impl FnOnce() -> R) -> R {
         ExecutionProfile::get()
             .with_implicit_determinization(true)
@@ -127,7 +176,7 @@ impl Term {
 
     /// Parses and simplifies the provided pattern and returns a new [`Term`] holding the resulting [`RegularExpression`].
     ///
-    /// # Example:
+    /// # Examples
     ///
     /// ```
     /// use regexsolver::Term;
@@ -150,7 +199,7 @@ impl Term {
 
     /// Computes the concatenation of the given terms.
     ///
-    /// # Example:
+    /// # Examples
     ///
     /// ```
     /// use regexsolver::Term;
@@ -159,13 +208,14 @@ impl Term {
     /// let term2 = Term::from_pattern("d.").unwrap();
     /// let term3 = Term::from_pattern(".*").unwrap();
     ///
-    /// let concat = term1.concat(&[term2, term3]).unwrap();
+    /// let concat = term1.concat([&term2, &term3]).unwrap();
     ///
-    /// if let Term::RegularExpression(regex) = concat {
-    ///     assert_eq!("abcd.+", regex.to_string());
-    /// }
+    /// assert_eq!("abcd.+", concat.to_pattern());
     /// ```
-    pub fn concat(&self, terms: &[Term]) -> Result<Term, EngineError> {
+    pub fn concat(
+        &self,
+        terms: impl IntoIterator<Item = impl Borrow<Term>>,
+    ) -> Result<Term, EngineError> {
         let mut return_regex = RegularExpression::new_empty();
         let mut return_automaton = FastAutomaton::new_empty();
         let mut has_automaton = false;
@@ -179,6 +229,7 @@ impl Term {
             }
         }
         for term in terms {
+            let term = term.borrow();
             if has_automaton {
                 return_automaton = return_automaton.concat(term.to_automaton()?.as_ref())?;
             } else {
@@ -203,7 +254,7 @@ impl Term {
 
     /// Computes the union of the given terms.
     ///
-    /// # Example:
+    /// # Examples
     ///
     /// ```
     /// use regexsolver::Term;
@@ -212,16 +263,20 @@ impl Term {
     /// let term2 = Term::from_pattern("de").unwrap();
     /// let term3 = Term::from_pattern("fghi").unwrap();
     ///
-    /// let union = term1.union(&[term2, term3]).unwrap();
+    /// let union = term1.union([&term2, &term3]).unwrap();
     ///
-    /// if let Term::RegularExpression(regex) = union {
-    ///     assert_eq!("(abc|de|fghi)", regex.to_string());
-    /// }
+    /// assert_eq!("(abc|de|fghi)", union.to_pattern());
     /// ```
-    pub fn union(&self, terms: &[Term]) -> Result<Term, EngineError> {
+    pub fn union(
+        &self,
+        terms: impl IntoIterator<Item = impl Borrow<Term>>,
+    ) -> Result<Term, EngineError> {
+        let terms: Vec<_> = terms.into_iter().collect();
+        let terms: Vec<&Term> = terms.iter().map(Borrow::borrow).collect();
+
         let mut has_automaton = matches!(self, Term::Automaton(_));
         if !has_automaton {
-            for term in terms {
+            for term in &terms {
                 if matches!(term, Term::Automaton(_)) {
                     has_automaton = true;
                     break;
@@ -232,7 +287,7 @@ impl Term {
         if has_automaton {
             let parallel = cfg!(feature = "parallel") && terms.len() > 3;
 
-            let automaton_list = self.get_automata(terms, parallel)?;
+            let automaton_list = self.get_automata(&terms, parallel)?;
 
             let automaton_list = automaton_list.iter().map(AsRef::as_ref).collect::<Vec<_>>();
 
@@ -248,7 +303,7 @@ impl Term {
             Ok(Term::Automaton(return_automaton))
         } else {
             let regexes_list = self
-                .get_regexes(terms)
+                .get_regexes(&terms)
                 .expect("No automaton should be here so this operation is not supposed to fail.");
 
             let regexes_list = regexes_list.iter().map(AsRef::as_ref).collect::<Vec<_>>();
@@ -261,7 +316,7 @@ impl Term {
 
     /// Computes the intersection of the given terms.
     ///
-    /// # Example:
+    /// # Examples
     ///
     /// ```
     /// use regexsolver::Term;
@@ -270,21 +325,25 @@ impl Term {
     /// let term2 = Term::from_pattern("de.*").unwrap();
     /// let term3 = Term::from_pattern(".*abc").unwrap();
     ///
-    /// let intersection = term1.intersection(&[term2, term3]).unwrap();
+    /// let intersection = term1.intersection([&term2, &term3]).unwrap();
     ///
-    /// if let Term::RegularExpression(regex) = intersection {
-    ///     assert_eq!("deabc", regex.to_string());
-    /// }
+    /// assert_eq!("deabc", intersection.to_pattern());
     /// ```
-    pub fn intersection(&self, terms: &[Term]) -> Result<Term, EngineError> {
+    pub fn intersection(
+        &self,
+        terms: impl IntoIterator<Item = impl Borrow<Term>>,
+    ) -> Result<Term, EngineError> {
+        let terms: Vec<_> = terms.into_iter().collect();
+        let terms: Vec<&Term> = terms.iter().map(Borrow::borrow).collect();
+
         let parallel = cfg!(feature = "parallel") && terms.len() > 3;
 
-        let automaton_list = self.get_automata(terms, parallel)?;
+        let automaton_list = self.get_automata(&terms, parallel)?;
 
         let automaton_list = automaton_list.iter().map(AsRef::as_ref).collect::<Vec<_>>();
 
         #[cfg(feature = "parallel")]
-        let return_automaton = if parallel {
+        let return_automaton = if terms.len() > 3 {
             FastAutomaton::intersection_all_par(automaton_list)
         } else {
             FastAutomaton::intersection_all(automaton_list)
@@ -297,13 +356,7 @@ impl Term {
 
     /// Computes the difference between `self` and `other`.
     ///
-    /// Unlike [`union`](Self::union) and [`intersection`](Self::intersection)
-    /// this deliberately takes a single operand: difference is neither
-    /// associative nor commutative, so a variadic form would be ambiguous
-    /// (`a - b - c` could mean `(a - b) - c` or `a - (b - c)`). Chain calls —
-    /// or subtract a union — to remove several languages.
-    ///
-    /// # Example:
+    /// # Examples
     ///
     /// ```
     /// use regexsolver::Term;
@@ -313,9 +366,7 @@ impl Term {
     ///
     /// let difference = term1.difference(&term2).unwrap();
     ///
-    /// if let Term::RegularExpression(regex) = difference {
-    ///     assert_eq!("abc", regex.to_string());
-    /// }
+    /// assert_eq!("abc", difference.to_pattern());
     /// ```
     pub fn difference(&self, other: &Term) -> Result<Term, EngineError> {
         Self::run_with_implicit_determinization(|| {
@@ -330,7 +381,7 @@ impl Term {
 
     /// Computes the complement of `self`.
     ///
-    /// # Example:
+    /// # Examples
     ///
     /// ```
     /// use regexsolver::Term;
@@ -352,28 +403,35 @@ impl Term {
         })
     }
 
-    /// Computes the repetition of the current term between `min` and `max_opt` times; if `max_opt` is `None`, the repetition is unbounded.
+    /// Computes the repetition of the current term over the given range of
+    /// counts.
     ///
-    /// # Example:
+    /// An unbounded end (`n..`) means unlimited repetition; an unset start
+    /// (`..n` or `..=n`) means zero. Exclusive bounds are normalized to inclusive.
+    ///
+    /// # Examples
     ///
     /// ```
     /// use regexsolver::Term;
     ///
     /// let term = Term::from_pattern("abc").unwrap();
     ///
-    /// let repeat = term.repeat(1, None).unwrap();
-    ///
-    /// if let Term::RegularExpression(regex) = repeat {
-    ///     assert_eq!("(abc)+", regex.to_string());
-    /// }
-    ///
-    /// let repeat = term.repeat(3, Some(5)).unwrap();
-    ///
-    /// if let Term::RegularExpression(regex) = repeat {
-    ///     assert_eq!("(abc){3,5}", regex.to_string());
-    /// }
+    /// assert_eq!("(abc)+", term.repeat(1..).unwrap().to_pattern());
+    /// assert_eq!("(abc){3,5}", term.repeat(3..=5).unwrap().to_pattern());
+    /// assert_eq!("(abc){3,5}", term.repeat(3..6).unwrap().to_pattern());
+    /// assert_eq!("(abc){0,2}", term.repeat(..=2).unwrap().to_pattern());
     /// ```
-    pub fn repeat(&self, min: u32, max_opt: Option<u32>) -> Result<Term, EngineError> {
+    pub fn repeat(&self, range: impl RangeBounds<u32>) -> Result<Term, EngineError> {
+        let min = match range.start_bound() {
+            Bound::Included(&n) => n,
+            Bound::Excluded(&n) => n.saturating_add(1),
+            Bound::Unbounded => 0,
+        };
+        let max_opt = match range.end_bound() {
+            Bound::Included(&n) => Some(n),
+            Bound::Excluded(&n) => Some(n.saturating_sub(1)),
+            Bound::Unbounded => None,
+        };
         match self {
             Term::RegularExpression(regular_expression) => Ok(Term::RegularExpression(
                 regular_expression.repeat(min, max_opt),
@@ -394,13 +452,11 @@ impl Term {
     /// enumeration order also depends on the automaton's structure, so
     /// offsets are only consistent across calls made on the same term.
     ///
-    /// For reliable pagination, call [`minimize`](Self::minimize) once and
-    /// generate from the minimized term: it is deterministic — paths and
-    /// strings are then one-to-one, making pages disjoint — and its fixed
-    /// structure keeps offsets consistent, without re-converting the term on
-    /// every page.
+    /// For pagination without repetition or skipped strings, make the term deterministic once and generate
+    /// from it. To check if a term is deterministic use [`is_deterministic`](Self::is_deterministic).
+    /// To determinize run [`determinize`](Self::determinize).
     ///
-    /// # Example:
+    /// # Examples
     ///
     /// ```
     /// use regexsolver::Term;
@@ -422,12 +478,89 @@ impl Term {
         self.to_automaton()?.generate_strings(limit, offset)
     }
 
+    /// Returns a lazy iterator over the strings matched by the term, fetched in
+    /// batches behind the scenes so you can stop early without choosing a limit
+    /// up front.
+    ///
+    /// The underlying automaton is computed once at construction time, not on
+    /// every batch. Each item is a `Result`: a construction or generation error
+    /// (e.g. a timeout from the active [`ExecutionProfile`]) surfaces as an
+    /// `Err`, after which the iterator ends. The same determinism caveat as
+    /// [`generate_strings`](Self::generate_strings) applies: call
+    /// [`determinize`](Self::determinize) (or [`minimize`](Self::minimize))
+    /// first for distinct, stable enumeration.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use regexsolver::Term;
+    ///
+    /// let term = Term::from_pattern("(abc|de){2}").unwrap().minimize().unwrap();
+    ///
+    /// // Take the first three matches lazily.
+    /// let first_three = term
+    ///     .iter_strings()
+    ///     .take(3)
+    ///     .collect::<Result<Vec<_>, _>>()
+    ///     .unwrap();
+    /// assert_eq!(3, first_three.len());
+    /// ```
+    pub fn iter_strings(&self) -> StringGenerator<'_> {
+        match self.to_automaton() {
+            Ok(automaton) => StringGenerator {
+                automaton: Some(automaton),
+                pending_error: None,
+                offset: 0,
+                buffer: VecDeque::new(),
+            },
+            Err(e) => StringGenerator {
+                automaton: None,
+                pending_error: Some(e),
+                offset: 0,
+                buffer: VecDeque::new(),
+            },
+        }
+    }
+
+    /// Returns an equivalent term backed by a deterministic automaton.
+    ///
+    /// Already-deterministic terms are returned as-is.
+    ///
+    /// Determinization is always explicit, so it runs regardless of the
+    /// profile's [`implicit_determinization`](crate::execution_profile::ExecutionProfileBuilder::implicit_determinization)
+    /// setting.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use regexsolver::Term;
+    ///
+    /// let term = Term::from_pattern(".*abc").unwrap();
+    /// assert!(!term.is_deterministic());
+    ///
+    /// let dfa = term.determinize().unwrap();
+    /// assert!(dfa.is_deterministic());
+    /// assert!(term.equivalent(&dfa).unwrap());
+    /// ```
+    pub fn determinize(&self) -> Result<Term, EngineError> {
+        let automaton = self.to_automaton()?;
+        let determinized = automaton.determinize()?.into_owned();
+        Ok(Term::Automaton(determinized))
+    }
+
     /// Returns an equivalent term backed by the minimal deterministic
     /// automaton.
     ///
-    /// Useful before paginating with
-    /// [`generate_strings`](Self::generate_strings) (see there), or to
-    /// compact a term after a chain of operations.
+    /// # Examples
+    ///
+    /// ```
+    /// use regexsolver::Term;
+    ///
+    /// let term = Term::from_pattern(".*abc").unwrap();
+    /// let minimal = term.minimize().unwrap();
+    /// assert!(minimal.is_minimal());
+    /// assert!(term.equivalent(&minimal).unwrap());
+    /// ```
     pub fn minimize(&self) -> Result<Term, EngineError> {
         Self::run_with_implicit_determinization(|| {
             let mut automaton = self.to_automaton()?.into_owned();
@@ -438,7 +571,7 @@ impl Term {
 
     /// Returns `true` if both terms accept the same language.
     ///
-    /// # Example:
+    /// # Examples
     ///
     /// ```
     /// use regexsolver::Term;
@@ -462,7 +595,7 @@ impl Term {
 
     /// Returns `true` if all strings matched by the current term are also matched by the given term.
     ///
-    /// # Example:
+    /// # Examples
     ///
     /// ```
     /// use regexsolver::Term;
@@ -484,7 +617,40 @@ impl Term {
         })
     }
 
-    /// Checks if the term matches the empty language.
+    /// Returns `true` if the term matches the given string.
+    ///
+    /// Matching is **anchored** (full-string), consistent with the rest of the
+    /// crate: the whole input must be accepted, not just a substring.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use regexsolver::Term;
+    ///
+    /// let term = Term::from_pattern("abc.*").unwrap();
+    ///
+    /// assert!(term.matches("abcdef").unwrap());
+    /// assert!(!term.matches("xyzabc").unwrap());
+    /// ```
+    pub fn matches(&self, input: &str) -> Result<bool, EngineError> {
+        Ok(self.to_automaton()?.is_match(input))
+    }
+
+    /// Returns `true` if the term matches the empty language (no strings at all).
+    ///
+    /// Note: the empty language is distinct from the language containing only
+    /// the empty string `""`. Use [`is_empty_string`](Self::is_empty_string) to
+    /// test for the latter.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use regexsolver::Term;
+    ///
+    /// assert!(Term::new_empty().is_empty().unwrap());
+    /// assert!(!Term::new_empty_string().is_empty().unwrap()); // matches ""
+    /// assert!(!Term::from_pattern("abc").unwrap().is_empty().unwrap());
+    /// ```
     pub fn is_empty(&self) -> Result<bool, EngineError> {
         Ok(match self {
             Term::RegularExpression(regex) => regex.is_empty(),
@@ -492,7 +658,7 @@ impl Term {
         })
     }
 
-    /// Checks if the term matches all possible strings.
+    /// Returns `true` if the term matches all possible strings.
     pub fn is_total(&self) -> Result<bool, EngineError> {
         match self {
             Term::RegularExpression(regex) => Ok(regex.is_total()),
@@ -502,15 +668,23 @@ impl Term {
                 } else if automaton.is_deterministic() {
                     Ok(false)
                 } else {
-                    // `Term` manages the representation itself: this is an
-                    // explicit determinization, never gated by the profile.
                     Ok(automaton.determinize()?.is_total())
                 }
             }
         }
     }
 
-    /// Checks if the term matches only the empty string `""`.
+    /// Returns `true` if the term matches only the empty string `""`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use regexsolver::Term;
+    ///
+    /// assert!(Term::new_empty_string().is_empty_string().unwrap());
+    /// assert!(!Term::new_empty().is_empty_string().unwrap());
+    /// assert!(!Term::from_pattern("a*").unwrap().is_empty_string().unwrap());
+    /// ```
     pub fn is_empty_string(&self) -> Result<bool, EngineError> {
         Ok(match self {
             Term::RegularExpression(regex) => regex.is_empty_string(),
@@ -518,7 +692,39 @@ impl Term {
         })
     }
 
+    /// Returns `true` if the term is *already backed by* a deterministic
+    /// automaton.
+    ///
+    /// A deterministic automaton has one path per accepted string.
+    ///
+    /// To determinize a term call [`determinize`](Self::determinize).
+    #[must_use]
+    pub fn is_deterministic(&self) -> bool {
+        match self {
+            Term::RegularExpression(_) => false,
+            Term::Automaton(automaton) => automaton.is_deterministic(),
+        }
+    }
+
+    /// Returns `true` if the term is *already backed by* the minimal
+    /// deterministic automaton.
+    ///
+    /// The minimal deterministic automaton of a given language is unique.
+    ///
+    /// To minimize a term call [`minimize`](Self::minimize).
+    #[must_use]
+    pub fn is_minimal(&self) -> bool {
+        match self {
+            Term::RegularExpression(_) => false,
+            Term::Automaton(automaton) => automaton.is_minimal(),
+        }
+    }
+
     /// Returns the minimum and maximum length of matched strings.
+    ///
+    /// `None` for the minimum means the language is empty (no strings are
+    /// matched). `None` for the maximum means the language is infinite
+    /// (unbounded match length).
     #[must_use]
     pub fn get_length(&self) -> (Option<u32>, Option<u32>) {
         match self {
@@ -527,7 +733,11 @@ impl Term {
         }
     }
 
-    /// Returns the cardinality of the term (i.e., the number of possible matched strings).
+    /// Returns the cardinality of the term (the number of possible matched strings).
+    ///
+    /// The exact count is represented as `u32`. If the exact count exceeds
+    /// `u32::MAX`, the result is `Cardinality::BigInteger` rather than a
+    /// truncated value. Infinite languages return `Cardinality::Infinite`.
     pub fn get_cardinality(&self) -> Result<Cardinality<u32>, EngineError> {
         match self {
             Term::RegularExpression(regex) => Ok(regex.get_cardinality()),
@@ -537,7 +747,29 @@ impl Term {
         }
     }
 
+    /// Returns `true` if the term matches a finite number of strings.
+    ///
+    /// A finite language is one with no unbounded repetition (`*`, `+`, ...).
+    /// Convenience over [`get_cardinality`](Self::get_cardinality) when only the
+    /// finite/infinite distinction matters.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use regexsolver::Term;
+    ///
+    /// assert!(Term::from_pattern("(ab|c){2}").unwrap().is_finite().unwrap());
+    /// assert!(!Term::from_pattern("a+").unwrap().is_finite().unwrap());
+    /// ```
+    pub fn is_finite(&self) -> Result<bool, EngineError> {
+        Ok(!matches!(self.get_cardinality()?, Cardinality::Infinite))
+    }
+
     /// Converts the term to a [`FastAutomaton`].
+    ///
+    /// Returns a [`Cow`]: borrows the automaton when the term is already
+    /// automaton-backed, and allocates a new one when converting from a
+    /// [`RegularExpression`].
     pub fn to_automaton(&self) -> Result<Cow<'_, FastAutomaton>, EngineError> {
         Ok(match self {
             Term::RegularExpression(regex) => Cow::Owned(regex.to_automaton()?),
@@ -546,6 +778,10 @@ impl Term {
     }
 
     /// Converts the term to a [`RegularExpression`].
+    ///
+    /// Returns a [`Cow`]: borrows the expression when the term is already
+    /// regex-backed, and allocates a new one when converting from a
+    /// [`FastAutomaton`] via state elimination.
     #[must_use]
     pub fn to_regex(&self) -> Cow<'_, RegularExpression> {
         match self {
@@ -562,7 +798,7 @@ impl Term {
 
     fn get_automata<'a>(
         &'a self,
-        terms: &'a [Term],
+        terms: &[&'a Term],
         parallel: bool,
     ) -> Result<Vec<Cow<'a, FastAutomaton>>, EngineError> {
         let mut automaton_list = Vec::with_capacity(terms.len() + 1);
@@ -578,7 +814,7 @@ impl Term {
         } else {
             terms
                 .iter()
-                .map(Term::to_automaton)
+                .map(|a| a.to_automaton())
                 .collect::<Result<Vec<_>, _>>()
         }?;
         #[cfg(not(feature = "parallel"))]
@@ -586,7 +822,7 @@ impl Term {
             let _ = parallel;
             terms
                 .iter()
-                .map(Term::to_automaton)
+                .map(|a| a.to_automaton())
                 .collect::<Result<Vec<_>, EngineError>>()?
         };
         automaton_list.append(&mut terms_automata);
@@ -594,14 +830,57 @@ impl Term {
         Ok(automaton_list)
     }
 
-    fn get_regexes<'a>(&'a self, terms: &'a [Term]) -> Option<Vec<Cow<'a, RegularExpression>>> {
+    fn get_regexes<'a>(&'a self, terms: &[&'a Term]) -> Option<Vec<Cow<'a, RegularExpression>>> {
         let mut regex_list = Vec::with_capacity(terms.len() + 1);
         regex_list.push(self.to_regex());
 
-        let mut terms_regexes = terms.iter().map(Term::to_regex).collect::<Vec<_>>();
+        let mut terms_regexes = terms.iter().map(|a| a.to_regex()).collect::<Vec<_>>();
         regex_list.append(&mut terms_regexes);
 
         Some(regex_list)
+    }
+}
+
+/// Lazy iterator over the strings matched by a [`Term`], created by
+/// [`Term::iter_strings`].
+///
+/// The underlying automaton is computed once at construction. Yields
+/// `Result<String, EngineError>`: errors (from construction or generation)
+/// are surfaced as `Err` items, after which the iterator ends.
+pub struct StringGenerator<'a> {
+    automaton: Option<Cow<'a, FastAutomaton>>,
+    pending_error: Option<EngineError>,
+    offset: usize,
+    buffer: VecDeque<String>,
+}
+
+impl Iterator for StringGenerator<'_> {
+    type Item = Result<String, EngineError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        const BATCH: usize = 32;
+
+        if let Some(s) = self.buffer.pop_front() {
+            return Some(Ok(s));
+        }
+        if let Some(e) = self.pending_error.take() {
+            return Some(Err(e));
+        }
+        let automaton = self.automaton.as_ref()?;
+        match automaton.generate_strings(BATCH, self.offset) {
+            Ok(batch) => {
+                if batch.len() < BATCH {
+                    self.automaton = None;
+                }
+                self.offset += batch.len();
+                self.buffer.extend(batch);
+                self.buffer.pop_front().map(Ok)
+            }
+            Err(e) => {
+                self.automaton = None;
+                Some(Err(e))
+            }
+        }
     }
 }
 
@@ -618,7 +897,7 @@ mod tests {
         let complement = term.complement().unwrap();
 
         assert!(
-            term.intersection(std::slice::from_ref(&complement))
+            term.intersection([&complement])
                 .unwrap()
                 .is_empty()
                 .unwrap()
@@ -707,5 +986,205 @@ mod tests {
         assert_eq!("(x{3})*", result);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_default_is_empty_language() {
+        assert!(Term::default().is_empty().unwrap());
+        assert_eq!(Term::default(), Term::new_empty());
+    }
+
+    #[test]
+    fn test_iter_strings_exhaustive_matches_generate_strings() {
+        // A finite, deterministic term: lazy iteration must yield exactly the
+        // same multiset as a single large `generate_strings` call, with no
+        // duplicates or omissions across batch boundaries.
+        let term = Term::from_pattern("[A-Za-z0-9]")
+            .unwrap()
+            .minimize()
+            .unwrap();
+
+        let eager = term.generate_strings(1000, 0).unwrap();
+        let lazy = term.iter_strings().collect::<Result<Vec<_>, _>>().unwrap();
+
+        assert_eq!(eager.len(), lazy.len());
+        assert_eq!(eager, lazy);
+        assert_eq!(62, lazy.len());
+    }
+
+    #[test]
+    fn test_is_finite() {
+        assert!(
+            Term::from_pattern("(ab|c){2}")
+                .unwrap()
+                .is_finite()
+                .unwrap()
+        );
+        assert!(!Term::from_pattern("a+").unwrap().is_finite().unwrap());
+    }
+
+    #[test]
+    fn test_matches_is_anchored() {
+        let term = Term::from_pattern("abc.*").unwrap();
+        assert!(term.matches("abc").unwrap());
+        assert!(term.matches("abcdef").unwrap());
+        // Anchored: a prefix/suffix match is not enough.
+        assert!(!term.matches("xyzabc").unwrap());
+
+        let exact = Term::from_pattern("abc").unwrap();
+        assert!(exact.matches("abc").unwrap());
+        assert!(!exact.matches("abcd").unwrap());
+
+        // Works on an automaton-backed term too.
+        let automaton_backed = exact.intersection([&term]).unwrap();
+        assert!(matches!(automaton_backed, Term::Automaton(_)));
+        assert!(automaton_backed.matches("abc").unwrap());
+        assert!(!automaton_backed.matches("abcd").unwrap());
+
+        // The empty language matches nothing; the empty string matches only "".
+        assert!(!Term::new_empty().matches("").unwrap());
+        assert!(Term::new_empty_string().matches("").unwrap());
+        assert!(!Term::new_empty_string().matches("a").unwrap());
+    }
+
+    #[test]
+    fn test_from_str_and_from_conversions() {
+        // `FromStr` agrees with `from_pattern`.
+        let parsed: Term = "abc".parse().unwrap();
+        assert_eq!(parsed, Term::from_pattern("abc").unwrap());
+
+        // Invalid patterns surface as parse errors (backreferences are not regular).
+        assert!(r"(a)\1".parse::<Term>().is_err());
+
+        // `From<RegularExpression>` / `From<FastAutomaton>` match the explicit constructors.
+        let regex = RegularExpression::new("abc").unwrap();
+        let from_into: Term = regex.clone().into();
+        assert_eq!(from_into, Term::from_regex(regex));
+
+        let automaton = Term::from_pattern("abc")
+            .unwrap()
+            .to_automaton()
+            .unwrap()
+            .into_owned();
+        let from_into: Term = automaton.clone().into();
+        assert_eq!(from_into, Term::from_automaton(automaton));
+    }
+
+    #[test]
+    fn test_is_deterministic_and_determinize() {
+        // A pattern-backed term is never reported deterministic (NFA form).
+        let regex_term = Term::from_pattern("(abc|de){2}").unwrap();
+        assert!(!regex_term.is_deterministic());
+
+        // `determinize` produces a deterministic, language-equivalent term.
+        let dfa = regex_term.determinize().unwrap();
+        assert!(dfa.is_deterministic());
+        assert!(regex_term.equivalent(&dfa).unwrap());
+
+        // Determinizing an already-deterministic term keeps it deterministic
+        // and equivalent.
+        let dfa2 = dfa.determinize().unwrap();
+        assert!(dfa2.is_deterministic());
+        assert!(dfa.equivalent(&dfa2).unwrap());
+    }
+
+    #[test]
+    fn test_is_minimal_and_minimize() {
+        // A pattern-backed term is never reported minimal.
+        let regex_term = Term::from_pattern("(abc|de){2}").unwrap();
+        assert!(!regex_term.is_minimal());
+
+        // `minimize` produces a minimal, language-equivalent term.
+        let minimal = regex_term.minimize().unwrap();
+        assert!(minimal.is_minimal());
+        assert!(minimal.is_deterministic()); // minimal implies deterministic
+        assert!(regex_term.equivalent(&minimal).unwrap());
+    }
+
+    #[test]
+    fn test_eq_is_structural_not_language() {
+        // Same language, different representation: structurally unequal, but
+        // language-equivalent. `==` must not be mistaken for `equivalent`.
+        let regex_term = Term::from_pattern("(a|b)*").unwrap();
+        let automaton_term = Term::from_automaton(regex_term.to_automaton().unwrap().into_owned());
+
+        assert_ne!(regex_term, automaton_term);
+        assert!(regex_term.equivalent(&automaton_term).unwrap());
+    }
+
+    #[test]
+    fn test_repeat_range_edges() {
+        let term = Term::from_pattern("abc").unwrap();
+
+        // Unbounded / unset bounds.
+        assert_eq!("(abc)*", term.repeat(..).unwrap().to_pattern());
+        assert_eq!("(abc){2,}", term.repeat(2..).unwrap().to_pattern());
+        assert_eq!("(abc){0,2}", term.repeat(..3).unwrap().to_pattern());
+
+        // Zero repetitions is the empty string.
+        assert!(term.repeat(0..=0).unwrap().is_empty_string().unwrap());
+
+        // A range whose normalized max < min denotes no valid repetition count,
+        // so the simplifier reduces it to the empty language (matches nothing).
+        // (Bounds from variables: a literal reversed range trips a lint.)
+        let (min, max) = (5u32, 3u32);
+        assert!(term.repeat(min..max).unwrap().is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_iter_strings_is_lazy_on_infinite_language() {
+        // Must not hang on an infinite language: take a finite prefix.
+        let term = Term::from_pattern("a+").unwrap();
+        let first = term
+            .iter_strings()
+            .take(5)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(5, first.len());
+    }
+
+    #[test]
+    fn test_iter_strings_propagates_error_then_ends() {
+        use crate::execution_profile::ExecutionProfileBuilder;
+
+        // A tight state budget makes the underlying `to_automaton` fail; the
+        // iterator must surface that error once and then terminate.
+        let term = Term::from_pattern("abcdef").unwrap();
+        let profile = ExecutionProfileBuilder::new()
+            .max_number_of_states(1)
+            .build();
+
+        profile.run(|| {
+            let mut it = term.iter_strings();
+            assert!(matches!(
+                it.next(),
+                Some(Err(EngineError::AutomatonHasTooManyStates))
+            ));
+            assert!(it.next().is_none());
+        });
+    }
+
+    #[test]
+    fn test_variadic_ops_with_no_operands_equal_self() {
+        let term = Term::from_pattern("abc").unwrap();
+
+        assert!(
+            term.concat(std::iter::empty::<&Term>())
+                .unwrap()
+                .equivalent(&term)
+                .unwrap()
+        );
+        assert!(
+            term.union(std::iter::empty::<&Term>())
+                .unwrap()
+                .equivalent(&term)
+                .unwrap()
+        );
+        assert!(
+            term.intersection(std::iter::empty::<&Term>())
+                .unwrap()
+                .equivalent(&term)
+                .unwrap()
+        );
     }
 }
