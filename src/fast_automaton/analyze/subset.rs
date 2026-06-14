@@ -8,6 +8,7 @@ impl FastAutomaton {
     /// A non-deterministic `other` is determinized internally, unless the
     /// execution profile disables implicit determinization, in which case
     /// [`EngineError::DeterministicAutomatonRequired`] is returned.
+    #[tracing::instrument(level = "debug", skip_all, fields(self_states = self.number_of_states(), self_deterministic = self.is_deterministic(), other_states = other.number_of_states(), other_deterministic = other.is_deterministic()))]
     pub fn subset(&self, other: &FastAutomaton) -> Result<bool, EngineError> {
         if self.is_empty() || other.is_total() || self == other {
             return Ok(true);

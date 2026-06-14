@@ -11,6 +11,7 @@ description = "High-performance Rust library for building, combining, and analyz
 readme = "README.md"
 
 [dependencies]
+tracing = "0.1"
 nohash-hasher = "0.2"
 ahash = "0.8.11"
 regex-syntax = "0.8.5"

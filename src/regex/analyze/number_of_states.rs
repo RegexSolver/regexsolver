@@ -349,7 +349,7 @@ mod tests {
             let estimate = regex.get_number_of_states_in_nfa();
             assert!(estimate >= 1, "state estimate of {regex} must be >= 1");
             let automaton = regex.to_automaton().unwrap();
-            assert!(automaton.get_number_of_states() >= 1);
+            assert!(automaton.number_of_states() >= 1);
         }
     }
 
@@ -363,6 +363,6 @@ mod tests {
 
         let automaton = regex.to_automaton().unwrap();
 
-        assert_eq!(automaton.get_number_of_states(), number_of_states_in_nfa);
+        assert_eq!(automaton.number_of_states(), number_of_states_in_nfa);
     }
 }

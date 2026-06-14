@@ -16,6 +16,7 @@ impl FastAutomaton {
     }
 
     /// Computes the intersection of all automata in the given iterator.
+    #[tracing::instrument(level = "debug", skip_all)]
     pub fn intersection_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(
         automata: I,
     ) -> Result<Self, EngineError> {
@@ -36,6 +37,7 @@ impl FastAutomaton {
     ///
     /// Only available with the `parallel` feature (enabled by default).
     #[cfg(feature = "parallel")]
+    #[tracing::instrument(level = "debug", skip_all)]
     pub fn intersection_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(
         automata: I,
     ) -> Result<Self, EngineError> {
@@ -81,9 +83,9 @@ impl FastAutomaton {
 
         let mut new_automaton = FastAutomaton::new_empty();
         let mut worklist =
-            VecDeque::with_capacity(self.get_number_of_states() + other.get_number_of_states());
+            VecDeque::with_capacity(self.number_of_states() + other.number_of_states());
         let mut new_states: AHashMap<(usize, usize), (usize, usize, usize), _> =
-            AHashMap::with_capacity(self.get_number_of_states() + other.get_number_of_states());
+            AHashMap::with_capacity(self.number_of_states() + other.number_of_states());
 
         let initial_pair = (
             new_automaton.start_state,
@@ -132,6 +134,7 @@ impl FastAutomaton {
     }
 
     /// Returns `true` if the two automata have a non-empty intersection.
+    #[tracing::instrument(level = "debug", skip_all, fields(self_states = self.number_of_states(), other_states = other.number_of_states()))]
     pub fn has_intersection(&self, other: &FastAutomaton) -> Result<bool, EngineError> {
         if self.is_empty() || other.is_empty() {
             return Ok(false);
@@ -149,9 +152,9 @@ impl FastAutomaton {
 
         let mut new_automaton = FastAutomaton::new_empty();
         let mut worklist =
-            VecDeque::with_capacity(self.get_number_of_states() + other.get_number_of_states());
+            VecDeque::with_capacity(self.number_of_states() + other.number_of_states());
         let mut new_states: AHashMap<(usize, usize), (usize, usize, usize), _> =
-            AHashMap::with_capacity(self.get_number_of_states() + other.get_number_of_states());
+            AHashMap::with_capacity(self.number_of_states() + other.number_of_states());
 
         let initial_pair = (
             new_automaton.start_state,

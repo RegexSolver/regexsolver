@@ -1,13 +1,14 @@
 use super::*;
 
 impl RegularExpression {
-    /// Returns a regular expression that is the concatenation of all expressions in `patterns`.
+    /// Returns a regular expression that is the concatenation of all expressions in `regexes`.
+    #[tracing::instrument(level = "trace", skip_all)]
     pub fn concat_all<'a, I: IntoIterator<Item = &'a RegularExpression>>(
-        patterns: I,
+        regexes: I,
     ) -> RegularExpression {
         let mut result = RegularExpression::new_empty_string();
 
-        for other in patterns {
+        for other in regexes {
             result = result.concat(other, true);
         }
 
@@ -15,6 +16,7 @@ impl RegularExpression {
     }
 
     /// Returns a new regular expression representing the concatenation of `self` and `other`; `append_back` determines their order.
+    #[tracing::instrument(level = "trace", skip(self, other), fields(append_back = append_back))]
     pub fn concat(&self, other: &RegularExpression, append_back: bool) -> RegularExpression {
         if self.is_empty() || other.is_empty() {
             return RegularExpression::new_empty();

@@ -13,16 +13,16 @@ impl FastAutomaton {
         let crash_state = self.new_state();
         let mut transitions_to_crash_state: IntMap<State, Condition> =
             IntMap::with_capacity_and_hasher(
-                self.get_number_of_states(),
+                self.number_of_states(),
                 BuildHasherDefault::default(),
             );
 
-        let mut ranges = Vec::with_capacity(self.get_number_of_states());
+        let mut ranges = Vec::with_capacity(self.number_of_states());
         for from_state in self.states() {
             let mut new_condition = Condition::empty(&self.spanning_set);
             for (condition, _) in self.transitions_from(from_state) {
                 new_condition = new_condition.union(condition);
-                ranges.push(condition.to_range(self.get_spanning_set())?);
+                ranges.push(condition.to_range(self.spanning_set())?);
             }
 
             new_condition = new_condition.complement();
@@ -32,7 +32,7 @@ impl FastAutomaton {
 
         for (from_state, condition) in &transitions_to_crash_state {
             self.add_transition(*from_state, crash_state, condition);
-            ranges.push(condition.to_range(self.get_spanning_set())?);
+            ranges.push(condition.to_range(self.spanning_set())?);
         }
 
         let new_spanning_set = SpanningSet::compute_spanning_set(&ranges);
@@ -51,6 +51,7 @@ impl FastAutomaton {
     /// unless the execution profile disables implicit determinization, in
     /// which case [`EngineError::DeterministicAutomatonRequired`] is
     /// returned.
+    #[tracing::instrument(level = "debug", skip_all, fields(states = self.number_of_states(), deterministic = self.is_deterministic()))]
     pub fn complement(&mut self) -> Result<(), EngineError> {
         if !self.deterministic {
             *self = self.determinize_implicit()?.into_owned();
@@ -74,6 +75,7 @@ impl FastAutomaton {
     /// If `other` is non-deterministic, it is determinized first, unless
     /// the execution profile disables implicit determinization, in which
     /// case [`EngineError::DeterministicAutomatonRequired`] is returned.
+    #[tracing::instrument(level = "debug", skip_all, fields(self_states = self.number_of_states(), self_deterministic = self.is_deterministic(), other_states = other.number_of_states(), other_deterministic = other.is_deterministic()))]
     pub fn difference(&self, other: &FastAutomaton) -> Result<FastAutomaton, EngineError> {
         let mut complement = other.determinize_implicit()?.into_owned();
         complement.complement()?;

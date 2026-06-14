@@ -130,7 +130,7 @@ impl FastAutomaton {
     /// Returns the states reachable **from the start state** by following
     /// non-empty transitions (the start state is always included).
     ///
-    /// This is forward reachability. Contrast with [`Self::get_live_states`],
+    /// This is forward reachability. Contrast with [`Self::live_states`],
     /// which returns the states that can **reach an accept state**
     /// (co-reachability).
     pub(crate) fn forward_reachable_states(&self) -> IntSet<State> {
@@ -157,7 +157,7 @@ impl FastAutomaton {
     ///
     /// This is co-reachability; note it is *not* the set of states reachable
     /// from the start state.
-    pub fn get_live_states(&self) -> IntSet<State> {
+    pub fn live_states(&self) -> IntSet<State> {
         let mut states_map: IntMap<usize, IntSet<usize>> =
             IntMap::with_capacity_and_hasher(self.transitions.len(), BuildHasherDefault::default());
         for from_state in self.states() {
@@ -202,9 +202,9 @@ impl FastAutomaton {
     /// drop transitions whose condition lies in the "rest" range. (For a
     /// spanning set with an empty rest this is exactly the spanning ranges, so
     /// well-formed automata are unaffected.)
-    pub fn get_spanning_bases(&self) -> Result<Vec<Condition>, EngineError> {
+    pub fn spanning_bases(&self) -> Result<Vec<Condition>, EngineError> {
         self.spanning_set
-            .get_spanning_ranges_with_rest()
+            .spanning_ranges_with_rest()
             .iter()
             .map(|range| Condition::from_range(range, &self.spanning_set))
             .collect()

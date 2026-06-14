@@ -15,6 +15,7 @@ impl FastAutomaton {
     }
 
     /// Computes the union of all automata in the given iterator.
+    #[tracing::instrument(level = "debug", skip_all)]
     pub fn union_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(
         automata: I,
     ) -> Result<Self, EngineError> {
@@ -29,6 +30,7 @@ impl FastAutomaton {
     ///
     /// Only available with the `parallel` feature (enabled by default).
     #[cfg(feature = "parallel")]
+    #[tracing::instrument(level = "debug", skip_all)]
     pub fn union_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(
         automata: I,
     ) -> Result<Self, EngineError> {
@@ -203,7 +205,7 @@ impl FastAutomaton {
         let condition_converter = ConditionConverter::new(&other.spanning_set, new_spanning_set)?;
 
         let mut new_states: IntMap<usize, usize> = IntMap::with_capacity_and_hasher(
-            other.get_number_of_states(),
+            other.number_of_states(),
             BuildHasherDefault::default(),
         );
 
@@ -241,13 +243,13 @@ impl FastAutomaton {
     fn union_state_count_heuristic(&self, other: &FastAutomaton) -> usize {
         // Edge cases
         if other.is_empty() || self.is_total() {
-            return self.get_number_of_states();
+            return self.number_of_states();
         } else if other.is_total() || self.is_empty() {
-            return other.get_number_of_states();
+            return other.number_of_states();
         }
 
-        let v1 = self.get_number_of_states();
-        let v2 = other.get_number_of_states();
+        let v1 = self.number_of_states();
+        let v2 = other.number_of_states();
 
         let self_in = self.in_degree(self.start_state);
         let other_in = other.in_degree(other.start_state);
@@ -622,7 +624,7 @@ mod tests {
             let mut actual_union = a1.clone();
             actual_union.union_mut(a2).unwrap();
 
-            let actual_states = actual_union.get_number_of_states();
+            let actual_states = actual_union.number_of_states();
             let heuristic_states = a1.union_state_count_heuristic(a2);
 
             assert_eq!(

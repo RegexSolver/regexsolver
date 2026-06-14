@@ -59,12 +59,8 @@ fn measure_state_elimination_quality() {
     }
 
     println!("=== state elimination quality over {count} patterns ===");
-    println!(
-        "NFA: total_complexity = {total_complexity_nfa:.3}, total_len = {total_len_nfa}"
-    );
-    println!(
-        "DFA: total_complexity = {total_complexity_dfa:.3}, total_len = {total_len_dfa}"
-    );
+    println!("NFA: total_complexity = {total_complexity_nfa:.3}, total_len = {total_len_nfa}");
+    println!("DFA: total_complexity = {total_complexity_dfa:.3}, total_len = {total_len_dfa}");
     println!(
         "SUM: total_complexity = {:.3}, total_len = {}",
         total_complexity_nfa + total_complexity_dfa,

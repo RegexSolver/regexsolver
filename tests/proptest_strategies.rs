@@ -578,13 +578,13 @@ proptest! {
         assert_set_ops_membership(&a, &b, &probes_over(&['a', 'b', 'c', 'd'], 3))?;
     }
 
-    /// `get_length` and `get_cardinality` agree with brute-force enumeration.
+    /// `length` and `cardinality` agree with brute-force enumeration.
     /// The probes cover *every* string up to length 4, so they are exactly
     /// the language whenever the maximum length is ≤ 4, and a complete
     /// census of its short strings otherwise.
     #[test]
     fn length_cardinality_match_brute_force(a in arb_nfa()) {
-        let (min, max) = a.get_length();
+        let (min, max) = a.length();
         let matched_lengths: Vec<u32> = probes()
             .iter()
             .filter(|s| a.is_match(s))
@@ -613,7 +613,7 @@ proptest! {
                 matched_lengths.iter().max().copied(),
                 "max length disagrees with enumeration"
             );
-            if let Some(cardinality) = bounded(|| a.get_cardinality()) {
+            if let Some(cardinality) = bounded(|| a.cardinality()) {
                 prop_assert_eq!(
                     cardinality,
                     Cardinality::Integer(matched_lengths.len() as u32),
@@ -622,7 +622,7 @@ proptest! {
             }
         } else if max.is_none()
             && min.is_some()
-            && let Some(cardinality) = bounded(|| a.get_cardinality())
+            && let Some(cardinality) = bounded(|| a.cardinality())
         {
             // A cycle on an accepting path means infinitely many strings.
             prop_assert_eq!(
@@ -845,7 +845,7 @@ mod inspect {
         } else if m.is_total() {
             // exact on a DFA
             LangClass::Total
-        } else if m.get_length().1.is_some() {
+        } else if m.length().1.is_some() {
             LangClass::Finite
         } else {
             LangClass::Infinite
@@ -859,10 +859,10 @@ mod inspect {
     /// *distinct* languages instead of distinct syntax trees.
     fn language_key(m: &FastAutomaton) -> String {
         use std::fmt::Write;
-        let ss = m.get_spanning_set();
-        let mut order = vec![m.get_start_state()];
+        let ss = m.spanning_set();
+        let mut order = vec![m.start_state()];
         let mut ids = std::collections::HashMap::new();
-        ids.insert(m.get_start_state(), 0usize);
+        ids.insert(m.start_state(), 0usize);
         let mut key = String::new();
         let mut i = 0;
         while i < order.len() {
@@ -920,13 +920,7 @@ mod inspect {
         for s in a.states_vec() {
             for (cond, _) in a.transitions_from_vec(s) {
                 edges += 1;
-                if cond
-                    .get_binary_representation()
-                    .iter()
-                    .filter(|&&b| b)
-                    .count()
-                    > 1
-                {
+                if cond.binary_representation().iter().filter(|&&b| b).count() > 1 {
                     multi_base_edges += 1;
                 }
             }
@@ -937,7 +931,7 @@ mod inspect {
             multi_base_edges,
             deterministic: a.is_deterministic(),
             class: classify(&m),
-            minimal_states: m.get_number_of_states(),
+            minimal_states: m.number_of_states(),
             accepts_empty_string: m.is_match(""),
             key: language_key(&m),
         }

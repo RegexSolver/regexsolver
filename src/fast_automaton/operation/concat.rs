@@ -13,6 +13,7 @@ impl FastAutomaton {
     }
 
     /// Computes the concatenation of all automata in the given iterator.
+    #[tracing::instrument(level = "debug", skip_all)]
     pub fn concat_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(
         automata: I,
     ) -> Result<Self, EngineError> {
@@ -61,7 +62,7 @@ impl FastAutomaton {
         let condition_converter = ConditionConverter::new(&other.spanning_set, new_spanning_set)?;
 
         let mut new_states: IntMap<usize, usize> = IntMap::with_capacity_and_hasher(
-            other.get_number_of_states(),
+            other.number_of_states(),
             BuildHasherDefault::default(),
         );
 
@@ -154,13 +155,13 @@ impl FastAutomaton {
         if other.is_empty() {
             return 1;
         } else if other.is_empty_string() {
-            return self.get_number_of_states();
+            return self.number_of_states();
         }
 
         if self.is_empty() {
             return 1;
         } else if self.is_empty_string() {
-            return other.get_number_of_states();
+            return other.number_of_states();
         }
 
         // Determine if we are forced to create a new state to avoid unintended loops
@@ -171,8 +172,8 @@ impl FastAutomaton {
                 .cloned()
                 .any(|s| self.out_degree(s) > 0);
 
-        let v1 = self.get_number_of_states();
-        let v2 = other.get_number_of_states();
+        let v1 = self.number_of_states();
+        let v2 = other.number_of_states();
 
         // Apply the heuristic
         if start_state_and_accept_states_not_mergeable {
@@ -492,7 +493,7 @@ mod tests {
             .to_automaton()
             .unwrap();
         automaton.print_dot();
-        assert_eq!(1, automaton.get_number_of_states());
+        assert_eq!(1, automaton.number_of_states());
         Ok(())
     }
 
@@ -503,7 +504,7 @@ mod tests {
             .to_automaton()
             .unwrap();
         automaton.print_dot();
-        assert_eq!(3, automaton.get_number_of_states());
+        assert_eq!(3, automaton.number_of_states());
         Ok(())
     }
 
@@ -560,7 +561,7 @@ mod tests {
             // Execute the actual mutation
             actual_concat.concat_mut(a2).unwrap();
 
-            let actual_states = actual_concat.get_number_of_states();
+            let actual_states = actual_concat.number_of_states();
             let heuristic_states = a1.concat_state_count_heuristic(a2);
 
             assert_eq!(

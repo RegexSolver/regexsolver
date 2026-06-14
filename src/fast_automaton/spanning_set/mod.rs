@@ -49,7 +49,7 @@ impl SpanningSet {
         }
     }
 
-    pub(crate) fn get_spanning_ranges_with_rest(&self) -> Vec<CharRange> {
+    pub(crate) fn spanning_ranges_with_rest(&self) -> Vec<CharRange> {
         if self.1.is_empty() {
             self.0.clone()
         } else {
@@ -60,22 +60,22 @@ impl SpanningSet {
     }
 
     /// Returns an iterator over the explicit (non-rest) ranges in the spanning set.
-    pub fn get_spanning_ranges(&self) -> Iter<'_, CharRange> {
+    pub fn spanning_ranges(&self) -> Iter<'_, CharRange> {
         self.0.iter()
     }
 
     /// Returns the number of explicit (non-rest) ranges in the spanning set.
-    pub fn get_number_of_spanning_ranges(&self) -> usize {
+    pub fn number_of_spanning_ranges(&self) -> usize {
         self.0.len()
     }
 
     /// Returns the explicit range at index `i`, or `None` if out of bounds.
-    pub fn get_spanning_range(&self, i: usize) -> Option<&CharRange> {
+    pub fn spanning_range(&self, i: usize) -> Option<&CharRange> {
         self.0.get(i)
     }
 
     /// Returns the "rest" range covering all characters not in any explicit range.
-    pub fn get_rest(&self) -> &CharRange {
+    pub fn rest(&self) -> &CharRange {
         &self.1
     }
 

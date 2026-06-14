@@ -7,9 +7,9 @@ impl Gnfa {
         let mut state_elimination_automaton = Gnfa {
             start_state: 0,  // start_state is not set yet
             accept_state: 0, // accept_state is not set yet
-            transitions: Vec::with_capacity(automaton.get_number_of_states()),
-            transitions_in: IntMap::with_capacity(automaton.get_number_of_states()),
-            removed_states: IntSet::with_capacity(automaton.get_number_of_states()),
+            transitions: Vec::with_capacity(automaton.number_of_states()),
+            transitions_in: IntMap::with_capacity(automaton.number_of_states()),
+            removed_states: IntSet::with_capacity(automaton.number_of_states()),
             empty: false,
         };
 
@@ -18,7 +18,7 @@ impl Gnfa {
             return state_elimination_automaton;
         }
 
-        let mut states_map = IntMap::with_capacity(automaton.get_number_of_states());
+        let mut states_map = IntMap::with_capacity(automaton.number_of_states());
 
         for from_state in automaton.states() {
             let new_from_state = *states_map
@@ -33,21 +33,21 @@ impl Gnfa {
                     new_from_state,
                     new_to_state,
                     RegularExpression::Character(
-                        condition.to_range(automaton.get_spanning_set()).unwrap(),
+                        condition.to_range(automaton.spanning_set()).unwrap(),
                     ),
                 );
             }
         }
 
-        if automaton.in_degree(automaton.get_start_state()) == 0 {
+        if automaton.in_degree(automaton.start_state()) == 0 {
             // If the start state does not have any incoming state we just set it
             state_elimination_automaton.start_state =
-                *states_map.get(&automaton.get_start_state()).unwrap();
+                *states_map.get(&automaton.start_state()).unwrap();
         } else {
             // If not we create a new state that will be the new start state
             state_elimination_automaton.start_state = state_elimination_automaton.new_state();
 
-            let previous_start_state = *states_map.get(&automaton.get_start_state()).unwrap();
+            let previous_start_state = *states_map.get(&automaton.start_state()).unwrap();
             // We add an empty string transition to the new start state
             state_elimination_automaton.add_transition(
                 state_elimination_automaton.start_state,
@@ -56,16 +56,16 @@ impl Gnfa {
             );
         }
 
-        let accept_state = *automaton.get_accept_states().iter().next().unwrap();
-        if automaton.get_accept_states().len() == 1 && automaton.out_degree(accept_state) == 0 {
+        let accept_state = *automaton.accept_states().iter().next().unwrap();
+        if automaton.accept_states().len() == 1 && automaton.out_degree(accept_state) == 0 {
             // If there is only one accept state we just set it
             state_elimination_automaton.accept_state = *states_map
-                .get(automaton.get_accept_states().iter().next().unwrap())
+                .get(automaton.accept_states().iter().next().unwrap())
                 .unwrap();
         } else {
             // If not we create a new state that will be the new accept state
             state_elimination_automaton.accept_state = state_elimination_automaton.new_state();
-            for accept_state in automaton.get_accept_states() {
+            for accept_state in automaton.accept_states() {
                 let accept_state = *states_map.get(accept_state).unwrap();
                 // We add an empty string transition to the new accept state
                 state_elimination_automaton.add_transition(

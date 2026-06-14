@@ -151,7 +151,7 @@ impl FastAutomaton {
             if !self.has_state(*from_state) {
                 continue;
             }
-            if let Some(condition) = self.get_condition(*from_state, state) {
+            if let Some(condition) = self.condition(*from_state, state) {
                 in_transitions.push((*from_state, condition.clone()));
             }
         }
@@ -209,14 +209,14 @@ impl FastAutomaton {
 
     /// Returns the number of states in the automaton.
     #[inline]
-    pub fn get_number_of_states(&self) -> usize {
+    pub fn number_of_states(&self) -> usize {
         self.transitions.len() - self.removed_states.len()
     }
 
     /// Returns a reference to the condition of the directed transition between the two states, if any.
     /// Returns `None` if either state does not exist.
     #[inline]
-    pub fn get_condition(&self, from_state: State, to_state: State) -> Option<&Condition> {
+    pub fn condition(&self, from_state: State, to_state: State) -> Option<&Condition> {
         self.transitions
             .get(from_state)
             .and_then(|t| t.get(&to_state))
@@ -224,19 +224,19 @@ impl FastAutomaton {
 
     /// Returns the start state.
     #[inline]
-    pub fn get_start_state(&self) -> State {
+    pub fn start_state(&self) -> State {
         self.start_state
     }
 
     /// Returns a reference to the set of accept (final) states.
     #[inline]
-    pub fn get_accept_states(&self) -> &IntSet<State> {
+    pub fn accept_states(&self) -> &IntSet<State> {
         &self.accept_states
     }
 
     /// Returns a reference to the automaton's spanning set.
     #[inline]
-    pub fn get_spanning_set(&self) -> &SpanningSet {
+    pub fn spanning_set(&self) -> &SpanningSet {
         &self.spanning_set
     }
 
@@ -271,6 +271,7 @@ impl FastAutomaton {
     }
 
     /// Returns `true` if the automaton matches the given string.
+    #[tracing::instrument(level = "debug", skip(self, string), fields(states = self.number_of_states(), string_len=string.len()))]
     pub fn is_match(&self, string: &str) -> bool {
         let mut current: IntSet<State> = IntSet::default();
         current.insert(self.start_state);
@@ -300,7 +301,7 @@ impl FastAutomaton {
 
     /// Returns the automaton's DOT representation.
     #[inline]
-    pub fn as_dot(&self) -> String {
+    pub fn to_dot(&self) -> String {
         format!("{self}")
     }
 
@@ -353,10 +354,10 @@ mod tests {
     }
 
     #[test]
-    fn get_condition_safe_on_unknown_state() {
+    fn condition_safe_on_unknown_state() {
         let a = FastAutomaton::new_total();
-        assert!(a.get_condition(999, 0).is_none());
-        assert!(a.get_condition(0, 999).is_none());
+        assert!(a.condition(999, 0).is_none());
+        assert!(a.condition(0, 999).is_none());
     }
 
     #[test]

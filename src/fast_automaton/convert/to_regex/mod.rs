@@ -4,6 +4,7 @@ mod state_elimination;
 
 impl FastAutomaton {
     /// Converts the automaton to a [`RegularExpression`].
+    #[tracing::instrument(level = "debug", skip_all, fields(states = self.number_of_states()))]
     pub fn to_regex(&self) -> RegularExpression {
         state_elimination::convert_to_regex(self)
     }

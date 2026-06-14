@@ -2,6 +2,7 @@ use super::*;
 
 impl FastAutomaton {
     /// Computes the repetition of the automaton between `min` and `max_opt` times; if `max_opt` is `None`, the repetition is unbounded.
+    #[tracing::instrument(level = "debug", skip(self), fields(states = self.number_of_states(), deterministic = self.is_deterministic(), min = min, max_opt = tracing::field::debug(max_opt)))]
     pub fn repeat(&self, min: u32, max_opt: Option<u32>) -> Result<FastAutomaton, EngineError> {
         let mut automaton = self.clone();
         if let Err(error) = automaton.repeat_mut(min, max_opt) {
@@ -123,7 +124,7 @@ impl FastAutomaton {
                         }
                     }
 
-                    star.accept(star.get_start_state());
+                    star.accept(star.start_state());
                 }
 
                 self.apply_model(&star);
@@ -182,7 +183,7 @@ impl FastAutomaton {
             return 1;
         }
 
-        let v_original = self.get_number_of_states();
+        let v_original = self.number_of_states();
         if v_original == 0 {
             return 0;
         }
@@ -245,7 +246,7 @@ impl FastAutomaton {
                 let acc_out_gt_0 = self.accept_states.iter().any(|&s| self.out_degree(s) > 0);
                 match self.repeat(0, None) {
                     Ok(star) => {
-                        let star_states = star.get_number_of_states();
+                        let star_states = star.number_of_states();
                         let not_mergeable = star.in_degree(star.start_state) > 0 && acc_out_gt_0;
                         let final_concat_cost = if not_mergeable {
                             star_states
@@ -484,7 +485,7 @@ mod tests {
             // Execute the actual mutation (assuming repeat_mut is the core method)
             actual_automaton.repeat_mut(min, max_opt).unwrap();
 
-            let actual_states = actual_automaton.get_number_of_states();
+            let actual_states = actual_automaton.number_of_states();
             let heuristic_states = automaton.repeat_state_count_heuristic(min, max_opt);
 
             assert_eq!(

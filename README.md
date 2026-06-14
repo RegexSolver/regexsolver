@@ -35,7 +35,7 @@ assert_eq!(both.generate_strings(2, 0)?, ["xyxy", "abxy"]);
 Under the hood, every pattern compiles to a finite automaton:
 
 <p align="center"><img src="https://raw.githubusercontent.com/RegexSolver/regexsolver/refs/heads/v1/assets/automaton.svg" alt="the minimal automaton of (ab|cd)*"/></p>
-<p align="center"><sub><code>(ab|cd)*</code> compiled to its minimal automaton, generated with this library's <code>as_dot()</code></sub></p>
+<p align="center"><sub><code>(ab|cd)*</code> compiled to its minimal automaton, generated with this library's <code>to_dot()</code></sub></p>
 
 ## Try it
 
@@ -87,7 +87,7 @@ RegexSolver is based on the [regex-syntax](https://docs.rs/regex-syntax/0.8.5/re
 | `difference(&self, other)` / `complement(&self)` | What `self` matches and `other` doesn't / everything `self` doesn't match. |
 | `concat(&self, terms)` / `repeat(&self, range)` | Sequence and repeat languages; `range` is any Rust range expression (`2..=5`, `1..`, `..3`, ...). |
 | `equivalent(&self, other)` / `subset(&self, other)` | Compare languages. |
-| `is_empty()` / `is_total()` / `get_length()` / `get_cardinality()` | Analyze a language: matches nothing? everything? string lengths? how many strings? |
+| `is_empty()` / `is_total()` / `length()` / `cardinality()` | Analyze a language: matches nothing? everything? string lengths? how many strings? |
 | `generate_strings(limit, offset)` | Enumerate matching strings eagerly (call `minimize()` once first when paginating). |
 | `iter_strings()` | Lazy iterator equivalent; computes the automaton once and yields strings in batches. |
 | `to_pattern()` / `to_automaton()` / `to_regex()` | Convert back out. |
@@ -121,7 +121,7 @@ assert_eq!(automaton.to_regex().to_string(), "[a-c][0-9]*");
 
 Internally, transition labels are bitvector `Condition`s over the automaton's `SpanningSet` of disjoint character ranges, that is what makes label union/intersection/complement O(1) ([article](https://alexvbrdn.me/post/optimizing-transition-conditions-automaton-representation)). `add_transition_from_range` maintains that representation for you; for full manual control over conditions and spanning sets, see the [`add_transition` documentation](https://docs.rs/regexsolver/latest/regexsolver/fast_automaton/struct.FastAutomaton.html#method.add_transition).
 
-Everything `Term` does is also available directly on [`FastAutomaton`](https://docs.rs/regexsolver/latest/regexsolver/fast_automaton/struct.FastAutomaton.html), including `determinize`, `minimize`, the set operations, `equivalent`/`subset`, the analyses, `generate_strings`, `to_regex`, plus low-level construction (`new_state`, `accept`, `add_epsilon_transition`, ...) and inspection (`states`, `transitions_from`, `as_dot`, ...).
+Everything `Term` does is also available directly on [`FastAutomaton`](https://docs.rs/regexsolver/latest/regexsolver/fast_automaton/struct.FastAutomaton.html), including `determinize`, `minimize`, the set operations, `equivalent`/`subset`, the analyses, `generate_strings`, `to_regex`, plus low-level construction (`new_state`, `accept`, `add_epsilon_transition`, ...) and inspection (`states`, `transitions_from`, `to_dot`, ...).
 
 ### Working with patterns as ASTs
 
@@ -135,10 +135,10 @@ use regexsolver::regex::RegularExpression;
 let pattern = RegularExpression::new("ORD-20[0-9]{2}-[0-9]{4,6}")?;
 
 // How long can matching ids get? Size your database column accordingly.
-assert_eq!(pattern.get_length(), (Some(13), Some(15)));
+assert_eq!(pattern.length(), (Some(13), Some(15)));
 
 // How many distinct ids does the pattern allow?
-assert_eq!(pattern.get_cardinality(), Cardinality::Integer(111_000_000));
+assert_eq!(pattern.cardinality(), Cardinality::Integer(111_000_000));
 
 // The AST is a plain enum: walk it to lint patterns, e.g. reject
 // validation rules that accept unboundedly long input.
@@ -158,7 +158,7 @@ assert!(has_unbounded_repetition(&RegularExpression::new(".*@example\\.com")?));
 
 The variants are freely constructible too; a hand-built repetition whose maximum is below its minimum denotes no valid language and is rejected with `EngineError::InvalidRepetitionBounds` when converted by `to_automaton()`.
 
-Parsing (`new`, `parse`), the simplifying combinators (`concat`, `union`, `repeat`, `simplify`) and the analyses (`get_length`, `get_cardinality`, `evaluate_complexity`) are documented on [`RegularExpression`](https://docs.rs/regexsolver/latest/regexsolver/regex/enum.RegularExpression.html).
+Parsing (`new`, `parse`), the simplifying combinators (`concat`, `union`, `repeat`, `simplify`) and the analyses (`length`, `cardinality`, `evaluate_complexity`) are documented on [`RegularExpression`](https://docs.rs/regexsolver/latest/regexsolver/regex/enum.RegularExpression.html).
 
 ## Bound Execution
 
@@ -201,7 +201,7 @@ execution_profile.run(|| {
 
 ### Disabling Implicit Determinization
 
-`FastAutomaton` operations that require a deterministic automaton (`minimize`, `complement`, `difference`, `equivalent`, `subset`, `get_cardinality`, ...) determinize a non-deterministic input on their own by default. Since subset construction can blow up exponentially, this can be disabled: those operations then return `EngineError::DeterministicAutomatonRequired` instead, and determinization only happens through an explicit `determinize()` call. Deterministic inputs are always accepted, and the whole `Term` API keeps working since that layer manages the underlying representation itself, so its determinizations count as explicit.
+`FastAutomaton` operations that require a deterministic automaton (`minimize`, `complement`, `difference`, `equivalent`, `subset`, `cardinality`, ...) determinize a non-deterministic input on their own by default. Since subset construction can blow up exponentially, this can be disabled: those operations then return `EngineError::DeterministicAutomatonRequired` instead, and determinization only happens through an explicit `determinize()` call. Deterministic inputs are always accepted, and the whole `Term` API keeps working since that layer manages the underlying representation itself, so its determinizations count as explicit.
 
 ```rust
 use regexsolver::execution_profile::ExecutionProfileBuilder;

@@ -64,7 +64,7 @@ pub type CharRange = RangeSet<Char>;
 ///     assert_eq!(rep.to_pattern(), "(abc){2,4}");
 ///
 ///     // Analyze
-///     assert_eq!(rep.get_length(), (Some(6), Some(12)));
+///     assert_eq!(rep.length(), (Some(6), Some(12)));
 ///     assert!(!rep.is_empty()?);
 ///
 ///     // Generate examples
@@ -84,6 +84,15 @@ pub type CharRange = RangeSet<Char>;
 /// ```
 ///
 /// To put constraint and limitation on the execution of operations please refer to [`ExecutionProfile`].
+///
+/// # Tracing
+///
+/// The core operations on [`Term`], [`FastAutomaton`], and [`RegularExpression`]
+/// are instrumented with [`tracing`](https://docs.rs/tracing) spans (mostly at
+/// `debug` level). Install a [`tracing-subscriber`](https://docs.rs/tracing-subscriber)
+/// (or any other `tracing` subscriber) in your application to observe them; if
+/// no subscriber is installed, instrumentation has negligible overhead and
+/// produces no output.
 ///
 /// # Equality
 ///
@@ -212,6 +221,7 @@ impl Term {
     ///
     /// assert_eq!("abcd.+", concat.to_pattern());
     /// ```
+    #[tracing::instrument(level = "debug", skip_all)]
     pub fn concat(
         &self,
         terms: impl IntoIterator<Item = impl Borrow<Term>>,
@@ -267,6 +277,7 @@ impl Term {
     ///
     /// assert_eq!("(abc|de|fghi)", union.to_pattern());
     /// ```
+    #[tracing::instrument(level = "debug", skip_all)]
     pub fn union(
         &self,
         terms: impl IntoIterator<Item = impl Borrow<Term>>,
@@ -302,9 +313,7 @@ impl Term {
 
             Ok(Term::Automaton(return_automaton))
         } else {
-            let regexes_list = self
-                .get_regexes(&terms)
-                .expect("No automaton should be here so this operation is not supposed to fail.");
+            let regexes_list = self.get_regexes(&terms);
 
             let regexes_list = regexes_list.iter().map(AsRef::as_ref).collect::<Vec<_>>();
 
@@ -329,6 +338,7 @@ impl Term {
     ///
     /// assert_eq!("deabc", intersection.to_pattern());
     /// ```
+    #[tracing::instrument(level = "debug", skip_all)]
     pub fn intersection(
         &self,
         terms: impl IntoIterator<Item = impl Borrow<Term>>,
@@ -368,6 +378,7 @@ impl Term {
     ///
     /// assert_eq!("abc", difference.to_pattern());
     /// ```
+    #[tracing::instrument(level = "debug", skip_all, fields(self_deterministic = self.is_deterministic(), other_deterministic = other.is_deterministic()))]
     pub fn difference(&self, other: &Term) -> Result<Term, EngineError> {
         Self::run_with_implicit_determinization(|| {
             let minuend_automaton = self.to_automaton()?;
@@ -393,6 +404,7 @@ impl Term {
     /// assert!(term.intersection(&[complement.clone()]).unwrap().is_empty().unwrap());
     /// assert!(term.union(&[complement]).unwrap().is_total().unwrap());
     /// ```
+    #[tracing::instrument(level = "debug", skip_all, fields(self_deterministic = self.is_deterministic()))]
     pub fn complement(&self) -> Result<Term, EngineError> {
         Self::run_with_implicit_determinization(|| {
             // `FastAutomaton::complement` determinizes `self` itself.
@@ -421,6 +433,7 @@ impl Term {
     /// assert_eq!("(abc){3,5}", term.repeat(3..6).unwrap().to_pattern());
     /// assert_eq!("(abc){0,2}", term.repeat(..=2).unwrap().to_pattern());
     /// ```
+    #[tracing::instrument(level = "debug", skip_all, fields(self_deterministic = self.is_deterministic(), min = tracing::field::Empty, max = tracing::field::Empty))]
     pub fn repeat(&self, range: impl RangeBounds<u32>) -> Result<Term, EngineError> {
         let min = match range.start_bound() {
             Bound::Included(&n) => n,
@@ -432,6 +445,9 @@ impl Term {
             Bound::Excluded(&n) => Some(n.saturating_sub(1)),
             Bound::Unbounded => None,
         };
+        let span = tracing::Span::current();
+        span.record("min", min);
+        span.record("max", tracing::field::debug(max_opt));
         match self {
             Term::RegularExpression(regular_expression) => Ok(Term::RegularExpression(
                 regular_expression.repeat(min, max_opt),
@@ -470,6 +486,7 @@ impl Term {
     /// let batch = term.generate_strings(2, 2).unwrap();
     /// assert_eq!(2, batch.len()); // ["abcde", "abcabc"]
     /// ```
+    #[tracing::instrument(level = "debug", skip(self), fields(self_deterministic = self.is_deterministic(), limit = limit, offset = offset))]
     pub fn generate_strings(
         &self,
         limit: usize,
@@ -542,6 +559,7 @@ impl Term {
     /// assert!(dfa.is_deterministic());
     /// assert!(term.equivalent(&dfa).unwrap());
     /// ```
+    #[tracing::instrument(level = "debug", skip_all, fields(self_deterministic = self.is_deterministic()))]
     pub fn determinize(&self) -> Result<Term, EngineError> {
         let automaton = self.to_automaton()?;
         let determinized = automaton.determinize()?.into_owned();
@@ -561,6 +579,7 @@ impl Term {
     /// assert!(minimal.is_minimal());
     /// assert!(term.equivalent(&minimal).unwrap());
     /// ```
+    #[tracing::instrument(level = "debug", skip_all, fields(self_deterministic = self.is_deterministic(), self_minimal = self.is_minimal()))]
     pub fn minimize(&self) -> Result<Term, EngineError> {
         Self::run_with_implicit_determinization(|| {
             let mut automaton = self.to_automaton()?.into_owned();
@@ -581,14 +600,15 @@ impl Term {
     ///
     /// assert!(!term1.equivalent(&term2).unwrap());
     /// ```
-    pub fn equivalent(&self, term: &Term) -> Result<bool, EngineError> {
-        if self == term {
+    #[tracing::instrument(level = "debug", skip_all, fields(self_deterministic = self.is_deterministic(), other_deterministic = other.is_deterministic()))]
+    pub fn equivalent(&self, other: &Term) -> Result<bool, EngineError> {
+        if self == other {
             return Ok(true);
         }
 
         Self::run_with_implicit_determinization(|| {
             let automaton_1 = self.to_automaton()?;
-            let automaton_2 = term.to_automaton()?;
+            let automaton_2 = other.to_automaton()?;
             automaton_1.equivalent(&automaton_2)
         })
     }
@@ -605,14 +625,15 @@ impl Term {
     ///
     /// assert!(term1.subset(&term2).unwrap());
     /// ```
-    pub fn subset(&self, term: &Term) -> Result<bool, EngineError> {
-        if self == term {
+    #[tracing::instrument(level = "debug", skip_all, fields(self_deterministic = self.is_deterministic(), other_deterministic = other.is_deterministic()))]
+    pub fn subset(&self, other: &Term) -> Result<bool, EngineError> {
+        if self == other {
             return Ok(true);
         }
 
         Self::run_with_implicit_determinization(|| {
             let automaton_1 = self.to_automaton()?;
-            let automaton_2 = term.to_automaton()?;
+            let automaton_2 = other.to_automaton()?;
             automaton_1.subset(&automaton_2)
         })
     }
@@ -632,6 +653,7 @@ impl Term {
     /// assert!(term.matches("abcdef").unwrap());
     /// assert!(!term.matches("xyzabc").unwrap());
     /// ```
+    #[tracing::instrument(level = "debug", skip(self, input), fields(self_deterministic = self.is_deterministic(), input_len = input.len()))]
     pub fn matches(&self, input: &str) -> Result<bool, EngineError> {
         Ok(self.to_automaton()?.is_match(input))
     }
@@ -726,10 +748,10 @@ impl Term {
     /// matched). `None` for the maximum means the language is infinite
     /// (unbounded match length).
     #[must_use]
-    pub fn get_length(&self) -> (Option<u32>, Option<u32>) {
+    pub fn length(&self) -> (Option<u32>, Option<u32>) {
         match self {
-            Term::RegularExpression(regex) => regex.get_length(),
-            Term::Automaton(automaton) => automaton.get_length(),
+            Term::RegularExpression(regex) => regex.length(),
+            Term::Automaton(automaton) => automaton.length(),
         }
     }
 
@@ -738,11 +760,12 @@ impl Term {
     /// The exact count is represented as `u32`. If the exact count exceeds
     /// `u32::MAX`, the result is `Cardinality::BigInteger` rather than a
     /// truncated value. Infinite languages return `Cardinality::Infinite`.
-    pub fn get_cardinality(&self) -> Result<Cardinality<u32>, EngineError> {
+    #[tracing::instrument(level = "debug", skip_all, fields(self_deterministic = self.is_deterministic()))]
+    pub fn cardinality(&self) -> Result<Cardinality<u32>, EngineError> {
         match self {
-            Term::RegularExpression(regex) => Ok(regex.get_cardinality()),
+            Term::RegularExpression(regex) => Ok(regex.cardinality()),
             Term::Automaton(automaton) => {
-                Self::run_with_implicit_determinization(|| automaton.get_cardinality())
+                Self::run_with_implicit_determinization(|| automaton.cardinality())
             }
         }
     }
@@ -750,7 +773,7 @@ impl Term {
     /// Returns `true` if the term matches a finite number of strings.
     ///
     /// A finite language is one with no unbounded repetition (`*`, `+`, ...).
-    /// Convenience over [`get_cardinality`](Self::get_cardinality) when only the
+    /// Convenience over [`cardinality`](Self::cardinality) when only the
     /// finite/infinite distinction matters.
     ///
     /// # Examples
@@ -762,7 +785,7 @@ impl Term {
     /// assert!(!Term::from_pattern("a+").unwrap().is_finite().unwrap());
     /// ```
     pub fn is_finite(&self) -> Result<bool, EngineError> {
-        Ok(!matches!(self.get_cardinality()?, Cardinality::Infinite))
+        Ok(!matches!(self.cardinality()?, Cardinality::Infinite))
     }
 
     /// Converts the term to a [`FastAutomaton`].
@@ -770,6 +793,7 @@ impl Term {
     /// Returns a [`Cow`]: borrows the automaton when the term is already
     /// automaton-backed, and allocates a new one when converting from a
     /// [`RegularExpression`].
+    #[tracing::instrument(level = "debug", skip_all, fields(self_deterministic = self.is_deterministic()))]
     pub fn to_automaton(&self) -> Result<Cow<'_, FastAutomaton>, EngineError> {
         Ok(match self {
             Term::RegularExpression(regex) => Cow::Owned(regex.to_automaton()?),
@@ -783,6 +807,7 @@ impl Term {
     /// regex-backed, and allocates a new one when converting from a
     /// [`FastAutomaton`] via state elimination.
     #[must_use]
+    #[tracing::instrument(level = "debug", skip_all, fields(self_deterministic = self.is_deterministic()))]
     pub fn to_regex(&self) -> Cow<'_, RegularExpression> {
         match self {
             Term::RegularExpression(regex) => Cow::Borrowed(regex),
@@ -830,14 +855,14 @@ impl Term {
         Ok(automaton_list)
     }
 
-    fn get_regexes<'a>(&'a self, terms: &[&'a Term]) -> Option<Vec<Cow<'a, RegularExpression>>> {
+    fn get_regexes<'a>(&'a self, terms: &[&'a Term]) -> Vec<Cow<'a, RegularExpression>> {
         let mut regex_list = Vec::with_capacity(terms.len() + 1);
         regex_list.push(self.to_regex());
 
         let mut terms_regexes = terms.iter().map(|a| a.to_regex()).collect::<Vec<_>>();
         regex_list.append(&mut terms_regexes);
 
-        Some(regex_list)
+        regex_list
     }
 }
 
@@ -903,17 +928,17 @@ mod tests {
                 .unwrap()
         );
 
-        println!("term: {}", term.to_automaton().unwrap().as_dot());
+        println!("term: {}", term.to_automaton().unwrap().to_dot());
 
         if let Term::Automaton(complement) = &complement {
-            println!("complement: {}", complement.as_dot());
+            println!("complement: {}", complement.to_dot());
         }
 
         let union = term.union(&[complement]).unwrap();
         if let Term::Automaton(union) = &union {
-            println!("{}", union.as_dot());
+            println!("{}", union.to_dot());
             let union = union.determinize().unwrap();
-            println!("{}", union.as_dot());
+            println!("{}", union.to_dot());
         }
 
         assert!(union.is_total().unwrap());

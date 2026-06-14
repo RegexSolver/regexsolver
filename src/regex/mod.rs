@@ -172,6 +172,7 @@ impl RegularExpression {
     }
 
     /// Converts the regular expression to an equivalent [`FastAutomaton`].
+    #[tracing::instrument(level = "trace", skip_all)]
     pub fn to_automaton(&self) -> Result<FastAutomaton, EngineError> {
         ExecutionProfile::get().assert_max_number_of_states(self.get_number_of_states_in_nfa())?;
 

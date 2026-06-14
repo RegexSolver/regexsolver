@@ -187,17 +187,13 @@ fn bench_analyze(c: &mut Criterion) {
     let mut group = c.benchmark_group("analyze");
 
     let finite = dfa("[a-z]{1,6}");
-    group.bench_function("get_length/finite", |b| {
-        b.iter(|| black_box(&finite).get_length())
-    });
-    group.bench_function("get_cardinality/finite", |b| {
-        b.iter(|| black_box(&finite).get_cardinality().unwrap())
+    group.bench_function("length/finite", |b| b.iter(|| black_box(&finite).length()));
+    group.bench_function("cardinality/finite", |b| {
+        b.iter(|| black_box(&finite).cardinality().unwrap())
     });
 
     let infinite = automaton(LARGE.1);
-    group.bench_function("get_length/large", |b| {
-        b.iter(|| black_box(&infinite).get_length())
-    });
+    group.bench_function("length/large", |b| b.iter(|| black_box(&infinite).length()));
 
     group.finish();
 }

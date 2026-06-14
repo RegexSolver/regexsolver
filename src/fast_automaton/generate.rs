@@ -41,6 +41,7 @@ impl FastAutomaton {
     /// calls with different offsets may repeat strings (or skip some).
     /// [`determinize`](Self::determinize) (and ideally
     /// [`minimize`](Self::minimize)) first to make pages disjoint.
+    #[tracing::instrument(level = "debug", skip(self), fields(states = self.number_of_states(), deterministic=self.is_deterministic(), limit=limit, offset=offset))]
     pub fn generate_strings(
         &self,
         limit: usize,
@@ -50,7 +51,7 @@ impl FastAutomaton {
             return Ok(vec![]);
         }
 
-        let (_, max) = self.get_length();
+        let (_, max) = self.length();
         let max_len = max.unwrap_or(u32::MAX) as usize;
 
         let execution_profile = ExecutionProfile::get();
@@ -91,7 +92,7 @@ impl FastAutomaton {
         let mut visited = AHashSet::with_capacity(num_states);
 
         let mut q = BinaryHeap::new();
-        let start_state = self.get_start_state();
+        let start_state = self.start_state();
 
         // If the start state can't reach an accept state, exit immediately
         if dist[start_state] != usize::MAX {
@@ -439,7 +440,7 @@ mod tests {
             "Chunked generation did not match bulk generation"
         );
 
-        let cardinality = automaton.get_cardinality().unwrap();
+        let cardinality = automaton.cardinality().unwrap();
 
         if let Cardinality::Integer(count) = cardinality {
             let empty_chunk = automaton.generate_strings(10, count as usize).unwrap();

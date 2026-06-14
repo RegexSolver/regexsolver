@@ -52,7 +52,7 @@ impl Condition {
     /// expressible in the current spanning set (no base is fully contained in
     /// `range`). In that case, extend the spanning set first with
     /// [`SpanningSet::merge`] or [`SpanningSet::compute_spanning_set`], apply
-    /// it with [`FastAutomaton::apply_new_spanning_set`], then retry.
+    /// it with [`crate::fast_automaton::FastAutomaton::apply_new_spanning_set`], then retry.
     pub fn from_range(range: &CharRange, spanning_set: &SpanningSet) -> Result<Self, EngineError> {
         if range.is_empty() {
             return Ok(Self::empty(spanning_set));
@@ -62,11 +62,7 @@ impl Condition {
 
         let mut cond = Self::empty(spanning_set);
 
-        for (i, base) in spanning_set
-            .get_spanning_ranges_with_rest()
-            .iter()
-            .enumerate()
-        {
+        for (i, base) in spanning_set.spanning_ranges_with_rest().iter().enumerate() {
             if range.contains_all(base) {
                 cond.0.set(i, true);
             }
@@ -95,11 +91,7 @@ impl Condition {
 
         let mut range = CharRange::empty();
 
-        for (i, base) in spanning_set
-            .get_spanning_ranges_with_rest()
-            .iter()
-            .enumerate()
-        {
+        for (i, base) in spanning_set.spanning_ranges_with_rest().iter().enumerate() {
             if self.0.get(i) {
                 range = range.union(base);
             }
@@ -108,21 +100,21 @@ impl Condition {
         Ok(range)
     }
 
-    /// Returns the condition matching characters in `self` or `cond` (bitwise
+    /// Returns the condition matching characters in `self` or `other` (bitwise
     /// OR). Both must share the same spanning set.
     #[inline]
-    pub fn union(&self, cond: &Condition) -> Self {
+    pub fn union(&self, other: &Condition) -> Self {
         let mut new_cond = self.clone();
-        new_cond.0.union(&cond.0);
+        new_cond.0.union(&other.0);
         new_cond
     }
 
-    /// Returns the condition matching characters in both `self` and `cond`
+    /// Returns the condition matching characters in both `self` and `other`
     /// (bitwise AND). Both must share the same spanning set.
     #[inline]
-    pub fn intersection(&self, cond: &Condition) -> Self {
+    pub fn intersection(&self, other: &Condition) -> Self {
         let mut new_cond = self.clone();
-        new_cond.0.intersection(&cond.0);
+        new_cond.0.intersection(&other.0);
         new_cond
     }
 
@@ -135,21 +127,21 @@ impl Condition {
         new_cond
     }
 
-    /// Returns the condition matching characters in `self` but not in `cond`
+    /// Returns the condition matching characters in `self` but not in `other`
     /// (bitwise AND-NOT). Both must share the same spanning set.
     #[inline]
-    pub fn difference(&self, cond: &Condition) -> Self {
+    pub fn difference(&self, other: &Condition) -> Self {
         let mut new_cond = self.clone();
-        let subtrahend = cond.complement();
+        let subtrahend = other.complement();
         new_cond.0.intersection(&subtrahend.0);
         new_cond
     }
 
-    /// Returns `true` if `self` and `cond` share at least one character (their
+    /// Returns `true` if `self` and `other` share at least one character (their
     /// intersection is non-empty). Both must share the same spanning set.
     #[inline]
-    pub fn has_intersection(&self, cond: &Condition) -> bool {
-        self.0.has_intersection(&cond.0)
+    pub fn has_intersection(&self, other: &Condition) -> bool {
+        self.0.has_intersection(&other.0)
     }
 
     /// Returns `true` if the condition matches `character` (a Unicode scalar
@@ -183,15 +175,15 @@ impl Condition {
     /// Returns the number of characters the condition matches, evaluated
     /// against `spanning_set`.
     #[inline]
-    pub fn get_cardinality(&self, spanning_set: &SpanningSet) -> Result<u32, EngineError> {
+    pub fn cardinality(&self, spanning_set: &SpanningSet) -> Result<u32, EngineError> {
         Ok(self.to_range(spanning_set)?.get_cardinality())
     }
 
     /// Returns the condition as a vector of bits, one per range of the spanning
     /// set it was built against (the rest range first, when present).
     #[inline]
-    pub fn get_binary_representation(&self) -> Vec<bool> {
-        self.0.get_bits()
+    pub fn binary_representation(&self) -> Vec<bool> {
+        self.0.bits()
     }
 }
 
@@ -202,7 +194,7 @@ mod tests {
 
     use super::*;
 
-    fn get_spanning_set() -> SpanningSet {
+    fn spanning_set() -> SpanningSet {
         let ranges = vec![
             CharRange::new_from_range(Char::new('\u{0}')..=Char::new('\u{2}')),
             CharRange::new_from_range(Char::new('\u{4}')..=Char::new('\u{6}')),
@@ -234,7 +226,7 @@ mod tests {
         let small = SpanningSet::compute_spanning_set(&[CharRange::new_from_range(
             Char::new('a')..=Char::new('a'),
         )]);
-        let large = get_spanning_set();
+        let large = spanning_set();
 
         let condition = Condition::total(&small);
         assert_eq!(
@@ -256,7 +248,7 @@ mod tests {
         let small = SpanningSet::compute_spanning_set(&[CharRange::new_from_range(
             Char::new('a')..=Char::new('a'),
         )]);
-        let merged = small.merge(&get_spanning_set());
+        let merged = small.merge(&spanning_set());
         let converter = ConditionConverter::new(&small, &merged).unwrap();
 
         let foreign = Condition::total(&merged);
@@ -268,21 +260,18 @@ mod tests {
 
     #[test]
     fn test_empty_total() -> Result<(), String> {
-        let spanning_set = get_spanning_set();
+        let spanning_set = spanning_set();
         let empty = Condition::empty(&spanning_set);
         //println!("{empty}");
         assert!(empty.is_empty());
         assert_eq!(
             vec![false, false, false, false],
-            empty.get_binary_representation()
+            empty.binary_representation()
         );
         let total = Condition::total(&spanning_set);
         //println!("{total}");
         assert!(total.is_total());
-        assert_eq!(
-            vec![true, true, true, true],
-            total.get_binary_representation()
-        );
+        assert_eq!(vec![true, true, true, true], total.binary_representation());
 
         assert_eq!(CharRange::empty(), empty.to_range(&spanning_set).unwrap());
         assert_eq!(CharRange::total(), total.to_range(&spanning_set).unwrap());
@@ -310,13 +299,13 @@ mod tests {
             empty,
             Condition::from_range(&CharRange::empty(), &spanning_set).unwrap()
         );
-        assert_eq!(vec![false], empty.get_binary_representation());
+        assert_eq!(vec![false], empty.binary_representation());
 
         assert_eq!(
             total,
             Condition::from_range(&CharRange::total(), &spanning_set).unwrap()
         );
-        assert_eq!(vec![true], total.get_binary_representation());
+        assert_eq!(vec![true], total.binary_representation());
 
         assert_eq!(empty, total.complement());
         assert_eq!(total, empty.complement());
@@ -326,7 +315,7 @@ mod tests {
 
     #[test]
     fn test_from_to_range() -> Result<(), String> {
-        let spanning_set = get_spanning_set();
+        let spanning_set = spanning_set();
 
         for range in get_test_cases_range() {
             assert_range_convertion_to_range(&range, &spanning_set);
@@ -348,7 +337,7 @@ mod tests {
 
     #[test]
     fn test_project_to() -> Result<(), String> {
-        let current_spanning_set = get_spanning_set();
+        let current_spanning_set = spanning_set();
 
         let ranges = vec![
             CharRange::new_from_range(Char::new('\u{0}')..=Char::new('\u{1}')),
@@ -405,7 +394,7 @@ mod tests {
 
     #[test]
     fn test_union_intersection_complement() -> Result<(), String> {
-        let used_characters = get_spanning_set();
+        let used_characters = spanning_set();
 
         for range_1 in get_test_cases_range() {
             for range_2 in get_test_cases_range() {

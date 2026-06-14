@@ -13,10 +13,10 @@ impl FastAutomaton {
     /// which is unbounded exactly when that subgraph has a cycle (any such
     /// cycle can be pumped).
     #[must_use]
-    pub fn get_length(&self) -> (Option<u32>, Option<u32>) {
+    pub fn length(&self) -> (Option<u32>, Option<u32>) {
         // States that can reach an accept state. If the start state can't,
         // the language is empty.
-        let live = self.get_live_states();
+        let live = self.live_states();
         if !live.contains(&self.start_state) {
             return (None, None);
         }
@@ -28,7 +28,7 @@ impl FastAutomaton {
         // for the maximum.
         let mut min = None;
         let mut visited = IntSet::default();
-        let mut worklist = VecDeque::with_capacity(self.get_number_of_states());
+        let mut worklist = VecDeque::with_capacity(self.number_of_states());
         visited.insert(self.start_state);
         worklist.push_back((self.start_state, 0u32));
         while let Some((state, length)) = worklist.pop_front() {
@@ -108,24 +108,24 @@ mod tests {
     use crate::fast_automaton::FastAutomaton;
     use crate::fast_automaton::condition::Condition;
 
-    // Regression: `get_length` used to set `max = None` on any cycle
+    // Regression: `length` used to set `max = None` on any cycle
     // reachable from start, even dead cycles among non-accepting states that
     // cannot reach an accept. Such cycles don't extend the language; the
     // max must remain finite. Now fixed by filtering branches to the live
     // (co-reachable-from-accept) subgraph.
     #[test]
-    fn get_length_handles_dead_cycle() {
+    fn length_handles_dead_cycle() {
         let mut a = FastAutomaton::new_empty();
         let s1 = a.new_state();
         let s2 = a.new_state();
-        let cond = Condition::total(a.get_spanning_set());
+        let cond = Condition::total(a.spanning_set());
         a.accept(0);
         a.add_transition(0, s1, &cond);
         a.add_transition(s1, s2, &cond);
         a.add_transition(s2, s1, &cond);
         // s1, s2 not accepting → language is {""} only.
 
-        let (min, max) = a.get_length();
+        let (min, max) = a.length();
         assert_eq!(min, Some(0), "min length of {{\"\"}} is 0");
         assert_eq!(
             max,
@@ -135,38 +135,38 @@ mod tests {
     }
 
     #[test]
-    fn get_length_finite_and_infinite() {
+    fn length_finite_and_infinite() {
         // Chain 0 -> 1 -> 2, accepts {0, 2}: min 0, max 2.
         let mut a = FastAutomaton::new_empty();
         let s1 = a.new_state();
         let s2 = a.new_state();
-        let cond = Condition::total(a.get_spanning_set());
+        let cond = Condition::total(a.spanning_set());
         a.add_transition(0, s1, &cond);
         a.add_transition(s1, s2, &cond);
         a.accept(0);
         a.accept(s2);
-        assert_eq!(a.get_length(), (Some(0), Some(2)));
+        assert_eq!(a.length(), (Some(0), Some(2)));
 
         // Live cycle 0 <-> 1, accept {1}: min 1, max unbounded.
         let mut a = FastAutomaton::new_empty();
         let s1 = a.new_state();
-        let cond = Condition::total(a.get_spanning_set());
+        let cond = Condition::total(a.spanning_set());
         a.add_transition(0, s1, &cond);
         a.add_transition(s1, 0, &cond);
         a.accept(s1);
-        assert_eq!(a.get_length(), (Some(1), None));
+        assert_eq!(a.length(), (Some(1), None));
     }
 
-    // Regression: `get_length` used to enumerate paths with a cloned `seen`
+    // Regression: `length` used to enumerate paths with a cloned `seen`
     // set per branch (exponential time and memory on branching DAGs). A chain
     // of diamonds has 2^k paths; the linear algorithm must handle it
     // instantly.
     #[test]
-    fn get_length_linear_on_branching_dag() {
+    fn length_linear_on_branching_dag() {
         const DIAMONDS: usize = 24;
 
         let mut a = FastAutomaton::new_empty();
-        let cond = Condition::total(a.get_spanning_set());
+        let cond = Condition::total(a.spanning_set());
         let mut current = 0;
         for _ in 0..DIAMONDS {
             let upper = a.new_state();
@@ -181,6 +181,6 @@ mod tests {
         a.accept(current);
 
         let expected = 2 * DIAMONDS as u32;
-        assert_eq!(a.get_length(), (Some(expected), Some(expected)));
+        assert_eq!(a.length(), (Some(expected), Some(expected)));
     }
 }

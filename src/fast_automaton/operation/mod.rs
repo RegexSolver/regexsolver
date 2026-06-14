@@ -16,7 +16,7 @@ impl FastAutomaton {
     /// automaton collapses to the canonical empty automaton.
     pub fn remove_dead_states(&mut self) {
         if !self.is_empty() {
-            let live_states = self.get_live_states();
+            let live_states = self.live_states();
 
             let mut dead_states = IntSet::default();
             for from_state in self.states() {
@@ -46,8 +46,8 @@ mod tests {
             .to_automaton()
             .unwrap();
         let intersection = automaton1.intersection(&automaton2).unwrap();
-        assert_eq!(3, intersection.get_number_of_states());
-        assert_eq!(3, intersection.get_live_states().len());
+        assert_eq!(3, intersection.number_of_states());
+        assert_eq!(3, intersection.live_states().len());
         Ok(())
     }
 }

@@ -8,7 +8,7 @@ mod number_of_states;
 impl RegularExpression {
     /// Returns the minimum and maximum length of possible matched strings.
     #[must_use]
-    pub fn get_length(&self) -> (Option<u32>, Option<u32>) {
+    pub fn length(&self) -> (Option<u32>, Option<u32>) {
         match self {
             RegularExpression::Character(range) => {
                 if range.is_empty() {
@@ -17,7 +17,7 @@ impl RegularExpression {
                 (Some(1), Some(1))
             }
             RegularExpression::Repetition(regex, min, max_opt) => {
-                let (min_length, max_length_opt) = regex.get_length();
+                let (min_length, max_length_opt) = regex.length();
                 if let Some(min_length) = min_length {
                     let new_min_length = min * min_length;
                     let new_max_length = if let Some(max_length) = max_length_opt {
@@ -37,7 +37,7 @@ impl RegularExpression {
                 let mut new_max_length = Some(0);
 
                 for concat_element in concat_vec {
-                    let (min_length, max_length_opt) = concat_element.get_length();
+                    let (min_length, max_length_opt) = concat_element.length();
 
                     if let Some(min_length) = min_length {
                         new_min_length += min_length;
@@ -64,7 +64,7 @@ impl RegularExpression {
                 let mut new_max_length = Some(0);
 
                 for alternation_element in alternation_vec {
-                    let (min_length, max_length_opt) = alternation_element.get_length();
+                    let (min_length, max_length_opt) = alternation_element.length();
 
                     if let Some(min_length) = min_length {
                         new_min_length = cmp::min(new_min_length, min_length);
@@ -87,7 +87,7 @@ impl RegularExpression {
     }
 
     /// Returns the cardinality of the regular expression (i.e., the number of possible matched strings).
-    pub fn get_cardinality(&self) -> Cardinality<u32> {
+    pub fn cardinality(&self) -> Cardinality<u32> {
         if self.is_empty() {
             return Cardinality::Integer(0);
         } else if self.is_total() {
@@ -97,7 +97,7 @@ impl RegularExpression {
             RegularExpression::Character(range) => Cardinality::Integer(range.get_cardinality()),
             RegularExpression::Repetition(regular_expression, min, max_opt) => {
                 if let Some(max) = max_opt {
-                    let regex_cardinality = regular_expression.get_cardinality();
+                    let regex_cardinality = regular_expression.cardinality();
                     if let Cardinality::Integer(cardinality) = regex_cardinality {
                         let mut cardinality_temp: u32 = 0;
                         for i in *min..*max + 1 {
@@ -122,7 +122,7 @@ impl RegularExpression {
             RegularExpression::Concat(concat) => {
                 let mut cardinality: u32 = 1;
                 for concat_element in concat {
-                    let element_cardinality = concat_element.get_cardinality();
+                    let element_cardinality = concat_element.cardinality();
                     if let Cardinality::Integer(element_cardinality) = element_cardinality {
                         if let Some(mult) = cardinality.checked_mul(element_cardinality) {
                             cardinality = mult;
@@ -138,7 +138,7 @@ impl RegularExpression {
             RegularExpression::Alternation(alternation) => {
                 let mut cardinality: u32 = 0;
                 for alternation_element in alternation {
-                    let element_cardinality = alternation_element.get_cardinality();
+                    let element_cardinality = alternation_element.cardinality();
                     if let Cardinality::Integer(element_cardinality) = element_cardinality {
                         if let Some(add) = cardinality.checked_add(element_cardinality) {
                             cardinality = add;
@@ -177,13 +177,13 @@ mod tests {
         );
 
         assert_eq!(
-            FastAutomaton::new_empty().get_length(),
-            RegularExpression::new_empty().get_length()
+            FastAutomaton::new_empty().length(),
+            RegularExpression::new_empty().length()
         );
 
         assert_eq!(
-            FastAutomaton::new_total().get_length(),
-            RegularExpression::new_total().get_length()
+            FastAutomaton::new_total().length(),
+            RegularExpression::new_total().length()
         );
         Ok(())
     }
@@ -192,12 +192,12 @@ mod tests {
         println!("{}", regex);
         let regex = RegularExpression::new(regex).unwrap();
 
-        let (min, max_opt) = regex.get_length();
+        let (min, max_opt) = regex.length();
 
         let automaton = regex.to_automaton().unwrap();
         //automaton.to_dot();
 
-        let (min_automaton_opt, max_automaton_opt) = automaton.get_length();
+        let (min_automaton_opt, max_automaton_opt) = automaton.length();
 
         assert_eq!((min_automaton_opt, max_automaton_opt), (min, max_opt));
     }
@@ -227,13 +227,13 @@ mod tests {
         println!("{}", regex);
         let regex = RegularExpression::new(regex).unwrap();
 
-        let cardinality = regex.get_cardinality();
+        let cardinality = regex.cardinality();
 
         let automaton = regex.to_automaton().unwrap();
-        // `get_cardinality` returns `Infinite` for cyclic automata without
+        // `cardinality` returns `Infinite` for cyclic automata without
         // determinizing and only determinizes the finite (acyclic)
         // non-deterministic ones internally.
-        let expected = automaton.get_cardinality().unwrap();
+        let expected = automaton.cardinality().unwrap();
 
         assert_eq!(expected, cardinality);
     }

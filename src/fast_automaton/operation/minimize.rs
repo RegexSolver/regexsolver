@@ -9,6 +9,7 @@ impl FastAutomaton {
     /// unless the [`ExecutionProfile`] disables implicit determinization, in
     /// which case [`EngineError::DeterministicAutomatonRequired`] is
     /// returned.
+    #[tracing::instrument(level = "debug", skip_all, fields(states = self.number_of_states(), deterministic = self.is_deterministic(), minimal = self.is_minimal()))]
     pub fn minimize(&mut self) -> Result<(), EngineError> {
         // The `minimal` flag is conservatively cleared on every mutation, so
         // it can be trusted here; this also keeps the
@@ -35,7 +36,7 @@ impl FastAutomaton {
         let max_states = self.transitions.len();
 
         let all_states: IntSet<usize> = self.states().collect();
-        let accept_states: IntSet<usize> = self.get_accept_states().iter().cloned().collect();
+        let accept_states: IntSet<usize> = self.accept_states().iter().cloned().collect();
         let non_accept_states: IntSet<usize> =
             all_states.difference(&accept_states).cloned().collect();
 
@@ -52,7 +53,7 @@ impl FastAutomaton {
         let mut worklist: Vec<usize> = (0..partitions.len()).collect();
         let mut in_worklist: Vec<bool> = vec![true; max_states];
 
-        let bases = self.get_spanning_bases()?;
+        let bases = self.spanning_bases()?;
 
         let mut inverse_transitions: Vec<Vec<(usize, Condition)>> = vec![Vec::new(); max_states];
         for to_state in self.states() {
@@ -61,7 +62,7 @@ impl FastAutomaton {
             }
         }
 
-        let mut x = IntSet::with_capacity(self.get_number_of_states());
+        let mut x = IntSet::with_capacity(self.number_of_states());
 
         let mut intersection_states: Vec<Vec<usize>> = vec![Vec::new(); max_states];
         let mut touched_partitions: Vec<usize> = Vec::with_capacity(max_states);
@@ -158,8 +159,8 @@ impl FastAutomaton {
         let mut representatives = Vec::with_capacity(partitions.len());
 
         for partition in partitions {
-            let representative = if partition.contains(&self.get_start_state()) {
-                self.get_start_state()
+            let representative = if partition.contains(&self.start_state()) {
+                self.start_state()
             } else {
                 *partition
                     .iter()

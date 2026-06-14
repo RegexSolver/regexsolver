@@ -2,6 +2,7 @@ use super::*;
 
 impl RegularExpression {
     /// Returns a simplified version by eliminating redundant constructs and applying canonical reductions.
+    #[tracing::instrument(level = "trace", skip_all)]
     pub fn simplify(&self) -> Self {
         match self {
             RegularExpression::Character(..) => self.clone(),

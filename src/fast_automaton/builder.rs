@@ -415,7 +415,7 @@ impl FastAutomaton {
 
     /// Recompute a minimal spanning set for the automaton and apply it.
     pub fn recompute_minimal_spanning_set(&mut self) -> Result<(), EngineError> {
-        let mut ranges = Vec::with_capacity(self.get_number_of_states());
+        let mut ranges = Vec::with_capacity(self.number_of_states());
 
         for state in self.states() {
             for (condition, _) in self.transitions_from(state) {
@@ -501,14 +501,14 @@ mod tests {
 
         assert!(a.is_accepted(s1));
         assert!(a.has_transition(0, s1));
-        assert!(a.get_condition(0, s1).is_some());
+        assert!(a.condition(0, s1).is_some());
         assert_eq!(a.in_degree(s1), 1);
         assert_eq!(a.out_degree(0), 1);
         assert!(a.is_match("a"));
 
         // try_add_transition: refuses determinism-breaking additions and
         // leaves the automaton untouched on Err.
-        let condition_a = Condition::from_range(&rng('a', 'a'), a.get_spanning_set()).unwrap();
+        let condition_a = Condition::from_range(&rng('a', 'a'), a.spanning_set()).unwrap();
         assert!(a.is_deterministic());
         assert!(a.try_add_transition(0, s2, &condition_a).is_err());
         assert!(a.is_deterministic());
@@ -529,7 +529,7 @@ mod tests {
         // remove_transition removes the edge and updates queries.
         a.remove_transition(0, s1);
         assert!(!a.has_transition(0, s1));
-        assert!(a.get_condition(0, s1).is_none());
+        assert!(a.condition(0, s1).is_none());
         assert_eq!(a.in_degree(s1), 0);
         assert!(!a.is_match("a"));
     }
@@ -555,11 +555,11 @@ mod tests {
         assert!(!automaton.is_match("x"));
 
         // An exactly-covered range takes the fast path: same spanning set.
-        let before = automaton.get_spanning_set().clone();
+        let before = automaton.spanning_set().clone();
         automaton
             .add_transition_from_range(0, s1, &rng('x', 'z'))
             .unwrap();
-        assert_eq!(&before, automaton.get_spanning_set());
+        assert_eq!(&before, automaton.spanning_set());
         assert!(automaton.is_match("zx"));
 
         // An empty range adds nothing.
@@ -604,7 +604,7 @@ mod tests {
         let mut a = FastAutomaton::new_empty();
         let s1 = a.new_state();
         let s2 = a.new_state();
-        let cond = Condition::total(a.get_spanning_set());
+        let cond = Condition::total(a.spanning_set());
         a.add_transition(0, s1, &cond);
         a.add_transition(0, s2, &cond);
         a.accept(s1);

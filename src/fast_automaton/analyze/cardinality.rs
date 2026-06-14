@@ -11,10 +11,11 @@ impl FastAutomaton {
     /// with [`EngineError::DeterministicAutomatonRequired`] when the profile
     /// disables implicit determinization).
     ///
-    /// As in [`get_length`](Self::get_length), only cycles **on accepting
+    /// As in [`length`](Self::length), only cycles **on accepting
     /// paths** make the count infinite: cycles among dead or unreachable
     /// states don't add a single matched string.
-    pub fn get_cardinality(&self) -> Result<Cardinality<u32>, EngineError> {
+    #[tracing::instrument(level = "debug", skip_all, fields(states = self.number_of_states(), deterministic = self.is_deterministic()))]
+    pub fn cardinality(&self) -> Result<Cardinality<u32>, EngineError> {
         if self.is_empty() {
             return Ok(Cardinality::Integer(0));
         } else if self.is_total() {
@@ -24,7 +25,7 @@ impl FastAutomaton {
         // Only states on an accepting path (reachable from the start AND
         // able to reach an accept) contribute strings; everything else is
         // excluded from both the cycle check and the count.
-        let live = self.get_live_states();
+        let live = self.live_states();
         let relevant: IntSet<State> = self
             .forward_reachable_states()
             .intersection(&live)
@@ -45,7 +46,7 @@ impl FastAutomaton {
         // yields one whose relevant subgraph is acyclic too, so the
         // recursion takes the deterministic path on the second call.
         if !self.is_deterministic() {
-            return self.determinize_implicit()?.get_cardinality();
+            return self.determinize_implicit()?.cardinality();
         }
 
         let len = self.transitions.len();
@@ -62,7 +63,7 @@ impl FastAutomaton {
                     }
                     if let Some(distance) = current_distance.checked_mul(
                         condition
-                            .get_cardinality(&self.spanning_set)
+                            .cardinality(&self.spanning_set)
                             .expect("It should be possible to get the cardinality of a condition."),
                     ) && let Some(new_distance) =
                         distances.get(to_state).unwrap_or(&0).checked_add(distance)
@@ -154,17 +155,17 @@ mod tests {
         let mut a = FastAutomaton::new_empty();
         let s1 = a.new_state();
         let s2 = a.new_state();
-        let cond = Condition::total(a.get_spanning_set());
+        let cond = Condition::total(a.spanning_set());
         a.accept(0);
         a.add_transition(0, s1, &cond);
         a.add_transition(s1, s2, &cond);
         a.add_transition(s2, s1, &cond);
         // s1, s2 can't reach an accept → language is {""} only.
 
-        assert_eq!(a.get_cardinality().unwrap(), Cardinality::Integer(1));
+        assert_eq!(a.cardinality().unwrap(), Cardinality::Integer(1));
     }
 
-    // Regression: `get_cardinality` used to `assert!` determinism and panic
+    // Regression: `cardinality` used to `assert!` determinism and panic
     // on acyclic NFAs (the only nondeterministic inputs that reach the finite
     // count; cyclic ones return Infinite earlier). It now determinizes
     // internally.
@@ -173,7 +174,7 @@ mod tests {
         let mut a = FastAutomaton::new_empty();
         let s1 = a.new_state();
         let s2 = a.new_state();
-        let cond = Condition::total(a.get_spanning_set());
+        let cond = Condition::total(a.spanning_set());
         // Two overlapping transitions from the start: nondeterministic, but
         // both lead to accepting states after exactly one character.
         a.add_transition(0, s1, &cond);
@@ -182,8 +183,8 @@ mod tests {
         a.accept(s2);
         assert!(!a.is_deterministic());
 
-        let cardinality = a.get_cardinality().unwrap();
-        let expected = a.determinize().unwrap().get_cardinality().unwrap();
+        let cardinality = a.cardinality().unwrap();
+        let expected = a.determinize().unwrap().cardinality().unwrap();
         assert_eq!(cardinality, expected);
         assert!(matches!(cardinality, Cardinality::Integer(n) if n > 0));
     }

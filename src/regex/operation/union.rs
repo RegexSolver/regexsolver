@@ -4,17 +4,19 @@ use super::*;
 
 impl RegularExpression {
     /// Returns a regular expression matching the union of `self` and `other`.
+    #[tracing::instrument(level = "trace", skip_all)]
     pub fn union(&self, other: &RegularExpression) -> RegularExpression {
         Self::union_all([self, other])
     }
 
-    /// Returns a regular expression that is the union of all expressions in `patterns`.
+    /// Returns a regular expression that is the union of all expressions in `regexes`.
+    #[tracing::instrument(level = "trace", skip_all)]
     pub fn union_all<'a, I: IntoIterator<Item = &'a RegularExpression>>(
-        patterns: I,
+        regexes: I,
     ) -> RegularExpression {
         let mut result: Cow<'a, RegularExpression> = Cow::Owned(RegularExpression::new_empty());
 
-        for other in patterns {
+        for other in regexes {
             result = result.union_(other);
 
             if result.is_total() {

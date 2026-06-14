@@ -28,7 +28,7 @@ impl<'a, 'b> ConditionConverter<'a, 'b> {
         let mut to_base_map =
             IntMap::with_capacity(to_spanning_set.spanning_ranges_with_rest_len());
         for (i, base) in to_spanning_set
-            .get_spanning_ranges_with_rest()
+            .spanning_ranges_with_rest()
             .into_iter()
             .enumerate()
         {
@@ -36,8 +36,8 @@ impl<'a, 'b> ConditionConverter<'a, 'b> {
         }
 
         let mut equivalence_map: Vec<Vec<usize>> =
-            Vec::with_capacity(from_spanning_set.get_number_of_spanning_ranges() + 1);
-        for from_base in from_spanning_set.get_spanning_ranges_with_rest().iter() {
+            Vec::with_capacity(from_spanning_set.number_of_spanning_ranges() + 1);
+        for from_base in from_spanning_set.spanning_ranges_with_rest().iter() {
             let mut index = Vec::with_capacity(1);
             for (i, to_base) in &to_base_map {
                 if from_base == to_base || from_base.has_intersection(to_base) {
@@ -92,12 +92,12 @@ impl<'a, 'b> ConditionConverter<'a, 'b> {
     }
 
     /// Returns `from_spanning_set`.
-    pub fn get_from_spanning_set(&self) -> &'a SpanningSet {
+    pub fn from_spanning_set(&self) -> &'a SpanningSet {
         self.from_spanning_set
     }
 
     /// Returns `to_spanning_set`.
-    pub fn get_to_spanning_set(&self) -> &'b SpanningSet {
+    pub fn to_spanning_set(&self) -> &'b SpanningSet {
         self.to_spanning_set
     }
 }
@@ -109,7 +109,7 @@ mod tests {
 
     use super::*;
 
-    fn get_from_spanning_set() -> SpanningSet {
+    fn from_spanning_set() -> SpanningSet {
         let ranges = vec![
             CharRange::new_from_range(Char::new('\0')..=Char::new('\u{2}')),
             CharRange::new_from_range(Char::new('\u{4}')..=Char::new('\u{6}')),
@@ -119,7 +119,7 @@ mod tests {
         SpanningSet::compute_spanning_set(&ranges)
     }
 
-    fn get_to_spanning_set() -> SpanningSet {
+    fn to_spanning_set() -> SpanningSet {
         let ranges = vec![
             CharRange::new_from_range(Char::new('\0')..=Char::new('\u{1}')),
             CharRange::new_from_range(Char::new('\u{2}')..=Char::new('\u{2}')),
@@ -133,8 +133,8 @@ mod tests {
 
     #[test]
     fn test_convert() -> Result<(), String> {
-        let from_spanning_set = get_from_spanning_set();
-        let to_spanning_set = get_to_spanning_set();
+        let from_spanning_set = from_spanning_set();
+        let to_spanning_set = to_spanning_set();
 
         let converter = ConditionConverter::new(&from_spanning_set, &to_spanning_set).unwrap();
 

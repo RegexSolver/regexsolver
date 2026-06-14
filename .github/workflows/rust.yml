@@ -8,6 +8,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  RUSTDOCFLAGS: -D warnings
 
 jobs:
   build:
@@ -15,13 +16,26 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      - name: Format
+        run: cargo fmt --all -- --check
       - name: Build
         run: cargo build --verbose
       - name: Test & Lint
         run: |
           cargo test
-          cargo clippy
+          cargo clippy -- -D warnings
       - name: Test & Lint (no default features)
         run: |
           cargo test --no-default-features
-          cargo clippy --no-default-features
+          cargo clippy --no-default-features -- -D warnings
+      - name: Docs
+        run: cargo doc --no-deps
+
+  audit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

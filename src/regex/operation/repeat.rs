@@ -6,6 +6,7 @@ impl RegularExpression {
     /// When `max_opt` is below `min` there is no valid repetition count and
     /// the result is the empty language, consistently with
     /// [`FastAutomaton::repeat`](crate::fast_automaton::FastAutomaton::repeat).
+    #[tracing::instrument(level = "trace", skip(self), fields(min = min, max_opt = tracing::field::debug(max_opt)))]
     pub fn repeat(&self, min: u32, max_opt: Option<u32>) -> RegularExpression {
         if self.is_total() {
             return RegularExpression::new_total();

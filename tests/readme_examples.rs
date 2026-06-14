@@ -54,10 +54,10 @@ fn readme_regular_expression_example() -> Result<(), EngineError> {
     let pattern = RegularExpression::new("ORD-20[0-9]{2}-[0-9]{4,6}")?;
 
     // How long can matching ids get? Size your database column accordingly.
-    assert_eq!(pattern.get_length(), (Some(13), Some(15)));
+    assert_eq!(pattern.length(), (Some(13), Some(15)));
 
     // How many distinct ids does the pattern allow?
-    assert_eq!(pattern.get_cardinality(), Cardinality::Integer(111_000_000));
+    assert_eq!(pattern.cardinality(), Cardinality::Integer(111_000_000));
 
     // The AST is a plain enum: walk it to lint patterns, e.g. reject
     // validation rules that accept unboundedly long input.

@@ -18,17 +18,18 @@ impl FastAutomaton {
     }
 
     /// Determinizes the automaton and returns the result.
+    #[tracing::instrument(level = "debug", skip_all, fields(states = self.number_of_states(), deterministic = self.is_deterministic()))]
     pub fn determinize(&self) -> Result<Cow<'_, Self>, EngineError> {
         if self.deterministic {
             return Ok(Cow::Borrowed(self));
         }
         let execution_profile = ExecutionProfile::get();
 
-        let bases = self.get_spanning_bases()?;
+        let bases = self.spanning_bases()?;
 
-        let mut worklist = VecDeque::with_capacity(self.get_number_of_states());
+        let mut worklist = VecDeque::with_capacity(self.number_of_states());
 
-        let map_capacity = (self.get_number_of_states() as f64 / 0.75).ceil() as usize;
+        let map_capacity = (self.number_of_states() as f64 / 0.75).ceil() as usize;
         let mut new_states = AHashMap::with_capacity(map_capacity);
 
         let mut accept_states = BitSet::new();
@@ -98,7 +99,7 @@ mod tests {
     use crate::regex::RegularExpression;
     use regex_charclass::char::Char;
 
-    // Regression: subset construction iterates `get_spanning_bases`, which used
+    // Regression: subset construction iterates `spanning_bases`, which used
     // to omit the spanning set's "rest" range. A transition whose condition
     // lies in the rest range was therefore silently dropped, so determinizing a
     // non-deterministic automaton that uses the rest range produced a DFA with
@@ -110,7 +111,7 @@ mod tests {
             CharRange::new_from_range(c..=c)
         };
         let ss = SpanningSet::compute_spanning_set(&[rng('a'), rng('b')]);
-        let rest = ss.get_rest().clone();
+        let rest = ss.rest().clone();
 
         let mut a = FastAutomaton::new_empty();
         a.apply_new_spanning_set(&ss).unwrap();
@@ -153,11 +154,11 @@ mod tests {
             .unwrap()
             .to_automaton()
             .unwrap();
-        println!("States Before: {}", automaton.get_number_of_states());
+        println!("States Before: {}", automaton.number_of_states());
         let deterministic_automaton = automaton.determinize().unwrap();
         println!(
             "States After: {}",
-            deterministic_automaton.get_number_of_states()
+            deterministic_automaton.number_of_states()
         );
         assert!(deterministic_automaton.is_deterministic());
         //deterministic_automaton.print_dot();
