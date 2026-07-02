@@ -26,7 +26,7 @@ fn assert_regex(regex: &str) {
     assert!(determinized_automaton.subset(&automaton).unwrap());
     assert!(automaton.equivalent(&determinized_automaton).unwrap());
 
-    let regex_from_automaton = automaton.to_regex();
+    let regex_from_automaton = automaton.to_regex().unwrap();
     let automaton_from_regex = regex_from_automaton.to_automaton().unwrap();
     assert!(automaton.equivalent(&automaton_from_regex).unwrap());
 }

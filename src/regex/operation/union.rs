@@ -272,8 +272,8 @@ impl RegularExpression {
             if this_regex == that_regex {
                 if let (Some(this_max), Some(that_max)) = (this_max_opt, that_max_opt) {
                     if this_min <= that_max && that_min <= this_max
-                        || this_max + 1 == *that_min
-                        || that_max + 1 == *this_min
+                        || this_max.saturating_add(1) == *that_min
+                        || that_max.saturating_add(1) == *this_min
                     {
                         return this_regex.repeat(
                             cmp::min(*this_min, *that_min),

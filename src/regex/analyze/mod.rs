@@ -1,5 +1,3 @@
-use self::cardinality::Cardinality;
-
 use super::*;
 
 mod affixes;
@@ -19,9 +17,9 @@ impl RegularExpression {
             RegularExpression::Repetition(regex, min, max_opt) => {
                 let (min_length, max_length_opt) = regex.length();
                 if let Some(min_length) = min_length {
-                    let new_min_length = min * min_length;
+                    let new_min_length = min.saturating_mul(min_length);
                     let new_max_length = if let Some(max_length) = max_length_opt {
-                        max_opt.as_ref().map(|max| max * max_length)
+                        max_opt.as_ref().map(|max| max.saturating_mul(max_length))
                     } else {
                         None
                     };
@@ -33,18 +31,18 @@ impl RegularExpression {
                 }
             }
             RegularExpression::Concat(concat_vec) => {
-                let mut new_min_length = 0;
-                let mut new_max_length = Some(0);
+                let mut new_min_length: u32 = 0;
+                let mut new_max_length: Option<u32> = Some(0);
 
                 for concat_element in concat_vec {
                     let (min_length, max_length_opt) = concat_element.length();
 
                     if let Some(min_length) = min_length {
-                        new_min_length += min_length;
+                        new_min_length = new_min_length.saturating_add(min_length);
 
                         if let Some(new_max) = new_max_length {
                             if let Some(max_length) = max_length_opt {
-                                new_max_length = Some(new_max + max_length);
+                                new_max_length = Some(new_max.saturating_add(max_length));
                             } else {
                                 new_max_length = None;
                             }
@@ -62,11 +60,13 @@ impl RegularExpression {
                 }
                 let mut new_min_length = u32::MAX;
                 let mut new_max_length = Some(0);
+                let mut any_non_empty = false;
 
                 for alternation_element in alternation_vec {
                     let (min_length, max_length_opt) = alternation_element.length();
 
                     if let Some(min_length) = min_length {
+                        any_non_empty = true;
                         new_min_length = cmp::min(new_min_length, min_length);
 
                         if let Some(new_max) = new_max_length {
@@ -76,80 +76,15 @@ impl RegularExpression {
                                 new_max_length = None;
                             }
                         }
-                    } else {
-                        return (None, None);
                     }
+                }
+
+                if !any_non_empty {
+                    // Every branch was the empty language ⇒ empty language.
+                    return (None, None);
                 }
 
                 (Some(new_min_length), new_max_length)
-            }
-        }
-    }
-
-    /// Returns the cardinality of the regular expression (i.e., the number of possible matched strings).
-    pub fn cardinality(&self) -> Cardinality<u32> {
-        if self.is_empty() {
-            return Cardinality::Integer(0);
-        } else if self.is_total() {
-            return Cardinality::Infinite;
-        }
-        match self {
-            RegularExpression::Character(range) => Cardinality::Integer(range.get_cardinality()),
-            RegularExpression::Repetition(regular_expression, min, max_opt) => {
-                if let Some(max) = max_opt {
-                    let regex_cardinality = regular_expression.cardinality();
-                    if let Cardinality::Integer(cardinality) = regex_cardinality {
-                        let mut cardinality_temp: u32 = 0;
-                        for i in *min..*max + 1 {
-                            if let Some(pow) = cardinality.checked_pow(i) {
-                                if let Some(add) = cardinality_temp.checked_add(pow) {
-                                    cardinality_temp = add;
-                                } else {
-                                    return Cardinality::BigInteger;
-                                }
-                            } else {
-                                return Cardinality::BigInteger;
-                            }
-                        }
-                        Cardinality::Integer(cardinality_temp)
-                    } else {
-                        regex_cardinality
-                    }
-                } else {
-                    Cardinality::Infinite
-                }
-            }
-            RegularExpression::Concat(concat) => {
-                let mut cardinality: u32 = 1;
-                for concat_element in concat {
-                    let element_cardinality = concat_element.cardinality();
-                    if let Cardinality::Integer(element_cardinality) = element_cardinality {
-                        if let Some(mult) = cardinality.checked_mul(element_cardinality) {
-                            cardinality = mult;
-                        } else {
-                            return Cardinality::BigInteger;
-                        }
-                    } else {
-                        return element_cardinality;
-                    }
-                }
-                Cardinality::Integer(cardinality)
-            }
-            RegularExpression::Alternation(alternation) => {
-                let mut cardinality: u32 = 0;
-                for alternation_element in alternation {
-                    let element_cardinality = alternation_element.cardinality();
-                    if let Cardinality::Integer(element_cardinality) = element_cardinality {
-                        if let Some(add) = cardinality.checked_add(element_cardinality) {
-                            cardinality = add;
-                        } else {
-                            return Cardinality::BigInteger;
-                        }
-                    } else {
-                        return element_cardinality;
-                    }
-                }
-                Cardinality::Integer(cardinality)
             }
         }
     }
@@ -200,41 +135,5 @@ mod tests {
         let (min_automaton_opt, max_automaton_opt) = automaton.length();
 
         assert_eq!((min_automaton_opt, max_automaton_opt), (min, max_opt));
-    }
-
-    #[test]
-    fn test_cardinality() -> Result<(), String> {
-        assert_cardinality(".{1,1000}");
-        assert_cardinality("toto");
-        assert_cardinality(".");
-        assert_cardinality(".{2,3}");
-        assert_cardinality("q(ab|ca|abc)x");
-        assert_cardinality("q(ab|ca|ab|abc)x");
-        assert_cardinality(".*");
-        assert_cardinality(".?");
-        assert_cardinality("a*(aad|ads|a)abc.*def.*ghi");
-        assert_cardinality("(at?)");
-        assert_cardinality("(ot){3,4}");
-        assert_cardinality("(t){1,3}");
-        assert_cardinality("(ot?d){1,4}");
-        assert_cardinality(
-            "((aad|ads|a)*abc.*def.*uif(aad|ads|x)*abc.*oxs.*def(aad|ads|ax)*abc.*def.*ksd|q){1,100}",
-        );
-        Ok(())
-    }
-
-    fn assert_cardinality(regex: &str) {
-        println!("{}", regex);
-        let regex = RegularExpression::new(regex).unwrap();
-
-        let cardinality = regex.cardinality();
-
-        let automaton = regex.to_automaton().unwrap();
-        // `cardinality` returns `Infinite` for cyclic automata without
-        // determinizing and only determinizes the finite (acyclic)
-        // non-deterministic ones internally.
-        let expected = automaton.cardinality().unwrap();
-
-        assert_eq!(expected, cardinality);
     }
 }

@@ -35,7 +35,7 @@ fn measure_state_elimination_quality() {
         let automaton = input.to_automaton().unwrap();
 
         // NFA-derived conversion.
-        let out_nfa = automaton.to_regex();
+        let out_nfa = automaton.to_regex().unwrap();
         assert!(
             automaton
                 .equivalent(&out_nfa.to_automaton().unwrap())
@@ -47,7 +47,7 @@ fn measure_state_elimination_quality() {
 
         // DFA-derived conversion.
         let dfa = automaton.determinize().unwrap();
-        let out_dfa = dfa.to_regex();
+        let out_dfa = dfa.to_regex().unwrap();
         assert!(
             dfa.equivalent(&out_dfa.to_automaton().unwrap()).unwrap(),
             "DFA round-trip mismatch for {line:?} -> {out_dfa}"

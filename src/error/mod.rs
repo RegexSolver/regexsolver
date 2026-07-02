@@ -21,6 +21,15 @@ pub enum EngineError {
     /// The operation requires a deterministic automaton, and implicit
     /// determinization is disabled by the execution profile.
     DeterministicAutomatonRequired,
+    /// The pattern uses a regex feature the engine cannot represent (an
+    /// unsupported anchor/boundary position, or inline flags). The string
+    /// describes the specific feature.
+    UnsupportedRegexFeature(String),
+    /// A directly-constructed [`RegularExpression`](crate::regex::RegularExpression)
+    /// tree nests deeper than the engine converts safely (the payload is the
+    /// limit). Parsed patterns never hit this; it only guards against
+    /// stack-overflowing on pathologically deep hand-built trees.
+    RegexTooDeeplyNested(usize),
 }
 
 impl fmt::Display for EngineError {
@@ -47,6 +56,13 @@ impl fmt::Display for EngineError {
             EngineError::DeterministicAutomatonRequired => write!(
                 f,
                 "The operation requires a deterministic automaton, and implicit determinization is disabled by the execution profile."
+            ),
+            EngineError::UnsupportedRegexFeature(feature) => {
+                write!(f, "Unsupported regex feature: {feature}.")
+            }
+            EngineError::RegexTooDeeplyNested(limit) => write!(
+                f,
+                "The regular expression is nested more than {limit} levels deep."
             ),
         }
     }

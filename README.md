@@ -15,7 +15,7 @@ let b: Term = ".*xy".parse()?;
 
 // Which strings match BOTH patterns? Get the answer as a regex:
 let both = a.intersection([&b])?;
-assert_eq!(both.to_pattern(), "(ab|xy)xy");
+assert_eq!(both.to_pattern()?, "(ab|xy)xy");
 
 // Test a concrete string against the result (matching is anchored):
 assert!(both.matches("abxy")?);
@@ -34,8 +34,8 @@ assert_eq!(both.generate_strings(2, 0)?, ["xyxy", "abxy"]);
 
 Under the hood, every pattern compiles to a finite automaton:
 
-<p align="center"><img src="https://raw.githubusercontent.com/RegexSolver/regexsolver/refs/heads/v1/assets/automaton.svg" alt="the minimal automaton of (ab|cd)*"/></p>
-<p align="center"><sub><code>(ab|cd)*</code> compiled to its minimal automaton, generated with this library's <code>to_dot()</code></sub></p>
+<p align="center"><img src="https://raw.githubusercontent.com/RegexSolver/regexsolver/refs/heads/v1/assets/automaton.svg" alt="the minimal automaton for text containing abc then def"/></p>
+<p align="center"><sub>The minimal automaton for <code>.*abc.*def.*</code> (text containing <code>abc</code> then <code>def</code>), rendered from this library's <code>to_dot()</code>.</sub></p>
 
 ## Try it
 
@@ -71,10 +71,12 @@ RegexSolver implements **pure regular languages**, which differs from typical re
 The rest follows from regular-language theory:
 
 - **Backreferences** (`\1`, `\2`, ...) go beyond regular languages and return an error, as do **lookahead/lookbehind** assertions (`(?=...)`, `(?<=...)`).
+- **Anchors and word boundaries**: since matching is already full-string, a leading `^`/`\A` and a trailing `$`/`\z` are accepted as redundant no-ops. Anchors anywhere else, and word boundaries (`\b`, `\B`), would constrain matching in ways a pure regular language can't express, so they return `EngineError::UnsupportedRegexFeature` rather than silently changing the language.
+- **Inline flags** (`(?i)`, `(?m)`, `(?s)`, `(?x)`) return `EngineError::UnsupportedRegexFeature`: the engine matches character ranges uniformly and can't honor them, and silently dropping them would diverge from standard regex semantics (e.g. `(?i)abc` would no longer match `ABC`).
 - **All quantifiers are greedy**: ungreedy markers (`*?`, `+?`, `??`) are ignored as *sets of strings*, `a*` and `a*?` are the same language.
 - **The empty language** (matches no string at all) is written `[]` (empty character class). This is distinct from the empty string `""`.
 
-RegexSolver is based on the [regex-syntax](https://docs.rs/regex-syntax/0.8.5/regex_syntax/) library for parsing patterns. Unsupported features are parsed but ignored; they do not raise an error unless they affect semantics that cannot be represented (e.g., backreferences). This allows for some flexibility in writing regular expressions, but it is important to be aware of the unsupported features to avoid unexpected behavior.
+RegexSolver is based on the [regex-syntax](https://docs.rs/regex-syntax/0.8.5/regex_syntax/) library for parsing patterns. Features that don't affect the language as a set of strings (such as ungreedy markers) are accepted and ignored; features that would change matching in a way the engine can't represent (backreferences, lookaround, inline flags, and unsupported anchor/boundary positions) return an `EngineError` instead of being applied incorrectly.
 
 ## A tour of the API
 
@@ -116,7 +118,8 @@ automaton.add_transition_from_range(0, s1, &a_to_c)?;
 automaton.add_transition_from_range(s1, s1, &digits)?;
 
 assert!(automaton.is_match("b42"));
-assert_eq!(automaton.to_regex().to_string(), "[a-c][0-9]*");
+assert!(!automaton.is_match("4b"));
+assert_eq!(automaton.to_regex()?.to_string(), "[a-c][0-9]*");
 ```
 
 Internally, transition labels are bitvector `Condition`s over the automaton's `SpanningSet` of disjoint character ranges, that is what makes label union/intersection/complement O(1) ([article](https://alexvbrdn.me/post/optimizing-transition-conditions-automaton-representation)). `add_transition_from_range` maintains that representation for you; for full manual control over conditions and spanning sets, see the [`add_transition` documentation](https://docs.rs/regexsolver/latest/regexsolver/fast_automaton/struct.FastAutomaton.html#method.add_transition).
@@ -128,7 +131,6 @@ Everything `Term` does is also available directly on [`FastAutomaton`](https://d
 `RegularExpression` is the parsed pattern itself: a plain AST enum (`Character` / `Repetition` / `Concat` / `Alternation`) you can analyze and walk directly. Set operations like intersection and difference live on `FastAutomaton` (or, more conveniently, on `Term`); convert with `to_automaton()`.
 
 ```rust
-use regexsolver::cardinality::Cardinality;
 use regexsolver::regex::RegularExpression;
 
 // A validation pattern for an order id, e.g. "ORD-2024-12345".
@@ -136,9 +138,6 @@ let pattern = RegularExpression::new("ORD-20[0-9]{2}-[0-9]{4,6}")?;
 
 // How long can matching ids get? Size your database column accordingly.
 assert_eq!(pattern.length(), (Some(13), Some(15)));
-
-// How many distinct ids does the pattern allow?
-assert_eq!(pattern.cardinality(), Cardinality::Integer(111_000_000));
 
 // The AST is a plain enum: walk it to lint patterns, e.g. reject
 // validation rules that accept unboundedly long input.
@@ -204,16 +203,21 @@ execution_profile.run(|| {
 `FastAutomaton` operations that require a deterministic automaton (`minimize`, `complement`, `difference`, `equivalent`, `subset`, `cardinality`, ...) determinize a non-deterministic input on their own by default. Since subset construction can blow up exponentially, this can be disabled: those operations then return `EngineError::DeterministicAutomatonRequired` instead, and determinization only happens through an explicit `determinize()` call. Deterministic inputs are always accepted, and the whole `Term` API keeps working since that layer manages the underlying representation itself, so its determinizations count as explicit.
 
 ```rust
+use regexsolver::Term;
 use regexsolver::execution_profile::ExecutionProfileBuilder;
 use regexsolver::error::EngineError;
+
+// Any non-deterministic FastAutomaton; ".*abc" compiles to one.
+let nfa = Term::from_pattern(".*abc")?.to_automaton()?.into_owned();
+assert!(!nfa.is_deterministic());
 
 let execution_profile = ExecutionProfileBuilder::new()
 	.implicit_determinization(false) // default is true
 	.build();
 
-// `nfa` is any non-deterministic FastAutomaton
 execution_profile.run(|| {
-	assert_eq!(EngineError::DeterministicAutomatonRequired, nfa.clone().minimize().unwrap_err());
+	let mut cannot_minimize = nfa.clone();
+	assert_eq!(EngineError::DeterministicAutomatonRequired, cannot_minimize.minimize().unwrap_err());
 
 	// Determinizing explicitly is always allowed.
 	let mut dfa = nfa.determinize().unwrap().into_owned();

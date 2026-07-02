@@ -2,9 +2,9 @@ name: Rust
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "v1"]
   pull_request:
-    branches: ["main"]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -16,6 +16,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - name: Format
         run: cargo fmt --all -- --check
       - name: Build
@@ -23,13 +26,23 @@ jobs:
       - name: Test & Lint
         run: |
           cargo test
-          cargo clippy -- -D warnings
+          cargo clippy --all-targets -- -D warnings
       - name: Test & Lint (no default features)
         run: |
           cargo test --no-default-features
-          cargo clippy --no-default-features -- -D warnings
+          cargo clippy --no-default-features --all-targets -- -D warnings
       - name: Docs
         run: cargo doc --no-deps
+
+  # Keep the declared `rust-version` (MSRV) honest.
+  msrv:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - name: Check on MSRV
+        run: cargo check --all-features
 
   audit:
     runs-on: ubuntu-latest

@@ -1,18 +1,21 @@
 use super::*;
 
 impl Gnfa {
-    pub(super) fn convert(&mut self) -> RegularExpression {
+    pub(super) fn convert(&mut self) -> Result<RegularExpression, EngineError> {
         if self.empty {
-            return RegularExpression::new_empty();
+            return Ok(RegularExpression::new_empty());
         }
 
+        let execution_profile = crate::execution_profile::ExecutionProfile::get();
         while let Some(state) = self.get_next_state_to_eliminate() {
+            execution_profile.assert_not_timed_out()?;
             self.eliminate_state(state);
         }
 
-        self.get_transition(self.start_state, self.accept_state)
+        Ok(self
+            .get_transition(self.start_state, self.accept_state)
             .cloned()
-            .unwrap_or(RegularExpression::new_empty_string())
+            .unwrap_or(RegularExpression::new_empty_string()))
     }
 
     fn get_next_state_to_eliminate(&self) -> Option<usize> {

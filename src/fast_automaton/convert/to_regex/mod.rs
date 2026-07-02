@@ -5,7 +5,7 @@ mod state_elimination;
 impl FastAutomaton {
     /// Converts the automaton to a [`RegularExpression`].
     #[tracing::instrument(level = "debug", skip_all, fields(states = self.number_of_states()))]
-    pub fn to_regex(&self) -> RegularExpression {
+    pub fn to_regex(&self) -> Result<RegularExpression, EngineError> {
         state_elimination::convert_to_regex(self)
     }
 }
@@ -63,7 +63,7 @@ mod tests {
         println!("IN                     : {}", input_regex);
         let input_automaton = input_regex.to_automaton().unwrap();
 
-        let output_regex = input_automaton.to_regex();
+        let output_regex = input_automaton.to_regex().unwrap();
         println!("OUT (non deterministic): {}", output_regex);
         let output_automaton = output_regex.to_automaton().unwrap();
 
@@ -72,7 +72,7 @@ mod tests {
         let input_automaton = input_automaton.determinize().unwrap();
         //input_automaton.to_dot();
 
-        let output_regex = input_automaton.to_regex();
+        let output_regex = input_automaton.to_regex().unwrap();
         println!("OUT (deterministic)    : {}", output_regex);
         let output_automaton = output_regex.to_automaton().unwrap();
 
@@ -95,7 +95,7 @@ mod tests {
 
         result.print_dot();
 
-        let output_regex = result.to_regex();
+        let output_regex = result.to_regex().unwrap();
         assert_eq!("cd", output_regex.to_string());
 
         Ok(())
@@ -116,7 +116,7 @@ mod tests {
 
         result.print_dot();
 
-        let output_regex = result.to_regex();
+        let output_regex = result.to_regex().unwrap();
         assert_eq!("", output_regex.to_string());
 
         Ok(())
@@ -137,7 +137,7 @@ mod tests {
         let result = automaton1.difference(&automaton2).unwrap();
         result.print_dot();
 
-        let result = result.to_regex();
+        let result = result.to_regex().unwrap();
 
         assert_eq!("x(x{3})*x?", result.to_string());
 
@@ -157,7 +157,7 @@ mod tests {
 
         let result = automaton1.intersection(&automaton2).unwrap();
 
-        let result = result.to_regex();
+        let result = result.to_regex().unwrap();
 
         assert_eq!(".*(abc.*def|def.*abc).*", result.to_string());
 
@@ -174,7 +174,7 @@ mod tests {
 
         automaton.complement().unwrap();
 
-        let result = format!("^{}$", automaton.to_regex());
+        let result = format!("^{}$", automaton.to_regex().unwrap());
 
         println!("{result}");
 

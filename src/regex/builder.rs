@@ -18,49 +18,59 @@ impl RegularExpression {
         if pattern == "[]" {
             return Ok(RegularExpression::new_empty());
         }
+        // Inline flags such as `(?i)` change matching semantics the engine
+        // cannot represent (it operates uniformly over character ranges).
+        // Silently ignoring them would diverge from every mainstream engine
+        // (e.g. `(?i)abc` would not match `ABC`), so they are rejected instead.
+        Self::reject_inline_flags(pattern)?;
         match ParserBuilder::new()
             .dot_matches_new_line(true)
             .build()
-            .parse(&Self::remove_flags(pattern))
+            .parse(pattern)
         {
-            Ok(hir) => Self::convert_to_regex(&hir, simplify),
+            // The whole pattern is matched against the full input (anchored),
+            // so a leading start-of-text anchor and a trailing end-of-text
+            // anchor are accepted as redundant no-ops; anchors elsewhere and
+            // word boundaries are rejected (see `convert_look`).
+            Ok(hir) => Self::convert_to_regex(&hir, simplify, true, true),
             Err(err) => Err(EngineError::RegexSyntaxError(err.to_string())),
         }
     }
 
-    /// Strips inline flag groups like `(?i)`, `(?m-s)` or `(?-s)` from the
-    /// pattern: the engine treats all characters uniformly, so the flags are
-    /// meaningless here. Equivalent to deleting every match of
-    /// `\(\?[imsx]*-?[imsx]*\)`; anything else (including non-capturing
-    /// groups `(?:...)`) is left untouched.
-    fn remove_flags(regex: &str) -> String {
-        let bytes = regex.as_bytes();
-        let mut result = String::with_capacity(regex.len());
-        let mut i = 0;
-        while i < bytes.len() {
-            if bytes[i] == b'(' && i + 1 < bytes.len() && bytes[i + 1] == b'?' {
-                let mut j = i + 2;
-                while j < bytes.len() && matches!(bytes[j], b'i' | b'm' | b's' | b'x') {
-                    j += 1;
-                }
-                if j < bytes.len() && bytes[j] == b'-' {
-                    j += 1;
-                    while j < bytes.len() && matches!(bytes[j], b'i' | b'm' | b's' | b'x') {
-                        j += 1;
-                    }
-                }
-                if j < bytes.len() && bytes[j] == b')' {
-                    // a flag group: skip it entirely
-                    i = j + 1;
-                    continue;
-                }
-            }
-            // not a flag group: copy the whole character (UTF-8 safe)
-            let char_len = regex[i..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
-            result.push_str(&regex[i..i + char_len]);
-            i += char_len;
+    /// Rejects patterns that set inline flags, either as a `(?flags)` directive
+    /// or a `(?flags:...)` group. Parsing to the AST (rather than scanning the
+    /// string) means flag-lookalikes inside character classes (e.g. `[a(?i)]`)
+    /// are correctly *not* treated as flags.
+    fn reject_inline_flags(pattern: &str) -> Result<(), EngineError> {
+        use regex_syntax::ast::parse::Parser;
+
+        let ast = Parser::new()
+            .parse(pattern)
+            .map_err(|err| EngineError::RegexSyntaxError(err.to_string()))?;
+        if Self::ast_sets_flags(&ast) {
+            return Err(EngineError::UnsupportedRegexFeature(
+                "inline flags such as (?i), (?m), (?s) and (?x) are not supported".to_string(),
+            ));
         }
-        result
+        Ok(())
+    }
+
+    /// Returns `true` if the AST sets any inline flag. Non-capturing groups
+    /// without flags (`(?:...)`) are allowed.
+    fn ast_sets_flags(ast: &regex_syntax::ast::Ast) -> bool {
+        use regex_syntax::ast::{Ast, GroupKind};
+
+        match ast {
+            Ast::Flags(_) => true,
+            Ast::Group(group) => {
+                matches!(&group.kind, GroupKind::NonCapturing(flags) if !flags.items.is_empty())
+                    || Self::ast_sets_flags(&group.ast)
+            }
+            Ast::Repetition(repetition) => Self::ast_sets_flags(&repetition.ast),
+            Ast::Alternation(alternation) => alternation.asts.iter().any(Self::ast_sets_flags),
+            Ast::Concat(concat) => concat.asts.iter().any(Self::ast_sets_flags),
+            _ => false,
+        }
     }
 
     /// Creates a regular expression that matches all possible strings.
@@ -82,7 +92,18 @@ impl RegularExpression {
         RegularExpression::Concat(VecDeque::new())
     }
 
-    fn convert_to_regex(hir: &Hir, simplify: bool) -> Result<Self, EngineError> {
+    /// Converts a parsed HIR node into a [`RegularExpression`].
+    ///
+    /// `at_start`/`at_end` track whether this node sits at the very start/end
+    /// of the overall match (nothing can be consumed before/after it). They
+    /// govern which anchors are accepted as redundant no-ops; see
+    /// [`convert_look`](Self::convert_look).
+    fn convert_to_regex(
+        hir: &Hir,
+        simplify: bool,
+        at_start: bool,
+        at_end: bool,
+    ) -> Result<Self, EngineError> {
         match hir.kind() {
             HirKind::Empty => Ok(RegularExpression::new_empty_string()),
             HirKind::Literal(literal) => {
@@ -111,22 +132,33 @@ impl RegularExpression {
                     Ok(RegularExpression::Character(range))
                 }
             },
-            HirKind::Look(_) => Ok(RegularExpression::new_empty_string()),
+            HirKind::Look(look) => Self::convert_look(look, at_start, at_end),
             HirKind::Repetition(repetition) => {
                 let (min, max) = (repetition.min, repetition.max);
-                let regex = Self::convert_to_regex(&repetition.sub, simplify)?;
+                // The body can repeat, so it is not at the overall boundary in
+                // general; an anchor inside it is rejected.
+                let regex = Self::convert_to_regex(&repetition.sub, simplify, false, false)?;
                 Ok(if simplify {
                     regex.repeat(min, max)
                 } else {
                     RegularExpression::Repetition(Box::new(regex), min, max)
                 })
             }
-            HirKind::Capture(capture) => Self::convert_to_regex(&capture.sub, simplify),
+            // A capture group does not consume input, so it inherits the
+            // surrounding boundary context unchanged.
+            HirKind::Capture(capture) => {
+                Self::convert_to_regex(&capture.sub, simplify, at_start, at_end)
+            }
             HirKind::Concat(concat) => {
-                let mut concat_regex =
-                    RegularExpression::Concat(VecDeque::with_capacity(concat.len()));
-                for c in concat {
-                    let concat_value = Self::convert_to_regex(c, simplify)?;
+                let len = concat.len();
+                let mut concat_regex = RegularExpression::Concat(VecDeque::with_capacity(len));
+                for (i, c) in concat.iter().enumerate() {
+                    // Only the first element can be at the overall start, and
+                    // only the last at the overall end.
+                    let child_at_start = at_start && i == 0;
+                    let child_at_end = at_end && i + 1 == len;
+                    let concat_value =
+                        Self::convert_to_regex(c, simplify, child_at_start, child_at_end)?;
                     if simplify {
                         concat_regex = concat_regex.concat(&concat_value, true);
                     } else if let RegularExpression::Concat(values) = concat_regex {
@@ -141,7 +173,9 @@ impl RegularExpression {
                 let mut alternation_regex =
                     RegularExpression::Alternation(Vec::with_capacity(alternation.len()));
                 for a in alternation {
-                    let alternation_value = Self::convert_to_regex(a, simplify)?;
+                    // Each branch occupies the alternation's own position, so
+                    // it inherits the boundary context unchanged.
+                    let alternation_value = Self::convert_to_regex(a, simplify, at_start, at_end)?;
                     if simplify {
                         alternation_regex = alternation_regex.union(&alternation_value);
                     } else if let RegularExpression::Alternation(values) = alternation_regex {
@@ -152,6 +186,46 @@ impl RegularExpression {
                 }
                 Ok(alternation_regex)
             }
+        }
+    }
+
+    /// Interprets a look-around assertion under the engine's full-string
+    /// (anchored) matching model.
+    ///
+    /// A start-of-text anchor (`^`, `\A`) at the very start of the match and an
+    /// end-of-text anchor (`$`, `\z`) at the very end are redundant, so they
+    /// are accepted as the empty string. Anchors anywhere else would constrain
+    /// matching in a way the engine cannot represent (e.g. `ab$cd`), and word
+    /// boundaries (`\b`, `\B`) never can, so both are rejected rather than
+    /// silently changing the language.
+    fn convert_look(look: &Look, at_start: bool, at_end: bool) -> Result<Self, EngineError> {
+        match look {
+            Look::Start | Look::StartLF | Look::StartCRLF => {
+                if at_start {
+                    Ok(RegularExpression::new_empty_string())
+                } else {
+                    Err(EngineError::UnsupportedRegexFeature(
+                        "a start-of-text anchor (^ or \\A) is only supported at the start of the \
+                         pattern; matching is implicitly anchored to the full string"
+                            .to_string(),
+                    ))
+                }
+            }
+            Look::End | Look::EndLF | Look::EndCRLF => {
+                if at_end {
+                    Ok(RegularExpression::new_empty_string())
+                } else {
+                    Err(EngineError::UnsupportedRegexFeature(
+                        "an end-of-text anchor ($ or \\z) is only supported at the end of the \
+                         pattern; matching is implicitly anchored to the full string"
+                            .to_string(),
+                    ))
+                }
+            }
+            _ => Err(EngineError::UnsupportedRegexFeature(
+                "word boundaries (\\b, \\B) and look-around assertions are not supported"
+                    .to_string(),
+            )),
         }
     }
 
@@ -180,22 +254,89 @@ impl RegularExpression {
 mod tests {
     use crate::regex::RegularExpression;
 
-    // The hand-rolled flag stripper must delete exactly the matches of
-    // `\(\?[imsx]*-?[imsx]*\)` (the regex it replaced) and nothing else.
+    // Inline flags are rejected (the engine cannot honor them); non-capturing
+    // groups `(?:...)` are still accepted, and flag-lookalikes inside a
+    // character class are not mistaken for flags.
     #[test]
-    fn remove_flags_strips_flag_groups_only() {
-        let strip = RegularExpression::remove_flags;
+    fn inline_flags_are_rejected() {
+        use crate::error::EngineError;
 
-        assert_eq!(strip("(?i)a"), "a");
-        assert_eq!(strip("a(?m-s)b"), "ab");
-        assert_eq!(strip("a(?-s)b"), "ab");
-        assert_eq!(strip("(?imsx)(?)a(?i-)"), "a");
+        for pattern in ["(?i)a", "a(?m-s)b", "a(?-s)b", "(?i:abc)", "(?x) a b c"] {
+            assert!(
+                matches!(
+                    RegularExpression::new(pattern),
+                    Err(EngineError::UnsupportedRegexFeature(_))
+                ),
+                "pattern {pattern:?} with inline flags should be rejected"
+            );
+        }
 
-        // Non-flag constructs are untouched.
-        assert_eq!(strip("(?:ab|c)d"), "(?:ab|c)d");
-        assert_eq!(strip("(a?)b"), "(a?)b");
-        assert_eq!(strip("a(?i-s"), "a(?i-s"); // unterminated: not a flag group
-        assert_eq!(strip("héllo(?i)é"), "hélloé"); // multi-byte safe
+        // Non-capturing groups without flags are fine.
+        assert!(RegularExpression::new("(?:ab|c)d").is_ok());
+        // `(?i)` inside a character class is a set of literal members, not a
+        // flag directive, so it must not be rejected.
+        assert!(RegularExpression::new("[a(?i)]").is_ok());
+    }
+
+    // Anchors are accepted only where they are redundant under full-string
+    // matching (leading `^`, trailing `$`); elsewhere they and word
+    // boundaries are rejected rather than silently changing the language.
+    #[test]
+    fn anchors_and_boundaries() {
+        use crate::error::EngineError;
+
+        // Redundant anchors are no-ops: `^abc$` == `abc`.
+        let anchored = RegularExpression::new("^abc$").unwrap();
+        let plain = RegularExpression::new("abc").unwrap();
+        assert!(
+            anchored
+                .to_automaton()
+                .unwrap()
+                .equivalent(&plain.to_automaton().unwrap())
+                .unwrap()
+        );
+        assert!(RegularExpression::new("^abc").is_ok());
+        assert!(RegularExpression::new("abc$").is_ok());
+        // Alternation branches carry the boundary context.
+        assert!(RegularExpression::new("^a|b$").is_ok());
+
+        // Mid-pattern anchors and word boundaries are rejected.
+        for pattern in ["ab$cd", "a^b", r"a\bc", r"a\Bc", r"a(^b)c"] {
+            assert!(
+                matches!(
+                    RegularExpression::new(pattern),
+                    Err(EngineError::UnsupportedRegexFeature(_))
+                ),
+                "pattern {pattern:?} should be rejected"
+            );
+        }
+    }
+
+    // A hand-built tree nested past `MAX_NESTING_DEPTH` is rejected at the
+    // conversion boundary instead of overflowing the stack.
+    #[test]
+    fn to_automaton_rejects_too_deeply_nested() {
+        use crate::error::EngineError;
+        use regex_charclass::char::Char;
+
+        let mut regex = RegularExpression::Character(crate::CharRange::new_from_range(
+            Char::new('a')..=Char::new('a'),
+        ));
+        for _ in 0..(RegularExpression::MAX_NESTING_DEPTH + 10) {
+            regex = RegularExpression::Repetition(Box::new(regex), 1, Some(1));
+        }
+        assert!(matches!(
+            regex.to_automaton(),
+            Err(EngineError::RegexTooDeeplyNested(_))
+        ));
+
+        // A shallow tree still converts fine.
+        assert!(
+            RegularExpression::new("(a(b(c)))")
+                .unwrap()
+                .to_automaton()
+                .is_ok()
+        );
     }
 
     // The variants are freely constructible (open enum); invalid bounds are
@@ -375,17 +516,9 @@ mod tests {
         assert!(automaton.is_match("\n"));
         assert!(automaton.is_match("\r"));
 
-        let regex_parsed = RegularExpression::new("(?i)a").unwrap();
-        let automaton = regex_parsed.to_automaton().unwrap();
-
-        assert!(automaton.is_match("a"));
-        assert!(!automaton.is_match("A"));
-
-        let regex_parsed = RegularExpression::new("a(?i)a(?-s).").unwrap();
-        let automaton = regex_parsed.to_automaton().unwrap();
-
-        assert!(automaton.is_match("aa\n"));
-        assert!(!automaton.is_match("aAb"));
+        // Inline flags are rejected rather than silently stripped.
+        assert!(RegularExpression::new("(?i)a").is_err());
+        assert!(RegularExpression::new("a(?i)a(?-s).").is_err());
 
         assert!(RegularExpression::new("\\1").is_err());
 

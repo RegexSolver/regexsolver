@@ -16,10 +16,14 @@ pub type State = usize;
 
 mod analyze;
 mod builder;
+/// Transition labels: the bitvector [`Condition`] type over an automaton's
+/// spanning set of disjoint character ranges.
 pub mod condition;
 mod convert;
 mod generate;
 mod operation;
+/// The [`SpanningSet`]: an automaton's partition of the alphabet into disjoint
+/// character ranges, over which transition conditions are defined.
 pub mod spanning_set;
 
 /// Represents a finite-state automaton.
@@ -367,5 +371,48 @@ mod tests {
         assert_eq!(a.transitions_from(999).count(), 0);
         assert!(a.transitions_from_vec(999).is_empty());
         assert!(a.direct_states_vec(999).is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "does not exist")]
+    fn remove_states_panics_clearly_on_out_of_range() {
+        let mut a = FastAutomaton::new_total();
+        let mut states = IntSet::default();
+        states.insert(999);
+        a.remove_states(&states);
+    }
+
+    #[test]
+    #[should_panic(expected = "does not exist")]
+    fn remove_states_panics_clearly_on_tombstoned_id() {
+        let mut a = FastAutomaton::new_empty();
+        let s1 = a.new_state();
+        let s2 = a.new_state();
+        // Remove the trailing state so it becomes a tombstone.
+        let mut first = IntSet::default();
+        first.insert(s2);
+        a.remove_states(&first);
+        // Removing it again must fail cleanly, not panic on an OOB index.
+        let mut again = IntSet::default();
+        again.insert(s2);
+        a.remove_states(&again);
+        let _ = s1;
+    }
+
+    // A valid multi-state removal (including a trailing id) still works.
+    #[test]
+    fn remove_states_removes_valid_ids() {
+        let mut a = FastAutomaton::new_empty();
+        let s1 = a.new_state();
+        let s2 = a.new_state();
+        let s3 = a.new_state();
+        let mut states = IntSet::default();
+        states.insert(s1);
+        states.insert(s3); // trailing
+        a.remove_states(&states);
+        assert!(a.has_state(0));
+        assert!(a.has_state(s2));
+        assert!(!a.has_state(s1));
+        assert!(!a.has_state(s3));
     }
 }

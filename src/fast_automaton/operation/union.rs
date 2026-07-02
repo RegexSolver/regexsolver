@@ -187,8 +187,9 @@ impl FastAutomaton {
      * - the accept states can't be merged if they have outgoing edges
      */
     pub(crate) fn union_mut(&mut self, other: &FastAutomaton) -> Result<(), EngineError> {
-        ExecutionProfile::get()
-            .assert_max_number_of_states(self.union_state_count_heuristic(other))?;
+        let execution_profile = ExecutionProfile::get();
+        execution_profile.assert_not_timed_out()?;
+        execution_profile.assert_max_number_of_states(self.union_state_count_heuristic(other))?;
 
         if other.is_empty() || self.is_total() {
             return Ok(());

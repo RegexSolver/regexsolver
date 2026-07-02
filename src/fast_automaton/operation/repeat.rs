@@ -13,7 +13,9 @@ impl FastAutomaton {
     }
 
     pub(crate) fn repeat_mut(&mut self, min: u32, max_opt: Option<u32>) -> Result<(), EngineError> {
-        ExecutionProfile::get()
+        let execution_profile = ExecutionProfile::get();
+        execution_profile.assert_not_timed_out()?;
+        execution_profile
             .assert_max_number_of_states(self.repeat_state_count_heuristic(min, max_opt))?;
 
         if let Some(max) = max_opt

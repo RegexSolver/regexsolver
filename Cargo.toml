@@ -2,13 +2,17 @@
 name = "regexsolver"
 version = "1.0.0"
 edition = "2024"
+rust-version = "1.88"
 authors = ["Alexandre van Beurden"]
 repository = "https://github.com/RegexSolver/regexsolver"
+homepage = "https://github.com/RegexSolver/regexsolver"
+documentation = "https://docs.rs/regexsolver"
 license = "MIT"
 keywords = ["automaton", "intersection", "union", "difference", "regex"]
 categories = ["text-processing", "mathematics", "algorithms"]
 description = "High-performance Rust library for building, combining, and analyzing regular expressions and finite automata"
 readme = "README.md"
+exclude = ["/assets"]
 
 [dependencies]
 tracing = "0.1"

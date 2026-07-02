@@ -61,12 +61,10 @@ impl FastAutomaton {
                     if !relevant.contains(to_state) {
                         continue;
                     }
-                    if let Some(distance) = current_distance.checked_mul(
-                        condition
-                            .cardinality(&self.spanning_set)
-                            .expect("It should be possible to get the cardinality of a condition."),
-                    ) && let Some(new_distance) =
-                        distances.get(to_state).unwrap_or(&0).checked_add(distance)
+                    let condition_cardinality = condition.cardinality(&self.spanning_set)?;
+                    if let Some(distance) = current_distance.checked_mul(condition_cardinality)
+                        && let Some(new_distance) =
+                            distances.get(to_state).unwrap_or(&0).checked_add(distance)
                     {
                         distances.insert(*to_state, new_distance);
                         continue;

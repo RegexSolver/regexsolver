@@ -1,3 +1,53 @@
+//! RegexSolver treats regular expressions as the **sets of strings they
+//! match**, so you can intersect, subtract, compare, complement, repeat, and
+//! enumerate them — and convert the result back into a regex pattern.
+//!
+//! # Quick start
+//!
+//! [`Term`] is the main entry point: it wraps either a [`RegularExpression`]
+//! or a [`FastAutomaton`] and picks the cheaper representation for each
+//! operation.
+//!
+//! ```
+//! use regexsolver::Term;
+//!
+//! let a: Term = "(ab|xy){2}".parse()?;
+//! let b: Term = ".*xy".parse()?;
+//!
+//! // Which strings match BOTH patterns? Get the answer back as a regex:
+//! let both = a.intersection([&b])?;
+//! assert_eq!(both.to_pattern()?, "(ab|xy)xy");
+//!
+//! // Matching is anchored (whole-string):
+//! assert!(both.matches("abxy")?);
+//! # Ok::<(), regexsolver::error::EngineError>(())
+//! ```
+//!
+//! # Semantics
+//!
+//! RegexSolver implements **pure regular languages**, which differs from a
+//! typical regex engine in two ways: matching is always **anchored** (a pattern
+//! describes whole strings, so `abc` matches only `"abc"`), and `.` matches any
+//! character including line feed. Constructs that a regular language can't
+//! represent — backreferences, look-around, inline flags, and anchors/word
+//! boundaries in non-redundant positions — return an [`EngineError`] rather
+//! than being applied incorrectly. See the crate README for the full list.
+//!
+//! # Bounding execution
+//!
+//! Automaton operations can blow up on adversarial input, so a thread-local
+//! [`ExecutionProfile`] can cap runtime and
+//! state count and control implicit determinization; hitting a limit returns a
+//! specific [`EngineError`] instead of hanging.
+//!
+//! # Modules
+//!
+//! Most users only need [`Term`]. The lower-level building blocks live in
+//! [`regex`] (the parsed-pattern AST), [`fast_automaton`] (finite automata),
+//! [`execution_profile`] (resource limits), [`cardinality`], and [`error`].
+
+#![warn(missing_docs)]
+
 use std::{
     borrow::{Borrow, Cow},
     collections::{HashMap, HashSet, VecDeque},
@@ -18,14 +68,28 @@ use regex_charclass::{char::Char, irange::RangeSet};
 
 use crate::execution_profile::ExecutionProfile;
 
+/// Cardinality of a language ([`Cardinality`]): a finite count, a count too
+/// large for `u32`, or infinite.
 pub mod cardinality;
+/// The [`EngineError`] type returned by fallible operations.
 pub mod error;
+/// Resource limits: the thread-local [`ExecutionProfile`] governing timeouts,
+/// state caps, and implicit determinization.
 pub mod execution_profile;
+/// Finite automata: [`FastAutomaton`] and its building blocks (conditions,
+/// spanning sets).
 pub mod fast_automaton;
+/// The parsed-pattern AST: [`RegularExpression`].
 pub mod regex;
 
-pub type IntMap<Key, Value> = HashMap<Key, Value, BuildHasherDefault<NoHashHasher<Key>>>;
+/// A hash map keyed by integer state ids using a no-op hasher. Internal.
+pub(crate) type IntMap<Key, Value> = HashMap<Key, Value, BuildHasherDefault<NoHashHasher<Key>>>;
+/// A hash set of integer state ids using a no-op hasher (the hasher is fast
+/// because state ids are already well-distributed small integers). Returned by
+/// [`FastAutomaton::accept_states`] and related inspection methods.
 pub type IntSet<Key> = HashSet<Key, BuildHasherDefault<NoHashHasher<Key>>>;
+/// A set of character ranges (the transition-label alphabet type), re-exported
+/// from [`regex-charclass`](https://docs.rs/regex-charclass).
 pub type CharRange = RangeSet<Char>;
 
 /// Represents a term that can be either a regular expression or a finite automaton. This term can be manipulated with a wide range of operations.
@@ -42,26 +106,26 @@ pub type CharRange = RangeSet<Char>;
 ///
 ///     // Concatenate
 ///     let concat = t1.concat(&[t2])?;
-///     assert_eq!(concat.to_pattern(), "abc.*xyz");
+///     assert_eq!(concat.to_pattern()?, "abc.*xyz");
 ///
 ///     // Union
 ///     let union = t1.union(&[Term::from_pattern("fgh")?])?;
-///     assert_eq!(union.to_pattern(), "(abc.*|fgh)");
+///     assert_eq!(union.to_pattern()?, "(abc.*|fgh)");
 ///
 ///     // Intersection
 ///     let inter = Term::from_pattern("(ab|xy){2}")?
 ///         .intersection(&[Term::from_pattern(".*xy")?])?;
-///     assert_eq!(inter.to_pattern(), "(ab|xy)xy");
+///     assert_eq!(inter.to_pattern()?, "(ab|xy)xy");
 ///
 ///     // Difference
 ///     let diff = Term::from_pattern("a*")?
 ///         .difference(&Term::from_pattern("")?)?;
-///     assert_eq!(diff.to_pattern(), "a+");
+///     assert_eq!(diff.to_pattern()?, "a+");
 ///
 ///     // Repetition
 ///     let rep = Term::from_pattern("abc")?
 ///         .repeat(2..=4)?;
-///     assert_eq!(rep.to_pattern(), "(abc){2,4}");
+///     assert_eq!(rep.to_pattern()?, "(abc){2,4}");
 ///
 ///     // Analyze
 ///     assert_eq!(rep.length(), (Some(6), Some(12)));
@@ -105,7 +169,9 @@ pub type CharRange = RangeSet<Char>;
 #[derive(Clone, PartialEq, Eq, Debug)]
 #[must_use = "terms are immutable; operations return a new term"]
 pub enum Term {
+    /// The term is backed by a parsed regular-expression AST.
     RegularExpression(RegularExpression),
+    /// The term is backed by a finite automaton.
     Automaton(FastAutomaton),
 }
 
@@ -219,7 +285,7 @@ impl Term {
     ///
     /// let concat = term1.concat([&term2, &term3]).unwrap();
     ///
-    /// assert_eq!("abcd.+", concat.to_pattern());
+    /// assert_eq!("abcd.+", concat.to_pattern().unwrap());
     /// ```
     #[tracing::instrument(level = "debug", skip_all)]
     pub fn concat(
@@ -275,7 +341,7 @@ impl Term {
     ///
     /// let union = term1.union([&term2, &term3]).unwrap();
     ///
-    /// assert_eq!("(abc|de|fghi)", union.to_pattern());
+    /// assert_eq!("(abc|de|fghi)", union.to_pattern().unwrap());
     /// ```
     #[tracing::instrument(level = "debug", skip_all)]
     pub fn union(
@@ -313,7 +379,7 @@ impl Term {
 
             Ok(Term::Automaton(return_automaton))
         } else {
-            let regexes_list = self.get_regexes(&terms);
+            let regexes_list = self.get_regexes(&terms)?;
 
             let regexes_list = regexes_list.iter().map(AsRef::as_ref).collect::<Vec<_>>();
 
@@ -336,7 +402,7 @@ impl Term {
     ///
     /// let intersection = term1.intersection([&term2, &term3]).unwrap();
     ///
-    /// assert_eq!("deabc", intersection.to_pattern());
+    /// assert_eq!("deabc", intersection.to_pattern().unwrap());
     /// ```
     #[tracing::instrument(level = "debug", skip_all)]
     pub fn intersection(
@@ -376,7 +442,7 @@ impl Term {
     ///
     /// let difference = term1.difference(&term2).unwrap();
     ///
-    /// assert_eq!("abc", difference.to_pattern());
+    /// assert_eq!("abc", difference.to_pattern().unwrap());
     /// ```
     #[tracing::instrument(level = "debug", skip_all, fields(self_deterministic = self.is_deterministic(), other_deterministic = other.is_deterministic()))]
     pub fn difference(&self, other: &Term) -> Result<Term, EngineError> {
@@ -428,10 +494,10 @@ impl Term {
     ///
     /// let term = Term::from_pattern("abc").unwrap();
     ///
-    /// assert_eq!("(abc)+", term.repeat(1..).unwrap().to_pattern());
-    /// assert_eq!("(abc){3,5}", term.repeat(3..=5).unwrap().to_pattern());
-    /// assert_eq!("(abc){3,5}", term.repeat(3..6).unwrap().to_pattern());
-    /// assert_eq!("(abc){0,2}", term.repeat(..=2).unwrap().to_pattern());
+    /// assert_eq!("(abc)+", term.repeat(1..).unwrap().to_pattern().unwrap());
+    /// assert_eq!("(abc){3,5}", term.repeat(3..=5).unwrap().to_pattern().unwrap());
+    /// assert_eq!("(abc){3,5}", term.repeat(3..6).unwrap().to_pattern().unwrap());
+    /// assert_eq!("(abc){0,2}", term.repeat(..=2).unwrap().to_pattern().unwrap());
     /// ```
     #[tracing::instrument(level = "debug", skip_all, fields(self_deterministic = self.is_deterministic(), min = tracing::field::Empty, max = tracing::field::Empty))]
     pub fn repeat(&self, range: impl RangeBounds<u32>) -> Result<Term, EngineError> {
@@ -755,19 +821,14 @@ impl Term {
         }
     }
 
-    /// Returns the cardinality of the term (the number of possible matched strings).
+    /// Returns the cardinality of the term (the number of distinct matched strings).
     ///
     /// The exact count is represented as `u32`. If the exact count exceeds
     /// `u32::MAX`, the result is `Cardinality::BigInteger` rather than a
     /// truncated value. Infinite languages return `Cardinality::Infinite`.
     #[tracing::instrument(level = "debug", skip_all, fields(self_deterministic = self.is_deterministic()))]
     pub fn cardinality(&self) -> Result<Cardinality<u32>, EngineError> {
-        match self {
-            Term::RegularExpression(regex) => Ok(regex.cardinality()),
-            Term::Automaton(automaton) => {
-                Self::run_with_implicit_determinization(|| automaton.cardinality())
-            }
-        }
+        Self::run_with_implicit_determinization(|| self.to_automaton()?.cardinality())
     }
 
     /// Returns `true` if the term matches a finite number of strings.
@@ -806,19 +867,17 @@ impl Term {
     /// Returns a [`Cow`]: borrows the expression when the term is already
     /// regex-backed, and allocates a new one when converting from a
     /// [`FastAutomaton`] via state elimination.
-    #[must_use]
     #[tracing::instrument(level = "debug", skip_all, fields(self_deterministic = self.is_deterministic()))]
-    pub fn to_regex(&self) -> Cow<'_, RegularExpression> {
-        match self {
+    pub fn to_regex(&self) -> Result<Cow<'_, RegularExpression>, EngineError> {
+        Ok(match self {
             Term::RegularExpression(regex) => Cow::Borrowed(regex),
-            Term::Automaton(automaton) => Cow::Owned(automaton.to_regex()),
-        }
+            Term::Automaton(automaton) => Cow::Owned(automaton.to_regex()?),
+        })
     }
 
     /// Converts the term to a regular expression pattern.
-    #[must_use]
-    pub fn to_pattern(&self) -> String {
-        self.to_regex().to_string()
+    pub fn to_pattern(&self) -> Result<String, EngineError> {
+        Ok(self.to_regex()?.to_string())
     }
 
     fn get_automata<'a>(
@@ -855,14 +914,16 @@ impl Term {
         Ok(automaton_list)
     }
 
-    fn get_regexes<'a>(&'a self, terms: &[&'a Term]) -> Vec<Cow<'a, RegularExpression>> {
+    fn get_regexes<'a>(
+        &'a self,
+        terms: &[&'a Term],
+    ) -> Result<Vec<Cow<'a, RegularExpression>>, EngineError> {
         let mut regex_list = Vec::with_capacity(terms.len() + 1);
-        regex_list.push(self.to_regex());
-
-        let mut terms_regexes = terms.iter().map(|a| a.to_regex()).collect::<Vec<_>>();
-        regex_list.append(&mut terms_regexes);
-
-        regex_list
+        regex_list.push(self.to_regex()?);
+        for term in terms {
+            regex_list.push(term.to_regex()?);
+        }
+        Ok(regex_list)
     }
 }
 
@@ -953,7 +1014,7 @@ mod tests {
 
         let intersection = regex1.intersection(&[regex2]).unwrap();
         assert!(intersection.is_empty().unwrap());
-        assert_eq!("[]", intersection.to_pattern());
+        assert_eq!("[]", intersection.to_pattern().unwrap());
 
         Ok(())
     }
@@ -965,7 +1026,7 @@ mod tests {
 
         let result = regex1.difference(&regex2);
         assert!(result.is_ok());
-        let result = result.unwrap().to_pattern();
+        let result = result.unwrap().to_pattern().unwrap();
         assert_eq!("a+", result);
 
         Ok(())
@@ -978,7 +1039,7 @@ mod tests {
 
         let result = regex1.difference(&regex2);
         assert!(result.is_ok());
-        let result = result.unwrap().to_regex().into_owned();
+        let result = result.unwrap().to_regex().unwrap().into_owned();
         assert_eq!(
             Term::RegularExpression(RegularExpression::new("x(x{3})*x?").unwrap()),
             Term::RegularExpression(result)
@@ -994,7 +1055,7 @@ mod tests {
 
         let result = regex1.intersection(&[regex2]);
         assert!(result.is_ok());
-        let result = result.unwrap().to_pattern();
+        let result = result.unwrap().to_pattern().unwrap();
         assert_eq!("", result);
 
         Ok(())
@@ -1007,7 +1068,7 @@ mod tests {
 
         let result = regex1.intersection(&[regex2]);
         assert!(result.is_ok());
-        let result = result.unwrap().to_pattern();
+        let result = result.unwrap().to_pattern().unwrap();
         assert_eq!("(x{3})*", result);
 
         Ok(())
@@ -1142,9 +1203,12 @@ mod tests {
         let term = Term::from_pattern("abc").unwrap();
 
         // Unbounded / unset bounds.
-        assert_eq!("(abc)*", term.repeat(..).unwrap().to_pattern());
-        assert_eq!("(abc){2,}", term.repeat(2..).unwrap().to_pattern());
-        assert_eq!("(abc){0,2}", term.repeat(..3).unwrap().to_pattern());
+        assert_eq!("(abc)*", term.repeat(..).unwrap().to_pattern().unwrap());
+        assert_eq!("(abc){2,}", term.repeat(2..).unwrap().to_pattern().unwrap());
+        assert_eq!(
+            "(abc){0,2}",
+            term.repeat(..3).unwrap().to_pattern().unwrap()
+        );
 
         // Zero repetitions is the empty string.
         assert!(term.repeat(0..=0).unwrap().is_empty_string().unwrap());

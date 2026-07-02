@@ -2,7 +2,7 @@ use std::{cmp, collections::VecDeque, fmt::Display};
 
 use crate::execution_profile::ExecutionProfile;
 use regex_charclass::CharacterClass;
-use regex_syntax::hir::{Class, ClassBytes, ClassUnicode, Hir, HirKind};
+use regex_syntax::hir::{Class, ClassBytes, ClassUnicode, Hir, HirKind, Look};
 
 use self::fast_automaton::FastAutomaton;
 
@@ -171,9 +171,41 @@ impl RegularExpression {
         }
     }
 
+    /// The deepest a directly-constructed expression tree may nest before
+    /// [`to_automaton`](Self::to_automaton) refuses to convert it. Parsed
+    /// patterns never approach this (`regex-syntax` caps parse nesting far
+    /// lower); it only bounds the recursion so a pathologically deep hand-built
+    /// tree returns an error instead of overflowing the stack.
+    pub const MAX_NESTING_DEPTH: usize = 1000;
+
+    /// Returns an error if the tree nests deeper than [`MAX_NESTING_DEPTH`](Self::MAX_NESTING_DEPTH).
+    ///
+    /// Uses an explicit stack (not recursion) so measuring a deep tree cannot
+    /// itself overflow, and bails as soon as the limit is exceeded.
+    fn assert_depth_within_limit(&self) -> Result<(), EngineError> {
+        let mut stack = vec![(self, 1usize)];
+        while let Some((node, depth)) = stack.pop() {
+            if depth > Self::MAX_NESTING_DEPTH {
+                return Err(EngineError::RegexTooDeeplyNested(Self::MAX_NESTING_DEPTH));
+            }
+            match node {
+                RegularExpression::Character(_) => {}
+                RegularExpression::Repetition(inner, _, _) => stack.push((inner, depth + 1)),
+                RegularExpression::Concat(parts) => {
+                    stack.extend(parts.iter().map(|p| (p, depth + 1)));
+                }
+                RegularExpression::Alternation(parts) => {
+                    stack.extend(parts.iter().map(|p| (p, depth + 1)));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Converts the regular expression to an equivalent [`FastAutomaton`].
     #[tracing::instrument(level = "trace", skip_all)]
     pub fn to_automaton(&self) -> Result<FastAutomaton, EngineError> {
+        self.assert_depth_within_limit()?;
         ExecutionProfile::get().assert_max_number_of_states(self.get_number_of_states_in_nfa())?;
 
         match self {

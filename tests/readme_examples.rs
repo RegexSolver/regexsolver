@@ -1,8 +1,12 @@
 //! Keeps the README's examples honest: these tests are the README snippets,
 //! verbatim. If one fails, update the README.
+//!
+//! The one README block not pinned here is the time-bounded execution example,
+//! whose assertion depends on wall-clock timing and would be flaky in CI.
 
 use regexsolver::Term;
 use regexsolver::error::EngineError;
+use regexsolver::execution_profile::ExecutionProfileBuilder;
 
 #[test]
 fn readme_automaton_building_example() -> Result<(), EngineError> {
@@ -22,19 +26,19 @@ fn readme_automaton_building_example() -> Result<(), EngineError> {
 
     assert!(automaton.is_match("b42"));
     assert!(!automaton.is_match("4b"));
-    assert_eq!(automaton.to_regex().to_string(), "[a-c][0-9]*");
+    assert_eq!(automaton.to_regex()?.to_string(), "[a-c][0-9]*");
 
     Ok(())
 }
 
 #[test]
 fn readme_hero_example() -> Result<(), EngineError> {
-    let a = Term::from_pattern("(ab|xy){2}")?;
-    let b = Term::from_pattern(".*xy")?;
+    let a: Term = "(ab|xy){2}".parse()?;
+    let b: Term = ".*xy".parse()?;
 
     // Which strings match BOTH patterns? Get the answer as a regex:
     let both = a.intersection([&b])?;
-    assert_eq!(both.to_pattern(), "(ab|xy)xy");
+    assert_eq!(both.to_pattern()?, "(ab|xy)xy");
 
     // Test a concrete string against the result (matching is anchored):
     assert!(both.matches("abxy")?);
@@ -47,7 +51,6 @@ fn readme_hero_example() -> Result<(), EngineError> {
 
 #[test]
 fn readme_regular_expression_example() -> Result<(), EngineError> {
-    use regexsolver::cardinality::Cardinality;
     use regexsolver::regex::RegularExpression;
 
     // A validation pattern for an order id, e.g. "ORD-2024-12345".
@@ -55,9 +58,6 @@ fn readme_regular_expression_example() -> Result<(), EngineError> {
 
     // How long can matching ids get? Size your database column accordingly.
     assert_eq!(pattern.length(), (Some(13), Some(15)));
-
-    // How many distinct ids does the pattern allow?
-    assert_eq!(pattern.cardinality(), Cardinality::Integer(111_000_000));
 
     // The AST is a plain enum: walk it to lint patterns, e.g. reject
     // validation rules that accept unboundedly long input.
@@ -75,6 +75,51 @@ fn readme_regular_expression_example() -> Result<(), EngineError> {
     assert!(has_unbounded_repetition(&RegularExpression::new(
         ".*@example\\.com"
     )?));
+
+    Ok(())
+}
+
+#[test]
+fn readme_state_limited_execution_example() -> Result<(), EngineError> {
+    let term1 = Term::from_pattern(".*abcdef.*")?;
+    let term2 = Term::from_pattern(".*defabc.*")?;
+
+    let execution_profile = ExecutionProfileBuilder::new()
+        .max_number_of_states(5) // we set the limit
+        .build();
+
+    // We run the operation with the defined limitation
+    execution_profile.run(|| {
+        assert_eq!(
+            EngineError::AutomatonHasTooManyStates,
+            term1.intersection(&[term2]).unwrap_err()
+        );
+    });
+
+    Ok(())
+}
+
+#[test]
+fn readme_disabling_implicit_determinization_example() -> Result<(), EngineError> {
+    // Any non-deterministic FastAutomaton; ".*abc" compiles to one.
+    let nfa = Term::from_pattern(".*abc")?.to_automaton()?.into_owned();
+    assert!(!nfa.is_deterministic());
+
+    let execution_profile = ExecutionProfileBuilder::new()
+        .implicit_determinization(false) // default is true
+        .build();
+
+    execution_profile.run(|| {
+        let mut cannot_minimize = nfa.clone();
+        assert_eq!(
+            EngineError::DeterministicAutomatonRequired,
+            cannot_minimize.minimize().unwrap_err()
+        );
+
+        // Determinizing explicitly is always allowed.
+        let mut dfa = nfa.determinize().unwrap().into_owned();
+        assert!(dfa.minimize().is_ok());
+    });
 
     Ok(())
 }

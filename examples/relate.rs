@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if intersection.is_empty()? {
         println!("a ∩ b = [] (no string matches both)");
     } else {
-        println!("a ∩ b = {}", intersection.to_pattern());
+        println!("a ∩ b = {}", intersection.to_pattern()?);
         println!("        e.g. {:?}", intersection.generate_strings(5, 0)?);
     }
 
@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(if term.is_empty()? {
             "[]".to_string()
         } else {
-            term.to_pattern()
+            term.to_pattern()?
         })
     };
     println!("a - b = {}", pattern_or_empty(a_term.difference(&b_term)?)?);

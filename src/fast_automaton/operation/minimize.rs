@@ -33,6 +33,8 @@ impl FastAutomaton {
             self.remove_states(&unreachable);
         }
 
+        self.remove_dead_states();
+
         let max_states = self.transitions.len();
 
         let all_states: IntSet<usize> = self.states().collect();

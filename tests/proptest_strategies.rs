@@ -734,7 +734,7 @@ proptest! {
     /// automaton compiles back to an equivalent automaton.
     #[test]
     fn automaton_to_regex_roundtrip(a in arb_nfa()) {
-        let r = a.to_regex();
+        let r = match bounded(|| a.to_regex()) { Some(r) => r, None => return Ok(()) };
         if let Some(a2) = bounded(|| r.to_automaton())
             && let Some(eq) = bounded(|| a.equivalent(&a2))
         {
@@ -749,7 +749,7 @@ proptest! {
         let a = match bounded(|| r.to_automaton()) { Some(a) => a, None => return Ok(()) };
 
         // regex -> automaton -> regex -> automaton preserves the language.
-        let r2 = a.to_regex();
+        let r2 = match bounded(|| a.to_regex()) { Some(r2) => r2, None => return Ok(()) };
         if let Some(a2) = bounded(|| r2.to_automaton())
             && let Some(eq) = bounded(|| a.equivalent(&a2))
         {
@@ -1141,13 +1141,17 @@ mod inspect {
                 q.infinite_pct >= 15.0,
                 "{name}: infinite languages under-represented"
             );
-            // The sample must not keep re-testing the same languages.
+            // The sample must not keep re-testing the same languages. These
+            // floors are measured on the *canonical* minimal DFA (dead states
+            // removed), so genuinely-equivalent samples dedupe correctly; they
+            // sit below the pre-canonicalization figures, when dead-state
+            // differences inflated both the distinct-language and state counts.
             assert!(
-                q.distinct_pct >= 45.0,
+                q.distinct_pct >= 38.0,
                 "{name}: not enough distinct languages"
             );
             // Language complexity: minimal DFAs must not collapse to 1-2 states.
-            assert!(q.rich_pct >= 35.0, "{name}: minimal DFAs too small");
+            assert!(q.rich_pct >= 30.0, "{name}: minimal DFAs too small");
             // Both "" ∈ L and "" ∉ L need bulk representation.
             assert!(
                 (20.0..=80.0).contains(&q.accepts_empty_string_pct),

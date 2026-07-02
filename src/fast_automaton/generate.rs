@@ -87,7 +87,7 @@ impl FastAutomaton {
         // -----------------------------------------------------------------
         // 2. A* SEARCH: Find matching strings instantly
         // -----------------------------------------------------------------
-        let mut ranges_cache = AHashMap::with_capacity(num_states);
+        let mut ranges_cache: AHashMap<&Condition, CharRange> = AHashMap::with_capacity(num_states);
         let mut strings = IndexSet::with_capacity_and_hasher(limit, RandomState::default());
         let mut visited = AHashSet::with_capacity(num_states);
 
@@ -156,10 +156,14 @@ impl FastAutomaton {
                     Self::path_mix(h, Self::mix64(state as u64 ^ Self::mix64(to_state as u64)));
 
                 if visited.insert((to_state, next_depth, hash)) {
-                    let range = ranges_cache
-                        .entry(cond)
-                        .or_insert_with(|| cond.to_range(&self.spanning_set).unwrap())
-                        .clone();
+                    let range = match ranges_cache.get(cond) {
+                        Some(range) => range.clone(),
+                        None => {
+                            let range = cond.to_range(&self.spanning_set)?;
+                            ranges_cache.insert(cond, range.clone());
+                            range
+                        }
+                    };
 
                     valid_transitions.push((to_state_usize, range, hash));
                 }

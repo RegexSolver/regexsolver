@@ -6,6 +6,9 @@ use regex_charclass::{CharacterClass, char::Char};
 use crate::{CharRange, error::EngineError};
 
 use super::spanning_set::SpanningSet;
+/// The [`ConditionConverter`](converter::ConditionConverter): remaps a
+/// [`Condition`] from one spanning set to another (used when merging automata
+/// with different alphabets).
 pub mod converter;
 mod fast_bit_vec;
 

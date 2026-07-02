@@ -21,15 +21,20 @@ below.
 - New `Term` operations: `concat`, `complement`, `determinize`, `minimize`,
   `matches`, `is_deterministic`, `is_minimal`, `is_finite`, `to_pattern`, and
   `iter_strings` (lazy `StringGenerator` iterator).
-- `to_regex`/`to_automaton` now return `Cow` to avoid unnecessary cloning.
+- `RegularExpression::MAX_NESTING_DEPTH` and a depth check in `to_automaton`
+  that returns the new `EngineError::RegexTooDeeplyNested` for hand-built trees
+  nested past the limit, instead of overflowing the stack.
+- `to_automaton` returns `Cow` to avoid unnecessary cloning; `to_regex`
+  returns `Result<Cow<…>, EngineError>` (see Changed — it is now fallible).
 - `FastAutomaton` gained corresponding low-level constructors/operations
   (`new_empty`, `new_total`, `new_empty_string`, `determinize`, `minimize`
   using Hopcroft's algorithm, `is_minimal`, `unaccept`, `print_dot`,
   `try_add_transition`) and inspection helpers (`states`, `direct_states`,
   `transitions_from`, `transitions_to_vec`, `has_transition`, ...).
 - New `EngineError` variants: `InvalidRepetitionBounds`,
-  `IncompatibleSpanningSet`, `DeterministicAutomatonRequired`; the enum is
-  now `#[non_exhaustive]`.
+  `IncompatibleSpanningSet`, `DeterministicAutomatonRequired`,
+  `UnsupportedRegexFeature`, `RegexTooDeeplyNested`; the enum is now
+  `#[non_exhaustive]`.
 - `tracing` instrumentation on the core `Term`, `FastAutomaton`, and
   `RegularExpression` operations (concat, union, intersection, difference,
   complement, repeat, determinize, minimize, equivalence/subset checks,
@@ -43,6 +48,11 @@ below.
   (`rustsec/audit-check`) to CI.
 
 ### Changed
+- `Term::to_regex`/`to_pattern` and `FastAutomaton::to_regex` are now fallible
+  (`Result<_, EngineError>`) and honor the `ExecutionProfile` timeout, since
+  state elimination can grow super-polynomially on adversarial automata.
+  `Term`'s `Display` still renders a pattern but does so best-effort (without a
+  deadline), so it cannot fail.
 - `ExecutionProfile` redesigned as an immutable, thread-local-aware config
   built via the new `ExecutionProfileBuilder`, governing execution timeouts,
   state-count limits, and an `implicit_determinization` toggle.

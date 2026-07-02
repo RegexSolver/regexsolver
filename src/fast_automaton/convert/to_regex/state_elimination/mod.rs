@@ -74,8 +74,10 @@ impl Gnfa {
     }
 }
 
-pub(super) fn convert_to_regex(automaton: &FastAutomaton) -> RegularExpression {
-    let mut gnfa = Gnfa::from_automaton(automaton);
+pub(super) fn convert_to_regex(
+    automaton: &FastAutomaton,
+) -> Result<RegularExpression, EngineError> {
+    let mut gnfa = Gnfa::from_automaton(automaton)?;
     gnfa.convert()
 }
 
@@ -102,7 +104,7 @@ mod tests {
             .to_automaton()
             .unwrap();
 
-        let regex = Gnfa::from_automaton(&automaton).convert();
+        let regex = Gnfa::from_automaton(&automaton).unwrap().convert().unwrap();
         println!("-> {regex}");
 
         let new_automaton = regex.to_automaton().unwrap();
@@ -111,7 +113,7 @@ mod tests {
 
         let automaton = automaton.determinize().unwrap().into_owned();
 
-        let regex = Gnfa::from_automaton(&automaton).convert();
+        let regex = Gnfa::from_automaton(&automaton).unwrap().convert().unwrap();
         println!("-> {regex}");
 
         let new_automaton = regex.to_automaton().unwrap();

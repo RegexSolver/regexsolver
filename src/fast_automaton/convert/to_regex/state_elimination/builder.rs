@@ -3,7 +3,7 @@ use ahash::HashMapExt;
 use super::*;
 
 impl Gnfa {
-    pub(super) fn from_automaton(automaton: &FastAutomaton) -> Gnfa {
+    pub(super) fn from_automaton(automaton: &FastAutomaton) -> Result<Gnfa, EngineError> {
         let mut state_elimination_automaton = Gnfa {
             start_state: 0,  // start_state is not set yet
             accept_state: 0, // accept_state is not set yet
@@ -15,7 +15,7 @@ impl Gnfa {
 
         if automaton.is_empty() {
             state_elimination_automaton.empty = true;
-            return state_elimination_automaton;
+            return Ok(state_elimination_automaton);
         }
 
         let mut states_map = IntMap::with_capacity(automaton.number_of_states());
@@ -29,12 +29,11 @@ impl Gnfa {
                     .entry(*to_state)
                     .or_insert_with(|| state_elimination_automaton.new_state());
 
+                let range = condition.to_range(automaton.spanning_set())?;
                 state_elimination_automaton.add_transition(
                     new_from_state,
                     new_to_state,
-                    RegularExpression::Character(
-                        condition.to_range(automaton.spanning_set()).unwrap(),
-                    ),
+                    RegularExpression::Character(range),
                 );
             }
         }
@@ -76,7 +75,7 @@ impl Gnfa {
             }
         }
 
-        state_elimination_automaton
+        Ok(state_elimination_automaton)
     }
 
     fn new_state(&mut self) -> usize {

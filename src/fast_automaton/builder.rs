@@ -363,17 +363,22 @@ impl FastAutomaton {
         }
     }
 
-    /// Removes the given states and their connected transitions; panics if any is a start state.
+    /// Removes the given states and their connected transitions; panics if any
+    /// state does not exist or is the start state.
     pub fn remove_states(&mut self, states: &IntSet<State>) {
+        for &state in states {
+            self.assert_state_exists(state);
+            if self.start_state == state {
+                panic!("Can not remove the state {state}, it is still used as start state.");
+            }
+        }
+
         self.accept_states.retain(|e| !states.contains(e));
 
         self.minimal = false;
         let mut states_to_remove = Vec::with_capacity(states.len());
 
         for &state in states {
-            if self.start_state == state {
-                panic!("Can not remove the state {state}, it is still used as start state.");
-            }
             if self.transitions.len() - 1 == state {
                 self.transitions.remove(state);
 

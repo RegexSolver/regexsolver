@@ -39,8 +39,9 @@ impl FastAutomaton {
         other: &FastAutomaton,
         force_no_merge: bool,
     ) -> Result<(), EngineError> {
-        ExecutionProfile::get()
-            .assert_max_number_of_states(self.concat_state_count_heuristic(other))?;
+        let execution_profile = ExecutionProfile::get();
+        execution_profile.assert_not_timed_out()?;
+        execution_profile.assert_max_number_of_states(self.concat_state_count_heuristic(other))?;
 
         if other.is_empty() {
             self.make_empty();

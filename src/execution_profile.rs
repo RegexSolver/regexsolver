@@ -135,15 +135,15 @@ impl ExecutionProfile {
 
     /// Assert that `max_number_of_states` is not exceeded.
     ///
-    /// Return empty if `max_number_of_states` is not exceeded.
-    ///
-    /// Return [`EngineError::AutomatonHasTooManyStates`] otherwise.
+    /// `max_number_of_states` is the largest number of states an automaton may
+    /// hold, so `number_of_states == max_number_of_states` is allowed and only
+    /// strictly exceeding it returns [`EngineError::AutomatonHasTooManyStates`].
     pub(crate) fn assert_max_number_of_states(
         &self,
         number_of_states: usize,
     ) -> Result<(), EngineError> {
         if let Some(max_number_of_states) = self.max_number_of_states
-            && number_of_states >= max_number_of_states
+            && number_of_states > max_number_of_states
         {
             return Err(EngineError::AutomatonHasTooManyStates);
         }
@@ -194,7 +194,7 @@ impl ExecutionProfile {
     where
         F: FnOnce() -> R,
     {
-        let initial_execution_profile = ThreadLocalParams::get_execution_profile();
+        let _guard = ProfileRestoreGuard::install();
 
         let mut execution_profile = self.clone();
         if let Some(execution_timeout) = execution_profile.execution_timeout {
@@ -203,9 +203,7 @@ impl ExecutionProfile {
         }
 
         ThreadLocalParams::set_execution_profile(&execution_profile);
-        let result = f();
-        ThreadLocalParams::set_execution_profile(&initial_execution_profile);
-        result
+        f()
     }
 
     /// Runs the closure like [`run`](Self::run), but does not reset the start time. Use this to propagate an already-started profile to worker threads without restarting the clock.
@@ -213,15 +211,37 @@ impl ExecutionProfile {
     where
         F: FnOnce() -> R,
     {
-        let initial_execution_profile = ThreadLocalParams::get_execution_profile();
+        let _guard = ProfileRestoreGuard::install();
 
         ThreadLocalParams::set_execution_profile(self);
-        let result = f();
-        ThreadLocalParams::set_execution_profile(&initial_execution_profile);
-        result
+        f()
     }
 }
 
+/// Restores the thread-local execution profile captured at construction when
+/// dropped, including on panic unwind. Keeps [`ExecutionProfile::run`] and
+/// [`ExecutionProfile::apply`] panic-safe so a panicking closure cannot leak a
+/// temporary profile onto a (possibly pooled) thread.
+struct ProfileRestoreGuard {
+    previous: ExecutionProfile,
+}
+
+impl ProfileRestoreGuard {
+    fn install() -> Self {
+        ProfileRestoreGuard {
+            previous: ThreadLocalParams::get_execution_profile(),
+        }
+    }
+}
+
+impl Drop for ProfileRestoreGuard {
+    fn drop(&mut self) {
+        ThreadLocalParams::set_execution_profile(&self.previous);
+    }
+}
+
+/// Builder for an [`ExecutionProfile`]. Start from [`new`](Self::new), set the
+/// limits you want, and [`build`](Self::build) the immutable profile.
 pub struct ExecutionProfileBuilder {
     /// The maximum number of states that a non-determinitic finite automaton can hold, this is checked during the convertion of regular expression to automaton.
     max_number_of_states: Option<usize>,
@@ -354,6 +374,21 @@ mod tests {
 
     fn assert_send<T: Send>() {}
     fn assert_sync<T: Sync>() {}
+
+    // `max_number_of_states(N)` allows exactly N states and only rejects N+1,
+    // matching the documented "maximum an automaton may hold".
+    #[test]
+    fn max_number_of_states_allows_exactly_the_limit() {
+        let profile = ExecutionProfileBuilder::new()
+            .max_number_of_states(3)
+            .build();
+        assert!(profile.assert_max_number_of_states(2).is_ok());
+        assert!(profile.assert_max_number_of_states(3).is_ok());
+        assert_eq!(
+            profile.assert_max_number_of_states(4).unwrap_err(),
+            EngineError::AutomatonHasTooManyStates
+        );
+    }
 
     #[test]
     fn test_traits() -> Result<(), String> {

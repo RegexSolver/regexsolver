@@ -6,14 +6,43 @@ on:
       - 'v*'
 
 jobs:
-  build:
+  publish:
     runs-on: ubuntu-latest
+    # Gate publishing behind a protected GitHub environment so the crates.io
+    # token is only exposed to reviewed, tag-triggered runs. Configure required
+    # reviewers on this environment in the repository settings.
+    environment: crates-io
     steps:
       - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@stable
         with:
-            toolchain: stable
-            override: true
-      - uses: katyo/publish-crates@v2
-        with:
-            registry-token: ${{ secrets.CRATES_API_TOKEN }}
+          components: rustfmt, clippy
+
+      # Never publish a crate whose version disagrees with the pushed tag.
+      - name: Verify tag matches Cargo.toml version
+        run: |
+          crate_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [ "$crate_version" != "$tag_version" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} (${tag_version}) does not match Cargo.toml version ${crate_version}"
+            exit 1
+          fi
+
+      # Gate the publish on the full quality suite, mirroring CI.
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Lint
+        run: |
+          cargo clippy --all-targets -- -D warnings
+          cargo clippy --no-default-features --all-targets -- -D warnings
+      - name: Test
+        run: |
+          cargo test
+          cargo test --no-default-features
+
+      # Publish with the official cargo client rather than a third-party action,
+      # so the registry token is handled only by first-party tooling.
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_API_TOKEN }}
+        run: cargo publish
