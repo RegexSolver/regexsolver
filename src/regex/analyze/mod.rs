@@ -15,6 +15,19 @@ impl RegularExpression {
                 (Some(1), Some(1))
             }
             RegularExpression::Repetition(regex, min, max_opt) => {
+                if let Some(max) = max_opt {
+                    if max < min {
+                        // No valid repetition count: the empty language,
+                        // consistently with `repeat` and `to_automaton`.
+                        return (None, None);
+                    }
+                    if *max == 0 {
+                        // r⁰ = {""} regardless of the inner expression —
+                        // including an unbounded one, which the general path
+                        // below would report as having no maximum length.
+                        return (Some(0), Some(0));
+                    }
+                }
                 let (min_length, max_length_opt) = regex.length();
                 if let Some(min_length) = min_length {
                     let new_min_length = min.saturating_mul(min_length);
@@ -93,6 +106,22 @@ impl RegularExpression {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // `r{0,0}` over an unbounded inner expression has length exactly {""}
+    // (`(Some(0), Some(0))`), and degenerate hand-built bounds (`a{5,2}`, the
+    // empty language) report `(None, None)` per the ∅ convention.
+    #[test]
+    fn length_of_zero_and_degenerate_repetitions() {
+        let a_star = RegularExpression::new("a*").unwrap();
+        let zero = RegularExpression::Repetition(Box::new(a_star), 0, Some(0));
+        assert_eq!((Some(0), Some(0)), zero.length());
+        assert_eq!(zero.to_automaton().unwrap().length(), zero.length());
+
+        let a = RegularExpression::new("a").unwrap();
+        let degenerate = RegularExpression::Repetition(Box::new(a), 5, Some(2));
+        assert_eq!((None, None), degenerate.length());
+        assert_eq!(RegularExpression::new_empty().length(), degenerate.length());
+    }
 
     #[test]
     fn test_length() -> Result<(), String> {

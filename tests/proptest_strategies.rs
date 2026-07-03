@@ -711,6 +711,56 @@ proptest! {
         }
     }
 
+    /// `RegularExpression::union_all` (the alternation accumulator) agrees
+    /// with a left fold of pairwise `union` — a different composition: the
+    /// fold runs a fresh two-operand accumulator per step, `union_all` one
+    /// accumulator over all operands — and with the boolean OR of the
+    /// operands on every probe string. The `Term`-level test above never
+    /// reaches this path: it uses automaton-backed operands, and `Term::union`
+    /// routes through the regex accumulator only when *every* operand is
+    /// regex-backed.
+    #[test]
+    fn regex_union_all_matches_pairwise_fold_and_membership(
+        regexes in prop::collection::vec(arb_regex(), 2..=6),
+    ) {
+        let all = RegularExpression::union_all(&regexes);
+        let pairwise = regexes[1..]
+            .iter()
+            .fold(regexes[0].clone(), |acc, r| acc.union(r));
+
+        let all_a = match bounded(|| all.to_automaton()) {
+            Some(a) => a,
+            None => return Ok(()),
+        };
+        if let Some(pairwise_a) = bounded(|| pairwise.to_automaton())
+            && let Some(eq) = bounded(|| all_a.equivalent(&pairwise_a))
+        {
+            prop_assert!(
+                eq,
+                "union_all disagrees with the pairwise fold: {} vs {}",
+                all,
+                pairwise
+            );
+        }
+
+        let mut operand_automata = Vec::with_capacity(regexes.len());
+        for r in &regexes {
+            match bounded(|| r.to_automaton()) {
+                Some(a) => operand_automata.push(a),
+                None => return Ok(()),
+            }
+        }
+        for s in probes() {
+            let expected = operand_automata.iter().any(|a| a.is_match(&s));
+            prop_assert_eq!(
+                all_a.is_match(&s),
+                expected,
+                "union_all membership for {:?}",
+                s
+            );
+        }
+    }
+
     /// `subset` and `equivalent` agree: mutual subset iff equivalent; both are
     /// reflexive.
     #[test]
@@ -832,11 +882,10 @@ mod inspect {
         m
     }
 
-    /// Classifies the language of a **minimal DFA**.
-    ///
-    /// Unlike the trivial-vs-"interesting" split this used to be, the
-    /// non-trivial bulk is split into finite and infinite languages, which
-    /// exercise disjoint code paths (see [`LangClass`]).
+    /// Classifies the language of a **minimal DFA** into the
+    /// [`LangClass`] variants: the trivial cases (empty, empty-string, total)
+    /// and, for the rest, finite vs. infinite languages, which exercise
+    /// disjoint code paths.
     fn classify(m: &FastAutomaton) -> LangClass {
         if m.is_empty() {
             LangClass::Empty

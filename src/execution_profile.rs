@@ -28,7 +28,6 @@ use crate::error::EngineError;
 /// ## Limiting the execution time
 /// ```
 /// use regexsolver::{Term, execution_profile::{ExecutionProfile, ExecutionProfileBuilder}, error::EngineError};
-/// use std::time::SystemTime;
 ///
 /// let term = Term::from_pattern(".*abc.*cdef.*sqdsqf.*").unwrap();
 ///
@@ -102,6 +101,10 @@ pub struct ExecutionProfile {
     implicit_determinization: bool,
 }
 
+/// Equality compares the *configuration* (state limit, timeout, implicit
+/// determinization) and deliberately ignores `execution_deadline`: two
+/// profiles built alike compare equal whether or not one is currently
+/// installed and running.
 impl PartialEq for ExecutionProfile {
     fn eq(&self, other: &ExecutionProfile) -> bool {
         self.max_number_of_states == other.max_number_of_states
@@ -198,8 +201,11 @@ impl ExecutionProfile {
 
         let mut execution_profile = self.clone();
         if let Some(execution_timeout) = execution_profile.execution_timeout {
+            // `Instant + Duration` overflow behavior is platform-dependent; a
+            // timeout so large the deadline is unrepresentable is equivalent
+            // to no deadline at all.
             execution_profile.execution_deadline =
-                Some(Instant::now() + Duration::from_millis(execution_timeout));
+                Instant::now().checked_add(Duration::from_millis(execution_timeout));
         }
 
         ThreadLocalParams::set_execution_profile(&execution_profile);
@@ -242,6 +248,7 @@ impl Drop for ProfileRestoreGuard {
 
 /// Builder for an [`ExecutionProfile`]. Start from [`new`](Self::new), set the
 /// limits you want, and [`build`](Self::build) the immutable profile.
+#[derive(Clone, Debug)]
 pub struct ExecutionProfileBuilder {
     /// The maximum number of states that a non-determinitic finite automaton can hold, this is checked during the convertion of regular expression to automaton.
     max_number_of_states: Option<usize>,
@@ -396,6 +403,26 @@ mod tests {
         assert_sync::<ExecutionProfile>();
 
         Ok(())
+    }
+
+    // `run`/`apply` must restore the previous thread profile even when the
+    // closure panics — a leaked temporary profile would permanently poison
+    // pooled (e.g. rayon) threads.
+    #[test]
+    fn run_restores_previous_profile_on_panic() {
+        let outer = ExecutionProfileBuilder::new()
+            .max_number_of_states(123)
+            .build();
+        outer.run(|| {
+            let inner = ExecutionProfileBuilder::new()
+                .max_number_of_states(1)
+                .build();
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                inner.run(|| panic!("intentional test panic"));
+            }));
+            assert!(result.is_err());
+            assert_eq!(outer, ExecutionProfile::get());
+        });
     }
 
     #[test]

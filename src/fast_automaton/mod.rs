@@ -289,10 +289,20 @@ impl FastAutomaton {
             next.clear();
             for &state in &current {
                 for (cond, to_state) in self.transitions_from(state) {
-                    if cond
-                        .has_character(&c_u32, &self.spanning_set)
-                        .unwrap_or(false)
-                    {
+                    // A condition/spanning-set mismatch is a broken internal
+                    // invariant; make it loud in debug builds instead of
+                    // silently treating the transition as non-matching.
+                    let matches = match cond.has_character(&c_u32, &self.spanning_set) {
+                        Ok(matches) => matches,
+                        Err(error) => {
+                            debug_assert!(
+                                false,
+                                "condition desynchronized from spanning set: {error}"
+                            );
+                            false
+                        }
+                    };
+                    if matches {
                         next.insert(*to_state);
                     }
                 }
@@ -347,10 +357,8 @@ mod tests {
         Ok(())
     }
 
-    // Regression: read-only query methods used to directly index
-    // `self.transitions[state]` without checking `has_state` first, panicking
-    // on out-of-range inputs. They now return gracefully (0 / None / empty
-    // iterator).
+    // Read-only query methods must return gracefully (0 / None / empty
+    // iterator) on out-of-range or unknown states, not index out of bounds.
     #[test]
     fn out_degree_safe_on_unknown_state() {
         let a = FastAutomaton::new_total();

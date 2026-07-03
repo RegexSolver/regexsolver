@@ -108,11 +108,9 @@ mod tests {
     use crate::fast_automaton::FastAutomaton;
     use crate::fast_automaton::condition::Condition;
 
-    // Regression: `length` used to set `max = None` on any cycle
-    // reachable from start, even dead cycles among non-accepting states that
-    // cannot reach an accept. Such cycles don't extend the language; the
-    // max must remain finite. Now fixed by filtering branches to the live
-    // (co-reachable-from-accept) subgraph.
+    // A dead cycle (among states that cannot reach an accept) does not extend
+    // the language, so `length` must keep the max finite: only cycles in the
+    // live (co-reachable-from-accept) subgraph make the max unbounded.
     #[test]
     fn length_handles_dead_cycle() {
         let mut a = FastAutomaton::new_empty();
@@ -157,10 +155,9 @@ mod tests {
         assert_eq!(a.length(), (Some(1), None));
     }
 
-    // Regression: `length` used to enumerate paths with a cloned `seen`
-    // set per branch (exponential time and memory on branching DAGs). A chain
-    // of diamonds has 2^k paths; the linear algorithm must handle it
-    // instantly.
+    // `length` must be linear in the graph size, not in the number of paths:
+    // a chain of `k` diamonds has 2^k paths, which path enumeration could not
+    // handle but the longest-path algorithm does instantly.
     #[test]
     fn length_linear_on_branching_dag() {
         const DIAMONDS: usize = 24;

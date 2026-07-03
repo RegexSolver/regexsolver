@@ -55,7 +55,7 @@ Or in your own project:
 cargo add regexsolver
 ```
 
-By default the `parallel` feature is enabled: unions/intersections of more than 3 operands and parts of the automaton-to-regex conversion run on [rayon](https://crates.io/crates/rayon). Disable it for a leaner dependency tree on single-threaded workloads:
+By default the `parallel` feature is enabled: automaton-backed unions/intersections with more than 3 argument operands and parts of the automaton-to-regex conversion run on [rayon](https://crates.io/crates/rayon) (purely regex-backed operations stay sequential). Disable it for a leaner dependency tree on single-threaded workloads:
 
 ```toml
 regexsolver = { version = "1", default-features = false }
@@ -105,7 +105,7 @@ States are created with `new_state()` and transitions with `add_transition_from_
 ```rust
 use regexsolver::CharRange;
 use regexsolver::fast_automaton::FastAutomaton;
-use regex_charclass::char::Char;
+use regexsolver::regex_charclass::char::Char;
 
 // Build an automaton matching "[a-c][0-9]*" by hand:
 let mut automaton = FastAutomaton::new_empty();

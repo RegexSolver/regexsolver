@@ -50,6 +50,16 @@ impl AbstractNFAMetadata {
     }
 
     pub(crate) fn concat(&self, nfa: &AbstractNFAMetadata) -> Self {
+        let is_empty_string = |m: &AbstractNFAMetadata| {
+            m.number_of_states == 1 && !m.accepted.is_empty() && !m.start.has_outgoing_edges
+        };
+        if is_empty_string(nfa) {
+            return self.clone();
+        }
+        if is_empty_string(self) {
+            return nfa.clone();
+        }
+
         let start_state_and_accept_states_not_mergeable =
             nfa.start.has_incoming_edges && self.accepted.iter().any(|s| s.has_outgoing_edges);
 
@@ -57,13 +67,13 @@ impl AbstractNFAMetadata {
             AbstractNFAMetadata {
                 start: self.start.clone(),
                 accepted: nfa.accepted.clone(),
-                number_of_states: self.number_of_states + nfa.number_of_states,
+                number_of_states: self.number_of_states.saturating_add(nfa.number_of_states),
             }
         } else {
             AbstractNFAMetadata {
                 start: self.start.clone(),
                 accepted: nfa.accepted.clone(),
-                number_of_states: self.number_of_states + nfa.number_of_states - 1,
+                number_of_states: self.number_of_states.saturating_add(nfa.number_of_states) - 1,
             }
         }
     }
@@ -74,16 +84,29 @@ impl AbstractNFAMetadata {
             return Self::new_empty_string();
         }
 
-        // Unbounded with min >= 1: `repeat_mut` builds r{min,} = rᵐⁱⁿ · r*.
-        // Mirror that here (mandatory copies via merging concatenation, then a
-        // recursively-built star) so the predicted count stays consistent with
-        // the construction even when the start state has incoming edges.
+        if self.accepted.is_empty() {
+            return if min == 0 {
+                Self::new_empty_string()
+            } else {
+                self.clone()
+            };
+        }
         if max_opt.is_none() && min >= 1 {
-            let mut acc = self.clone();
-            for _ in 1..min {
-                acc = acc.concat(self);
-            }
-            return acc.concat(&self.repeat(0, &None));
+            let appended_copy_cost = if self.start.has_incoming_edges
+                && self.accepted.iter().any(|s| s.has_outgoing_edges)
+            {
+                self.number_of_states
+            } else {
+                self.number_of_states - 1
+            };
+            let mandatory = AbstractNFAMetadata {
+                start: self.start.clone(),
+                accepted: self.accepted.clone(),
+                number_of_states: self
+                    .number_of_states
+                    .saturating_add((min as usize - 1).saturating_mul(appended_copy_cost)),
+            };
+            return mandatory.concat(&self.repeat(0, &None));
         }
 
         let start_state_not_mergeable = self.start.has_incoming_edges;
@@ -94,37 +117,39 @@ impl AbstractNFAMetadata {
         let mut return_start = self.start.clone();
         let mut return_accepted = self.accepted.clone();
 
+        if min == 0 && start_state_not_mergeable {
+            return_start.has_incoming_edges = false;
+        }
+
         if max_opt.is_none() {
             for accepted in return_accepted.iter_mut() {
                 accepted.has_outgoing_edges = true;
             }
         }
 
-        if min == 0 && !start_state_or_accept_states_not_mergeable {
+        if min == 0
+            && !start_state_or_accept_states_not_mergeable
+            && max_opt.is_none()
+            && self.accepted.len() == 1
+        {
             return_start.has_incoming_edges = true;
             return_accepted.push(return_start.clone());
-            if max_opt.is_none() {
-                let return_number_of_states = if !start_state_or_accept_states_not_mergeable {
-                    // An automaton always has at least one state. Degenerate
-                    // sub-expressions denoting {""} (e.g. an unsimplified
-                    // `(a{0,0})*`) reach this point with a single state, and
-                    // the merge discount must not drive the count to zero;
-                    // every later `- 1` in this module relies on counts
-                    // staying >= 1.
-                    (self.number_of_states - 1).max(1)
-                } else {
-                    self.number_of_states
-                };
-                return AbstractNFAMetadata {
-                    start: return_start,
-                    accepted: return_accepted,
-                    number_of_states: return_number_of_states,
-                };
-            }
+
+            return AbstractNFAMetadata {
+                start: return_start,
+                accepted: return_accepted,
+                number_of_states: (self.number_of_states - 1).max(1),
+            };
         }
 
         if min == 0 {
             return_accepted.push(return_start.clone());
+        }
+
+        if let Some(max) = max_opt
+            && *max > cmp::max(min, 1)
+        {
+            return_accepted.push(AbstractStateMetadata::new(true, true));
         }
 
         let return_number_of_states = if let Some(max) = max_opt {
@@ -146,11 +171,15 @@ impl AbstractNFAMetadata {
             };
 
             if min == 0 {
-                let base = self.number_of_states + if start_state_not_mergeable { 1 } else { 0 };
-                base + max.saturating_sub(1) * tail_cost
+                let base = self
+                    .number_of_states
+                    .saturating_add(if start_state_not_mergeable { 1 } else { 0 });
+                base.saturating_add(max.saturating_sub(1).saturating_mul(tail_cost))
             } else {
-                let mandatory = self.number_of_states + (min as usize - 1) * merge_cost;
-                mandatory + max.saturating_sub(min as usize) * tail_cost
+                let mandatory = self
+                    .number_of_states
+                    .saturating_add((min as usize - 1).saturating_mul(merge_cost));
+                mandatory.saturating_add(max.saturating_sub(min as usize).saturating_mul(tail_cost))
             }
         } else {
             let mult = if start_state_not_mergeable {
@@ -159,7 +188,9 @@ impl AbstractNFAMetadata {
                 self.number_of_states - 1
             };
 
-            cmp::max(min, 1) as usize * mult + 1
+            (cmp::max(min, 1) as usize)
+                .saturating_mul(mult)
+                .saturating_add(1)
         };
 
         AbstractNFAMetadata {
@@ -179,18 +210,37 @@ impl AbstractNFAMetadata {
         let return_start = AbstractStateMetadata::new(false, true);
         let mut return_accepted = vec![];
 
-        let mut return_number_of_states = self.number_of_states + nfa.number_of_states;
+        let mut return_number_of_states =
+            self.number_of_states.saturating_add(nfa.number_of_states);
 
         if !self_start_state_not_mergeable && !nfa_start_state_not_mergeable {
             return_number_of_states -= 1;
+        } else if self_start_state_not_mergeable && nfa_start_state_not_mergeable {
+            return_number_of_states = return_number_of_states.saturating_add(1);
         }
 
-        if !self_accepted_not_mergeable && !nfa_accepted_not_mergeable {
+        if !self_accepted_not_mergeable
+            && !nfa_accepted_not_mergeable
+            && !self.accepted.is_empty()
+            && !nfa.accepted.is_empty()
+            && self.number_of_states > 1
+            && nfa.number_of_states > 1
+        {
             return_number_of_states -= 1;
             return_accepted.push(AbstractStateMetadata::new(true, false));
         } else {
-            return_accepted.extend(self.accepted.clone());
-            return_accepted.extend(nfa.accepted.clone());
+            let mut extend = |operand: &AbstractNFAMetadata| {
+                if operand.number_of_states == 1
+                    && !operand.accepted.is_empty()
+                    && !operand.start.has_incoming_edges
+                {
+                    return_accepted.push(AbstractStateMetadata::new(false, true));
+                } else {
+                    return_accepted.extend(operand.accepted.clone());
+                }
+            };
+            extend(self);
+            extend(nfa);
         }
 
         AbstractNFAMetadata {
@@ -211,7 +261,13 @@ impl RegularExpression {
 
     fn evaluate_number_of_states_in_nfa(&self) -> AbstractNFAMetadata {
         match self {
-            RegularExpression::Character(..) => AbstractNFAMetadata::new(),
+            RegularExpression::Character(range) => {
+                if range.is_empty() {
+                    AbstractNFAMetadata::new_empty()
+                } else {
+                    AbstractNFAMetadata::new()
+                }
+            }
             RegularExpression::Repetition(regex, min, max_opt) => regex
                 .evaluate_number_of_states_in_nfa()
                 .repeat(*min, max_opt),
@@ -272,6 +328,17 @@ mod tests {
         assert_number_of_states_in_nfa("(a*b){1,}");
         assert_number_of_states_in_nfa("(a*b){3,}");
 
+        // Operands whose start has incoming edges AND whose accept states have
+        // outgoing edges: the `min == 0` construction allocates a fresh start
+        // with no incoming edges, and the metadata must say so — keeping the
+        // flag set overcounted the following concatenation by one state.
+        assert_number_of_states_in_nfa("(a*ba*){2,}");
+        assert_number_of_states_in_nfa("(a*ba*){5,}");
+        assert_number_of_states_in_nfa("(a?b?){2,}");
+        assert_number_of_states_in_nfa("a+(b*a)?");
+        assert_number_of_states_in_nfa("a+(b*a){0,2}");
+        assert_number_of_states_in_nfa("(b*a){0,3}");
+
         assert_number_of_states_in_nfa("");
         assert_number_of_states_in_nfa("toto");
         assert_number_of_states_in_nfa("A+B*");
@@ -317,10 +384,63 @@ mod tests {
         Ok(())
     }
 
-    // Regression: directly-constructed (unsimplified) repetitions over {""}
-    // sub-expressions (shapes the string parser simplifies away but any user
-    // of the public enum can build) used to drive the abstract state count
-    // to zero, after which the merge discounts underflowed and panicked.
+    // The unbounded `r{min,}` estimate is a closed form (not a loop over
+    // `min`), so a short pattern with a huge minimum like `a{4294967295,}`
+    // saturates the estimate and the state budget rejects it immediately,
+    // rather than burning CPU inside the estimator.
+    #[test]
+    fn huge_unbounded_repetition_is_rejected_quickly() {
+        use crate::error::EngineError;
+        use crate::execution_profile::ExecutionProfileBuilder;
+
+        ExecutionProfileBuilder::new()
+            .max_number_of_states(100)
+            .build()
+            .run(|| {
+                let regex = RegularExpression::new("a{4294967295,}").unwrap();
+                assert_eq!(
+                    EngineError::AutomatonHasTooManyStates,
+                    regex.to_automaton().unwrap_err()
+                );
+            });
+    }
+
+    // The estimator's arithmetic saturates, so nested huge (but parseable)
+    // bounds do not overflow; the budget then rejects the pattern.
+    #[test]
+    fn nested_huge_bounds_saturate_instead_of_overflowing() {
+        use crate::error::EngineError;
+        use crate::execution_profile::ExecutionProfileBuilder;
+
+        ExecutionProfileBuilder::new()
+            .max_number_of_states(100)
+            .build()
+            .run(|| {
+                let regex =
+                    RegularExpression::new("((a{4294967295}){4294967295}){4294967295}").unwrap();
+                assert_eq!(
+                    EngineError::AutomatonHasTooManyStates,
+                    regex.to_automaton().unwrap_err()
+                );
+
+                // A `?`-wrapped saturated repetition whose operand start has
+                // incoming edges takes the `min == 0` finite-max arm, whose
+                // `+ 1` for the fresh start state must saturate too (it used
+                // to be an unchecked add that overflowed in debug builds).
+                let regex =
+                    RegularExpression::new("((((a*b){4294967295}){4294967295}){4294967295})?")
+                        .unwrap();
+                assert_eq!(
+                    EngineError::AutomatonHasTooManyStates,
+                    regex.to_automaton().unwrap_err()
+                );
+            });
+    }
+
+    // Directly-constructed (unsimplified) repetitions over {""}
+    // sub-expressions — shapes the string parser simplifies away, but any
+    // user of the public enum can build — must not drive the abstract state
+    // count to zero, which would underflow the merge discounts.
     #[test]
     fn degenerate_repetitions_do_not_underflow() {
         use std::collections::VecDeque;
@@ -364,5 +484,88 @@ mod tests {
         let automaton = regex.to_automaton().unwrap();
 
         assert_eq!(automaton.number_of_states(), number_of_states_in_nfa);
+    }
+
+    mod prop {
+        use super::*;
+        use crate::CharRange;
+        use crate::execution_profile::ExecutionProfileBuilder;
+        use proptest::prelude::*;
+        use regex_charclass::char::Char;
+
+        fn letter(c: char) -> CharRange {
+            let c = Char::new(c);
+            CharRange::new_from_range(c..=c)
+        }
+
+        /// Regular-expression trees built directly over the enum — covering
+        /// shapes the string parser simplifies away — with occasional huge
+        /// repetition bounds to exercise the saturating arithmetic.
+        fn arb_regex_tree() -> impl Strategy<Value = RegularExpression> {
+            let leaf = prop_oneof![
+                4 => Just(letter('a')),
+                4 => Just(letter('b')),
+                1 => Just(CharRange::empty()),
+                1 => Just(CharRange::total()),
+            ]
+            .prop_map(RegularExpression::Character);
+            leaf.prop_recursive(4, 32, 3, |inner| {
+                let bound = prop_oneof![
+                    8 => 0u32..=3,
+                    1 => u32::MAX - 2..=u32::MAX,
+                ];
+                prop_oneof![
+                    3 => (inner.clone(), bound.clone(), bound, any::<bool>()).prop_map(
+                        |(r, min, extra, has_max)| {
+                            // max is min + extra, so the bounds are always valid
+                            let max = if has_max {
+                                Some(min.saturating_add(extra))
+                            } else {
+                                None
+                            };
+                            RegularExpression::Repetition(Box::new(r), min, max)
+                        }
+                    ),
+                    2 => proptest::collection::vec(inner.clone(), 1..=3)
+                        .prop_map(|v| RegularExpression::Concat(v.into())),
+                    2 => proptest::collection::vec(inner, 1..=3)
+                        .prop_map(RegularExpression::Alternation),
+                ]
+            })
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(256))]
+
+            /// The estimate must never *under*-estimate: the state budget
+            /// rejects a pattern when the estimate exceeds it, so an
+            /// under-estimate would let an oversized construction through
+            /// (the denial-of-service direction). It must also never panic —
+            /// huge (but parseable) bounds have to saturate, not overflow.
+            ///
+            /// Exactness (`==`) intentionally is not asserted here: the
+            /// estimate is exact for the deterministic corpus above but only
+            /// an upper bound in general (e.g. `(ab|c)+`).
+            #[test]
+            fn estimate_is_a_sound_upper_bound(regex in arb_regex_tree()) {
+                let estimate = regex.get_number_of_states_in_nfa();
+                prop_assert!(estimate >= 1, "state estimate of {} must be >= 1", regex);
+
+                let automaton = ExecutionProfileBuilder::new()
+                    .max_number_of_states(4096)
+                    .execution_timeout(2000)
+                    .build()
+                    .run(|| regex.to_automaton());
+                if let Ok(automaton) = automaton {
+                    prop_assert!(
+                        automaton.number_of_states() <= estimate,
+                        "the estimate under-estimated {}: estimate {} < actual {}",
+                        regex,
+                        estimate,
+                        automaton.number_of_states()
+                    );
+                }
+            }
+        }
     }
 }

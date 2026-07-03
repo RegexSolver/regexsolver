@@ -25,14 +25,9 @@ impl RegularExpression {
                 regex
             }
             RegularExpression::Alternation(elements) => {
-                let elements: VecDeque<_> =
-                    elements.iter().map(|element| element.simplify()).collect();
+                let elements: Vec<_> = elements.iter().map(|element| element.simplify()).collect();
 
-                let mut regex = RegularExpression::new_empty();
-                elements
-                    .iter()
-                    .for_each(|element| regex = regex.union(element));
-                regex
+                RegularExpression::union_all(elements.iter())
             }
         }
     }

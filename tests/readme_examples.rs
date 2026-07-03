@@ -10,9 +10,9 @@ use regexsolver::execution_profile::ExecutionProfileBuilder;
 
 #[test]
 fn readme_automaton_building_example() -> Result<(), EngineError> {
-    use regex_charclass::char::Char;
     use regexsolver::CharRange;
     use regexsolver::fast_automaton::FastAutomaton;
+    use regexsolver::regex_charclass::char::Char;
 
     // Build an automaton matching "[a-c][0-9]*" by hand:
     let mut automaton = FastAutomaton::new_empty();

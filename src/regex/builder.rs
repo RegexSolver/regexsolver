@@ -161,8 +161,7 @@ impl RegularExpression {
                         Self::convert_to_regex(c, simplify, child_at_start, child_at_end)?;
                     if simplify {
                         concat_regex = concat_regex.concat(&concat_value, true);
-                    } else if let RegularExpression::Concat(values) = concat_regex {
-                        let mut values = values.clone();
+                    } else if let RegularExpression::Concat(mut values) = concat_regex {
                         values.push_back(concat_value);
                         concat_regex = RegularExpression::Concat(values);
                     }
@@ -170,21 +169,23 @@ impl RegularExpression {
                 Ok(concat_regex)
             }
             HirKind::Alternation(alternation) => {
-                let mut alternation_regex =
-                    RegularExpression::Alternation(Vec::with_capacity(alternation.len()));
+                let mut branches = Vec::with_capacity(alternation.len());
                 for a in alternation {
                     // Each branch occupies the alternation's own position, so
                     // it inherits the boundary context unchanged.
-                    let alternation_value = Self::convert_to_regex(a, simplify, at_start, at_end)?;
-                    if simplify {
-                        alternation_regex = alternation_regex.union(&alternation_value);
-                    } else if let RegularExpression::Alternation(values) = alternation_regex {
-                        let mut values = values.clone();
-                        values.push(alternation_value);
-                        alternation_regex = RegularExpression::Alternation(values);
-                    }
+                    branches.push(Self::convert_to_regex(a, simplify, at_start, at_end)?);
                 }
-                Ok(alternation_regex)
+                if simplify {
+                    // Folds the branches through the incremental accumulator
+                    // (folding via pairwise `union` re-cloned the accumulated
+                    // alternation per branch, quadratic in the branch count)
+                    // and honors the execution deadline per branch, so a
+                    // pathological alternation cannot burn CPU outside the
+                    // profile.
+                    RegularExpression::union_all_bounded(branches.iter())
+                } else {
+                    Ok(RegularExpression::Alternation(branches))
+                }
             }
         }
     }
@@ -253,6 +254,28 @@ impl RegularExpression {
 #[cfg(test)]
 mod tests {
     use crate::regex::RegularExpression;
+
+    // Folding an alternation with many shared-affix branches is quadratic in
+    // the branch count; the parse must honor the execution deadline instead
+    // of burning CPU outside the profile.
+    #[test]
+    fn parse_honors_the_execution_deadline() {
+        use crate::error::EngineError;
+        use crate::execution_profile::ExecutionProfileBuilder;
+
+        let branches: Vec<String> = (0..20000).map(|i| format!("x{i:05}y")).collect();
+        let pattern = format!("({})", branches.join("|"));
+
+        ExecutionProfileBuilder::new()
+            .execution_timeout(10)
+            .build()
+            .run(|| {
+                assert_eq!(
+                    EngineError::OperationTimeOutError,
+                    RegularExpression::new(&pattern).unwrap_err()
+                );
+            });
+    }
 
     // Inline flags are rejected (the engine cannot honor them); non-capturing
     // groups `(?:...)` are still accepted, and flag-lookalikes inside a
@@ -360,17 +383,16 @@ mod tests {
         );
 
         // The simplifying combinators must not panic on invalid trees either
-        // (regression: the affix factoring of `r{1,0}` used to underflow).
+        // (e.g. the affix factoring of `r{1,0}` must not underflow).
         let degenerate = RegularExpression::Repetition(Box::new(a.clone()), 1, Some(0));
         let _ = a.union(&degenerate);
         let _ = a.concat(&degenerate, true);
     }
 
-    // Regression (found by the proptest generators): singleton
-    // Alternation/Concat wrappers print transparently, so quantified
-    // expressions must be parenthesized by looking through them:
-    // `((.a))*` used to print as `.a*` instead of `(.a)*`, changing the
-    // language.
+    // Singleton Alternation/Concat wrappers print transparently, so a
+    // quantifier applied to one must be parenthesized by looking through the
+    // wrapper: `((.a))*` must print as `(.a)*`, not `.a*` (a different
+    // language).
     #[test]
     fn display_parenthesizes_through_singleton_wrappers() {
         use regex_charclass::char::Char;

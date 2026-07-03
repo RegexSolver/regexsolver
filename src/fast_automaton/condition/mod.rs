@@ -86,8 +86,8 @@ impl Condition {
     /// spanning sets).
     pub fn to_range(&self, spanning_set: &SpanningSet) -> Result<CharRange, EngineError> {
         // A condition only carries meaning relative to the spanning set it
-        // was built from. Evaluating it against a differently-sized one used
-        // to panic (too short) or silently drop bits (too long).
+        // was built from; a width mismatch means they differ, so reject it
+        // rather than index out of bounds or silently drop bits.
         if self.0.len() != spanning_set.spanning_ranges_with_rest_len() {
             return Err(EngineError::IncompatibleSpanningSet);
         }
@@ -150,17 +150,40 @@ impl Condition {
     /// Returns `true` if the condition matches `character` (a Unicode scalar
     /// value), evaluated against `spanning_set`. Values that are not valid
     /// scalar values never match.
+    ///
+    /// Returns [`EngineError::IncompatibleSpanningSet`] if this condition's
+    /// bit width does not match `spanning_set`.
     #[inline]
     pub fn has_character(
         &self,
         character: &u32,
         spanning_set: &SpanningSet,
     ) -> Result<bool, EngineError> {
-        if let Some(character) = Char::from_u32(*character) {
-            Ok(self.to_range(spanning_set)?.contains(character))
-        } else {
-            Ok(false)
+        let Some(character) = Char::from_u32(*character) else {
+            return Ok(false);
+        };
+        if self.0.len() != spanning_set.spanning_ranges_with_rest_len() {
+            return Err(EngineError::IncompatibleSpanningSet);
         }
+
+        // Bit `i` corresponds to `spanning_ranges_with_rest()[i]` (the rest
+        // range first, when present). Testing set bits directly avoids
+        // materializing the union of their ranges (`to_range` clones and
+        // unions every base) on the `is_match` hot path.
+        let mut i = 0;
+        if !spanning_set.rest().is_empty() {
+            if self.0.get(i) && spanning_set.rest().contains(character) {
+                return Ok(true);
+            }
+            i += 1;
+        }
+        for base in spanning_set.spanning_ranges() {
+            if self.0.get(i) && base.contains(character) {
+                return Ok(true);
+            }
+            i += 1;
+        }
+        Ok(false)
     }
 
     /// Returns `true` if the condition matches no character.
@@ -221,9 +244,9 @@ mod tests {
         ]
     }
 
-    // Regression: a condition evaluated against a spanning set it was not
-    // built from used to panic (when too short) or silently drop bits (when
-    // too long); it now reports the incompatibility.
+    // Evaluating a condition against a spanning set it was not built from
+    // must report the incompatibility rather than panic (too short) or
+    // silently drop bits (too long).
     #[test]
     fn to_range_rejects_incompatible_spanning_set() {
         let small = SpanningSet::compute_spanning_set(&[CharRange::new_from_range(
@@ -244,8 +267,8 @@ mod tests {
         );
     }
 
-    // Regression: `ConditionConverter::convert` used to panic on a condition
-    // that was not built over its source spanning set.
+    // `ConditionConverter::convert` must report an error, not panic, on a
+    // condition that was not built over its source spanning set.
     #[test]
     fn convert_rejects_incompatible_condition() {
         let small = SpanningSet::compute_spanning_set(&[CharRange::new_from_range(

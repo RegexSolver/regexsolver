@@ -125,7 +125,14 @@ impl RegularExpression {
             RegularExpression::Repetition(that_regex, that_min, that_max_opt),
         ) = (this_repetition, that_repetition)
         {
-            if this_regex == that_regex {
+            // As in `opaffix_character_and_repetition`: directly-constructed
+            // degenerate bounds (`r{5,2}`) must not reach the affix
+            // arithmetic below, whose `max - prefix_max` subtractions rely on
+            // `max >= min` on both sides. Such trees are rejected by
+            // `to_automaton`; the simplifier just must not panic.
+            let degenerate_bounds = this_max_opt.is_some_and(|this_max| this_max < *this_min)
+                || that_max_opt.is_some_and(|that_max| that_max < *that_min);
+            if this_regex == that_regex && !degenerate_bounds {
                 let prefix_min = *cmp::min(this_min, that_min);
                 let prefix_max_opt;
                 if this_min == that_min {

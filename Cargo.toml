@@ -16,7 +16,6 @@ exclude = ["/assets"]
 
 [dependencies]
 tracing = "0.1"
-nohash-hasher = "0.2"
 ahash = "0.8.11"
 regex-syntax = "0.8.5"
 regex-charclass = { version = "1.0.3" }

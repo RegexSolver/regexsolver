@@ -144,10 +144,9 @@ mod tests {
     use crate::fast_automaton::FastAutomaton;
     use crate::fast_automaton::condition::Condition;
 
-    // Regression (found by the brute-force enumeration proptest): the cycle
-    // check used to run over ALL states, so a cycle among dead states made
-    // the cardinality of a finite language Infinite. Only cycles on
-    // accepting paths count.
+    // Only cycles on accepting paths make a language infinite: a cycle among
+    // dead states (that cannot reach an accept) must not turn a finite
+    // language's cardinality into Infinite.
     #[test]
     fn get_cardinality_ignores_dead_cycles() {
         let mut a = FastAutomaton::new_empty();
@@ -163,10 +162,9 @@ mod tests {
         assert_eq!(a.cardinality().unwrap(), Cardinality::Integer(1));
     }
 
-    // Regression: `cardinality` used to `assert!` determinism and panic
-    // on acyclic NFAs (the only nondeterministic inputs that reach the finite
-    // count; cyclic ones return Infinite earlier). It now determinizes
-    // internally.
+    // `cardinality` determinizes internally, so it returns a finite count for
+    // an acyclic NFA (the only nondeterministic input that reaches the finite
+    // count; cyclic ones return Infinite earlier) rather than requiring a DFA.
     #[test]
     fn get_cardinality_determinizes_acyclic_nfas() {
         let mut a = FastAutomaton::new_empty();

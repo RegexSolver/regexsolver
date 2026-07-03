@@ -322,12 +322,10 @@ impl FastAutomaton {
 mod tests {
     use crate::{Term, fast_automaton::FastAutomaton, regex::RegularExpression};
 
-    // Regression: unioning with the empty-string language used to drop the
-    // other operand's acceptance. When `other`'s start state has incoming edges
-    // its outgoing edges (and the accept states they reach) are mapped during
-    // `prepare_start_states`; `prepare_accept_states` then failed to mark those
-    // already-mapped images accepting, so `union({""}, "a+")` matched only ""
-    // instead of "" and "a", "aa", ...
+    // Unioning with the empty-string language must keep the other operand's
+    // acceptance: when `other`'s start state has incoming edges, the accept
+    // states reachable from it are mapped early, and they must still be
+    // marked accepting, so `union({""}, "a+")` matches "" and "a", "aa", ...
     #[test]
     fn union_with_empty_string_keeps_other_accepts() {
         let empty_string = RegularExpression::parse("", false)
@@ -356,10 +354,10 @@ mod tests {
         );
     }
 
-    // Regression: `prepare_accept_states` merges accept states without
-    // outgoing edges and removes the originals. When `self`'s accepting start
-    // (no outgoing edges) met an operand whose start has incoming edges, the
-    // start landed in the merge list and `remove_state(start)` panicked.
+    // `prepare_accept_states` merges accept states without outgoing edges and
+    // removes the originals; it must not put `self`'s accepting start (no
+    // outgoing edges) in the merge list, since removing the start state would
+    // panic.
     #[test]
     fn union_does_not_remove_accepting_start() {
         use crate::CharRange;
@@ -387,14 +385,14 @@ mod tests {
         b.add_transition(1, 0, &Condition::from_range(&rng('a'), &ss).unwrap());
         b.accept(0);
 
-        let u = a.union(&b).unwrap(); // used to panic
+        let u = a.union(&b).unwrap();
         assert!(u.is_match(""), "union must keep the empty string");
     }
 
-    // Regression: unioning a language whose start state has a self-loop with the
-    // empty string used to mark that looping start accepting, so `a*b | ""`
-    // wrongly matched "a", "aa", ... The empty-string acceptance must land on
-    // the union's entry state, not on a demoted looping state.
+    // When a language whose start state has a self-loop is unioned with the
+    // empty string, the empty-string acceptance must land on the union's
+    // entry state, not on the looping start — otherwise `a*b | ""` would
+    // wrongly match "a", "aa", ...
     #[test]
     fn union_with_empty_string_does_not_over_accept() {
         let a_star_b = RegularExpression::parse("a*b", false)

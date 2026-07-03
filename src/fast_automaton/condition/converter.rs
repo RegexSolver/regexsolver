@@ -1,7 +1,6 @@
 use ahash::HashMapExt;
-use nohash_hasher::IntMap;
 
-use crate::{error::EngineError, fast_automaton::spanning_set::SpanningSet};
+use crate::{IntMap, error::EngineError, fast_automaton::spanning_set::SpanningSet};
 
 use super::Condition;
 

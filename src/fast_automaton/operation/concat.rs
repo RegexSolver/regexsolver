@@ -34,6 +34,11 @@ impl FastAutomaton {
     /// state for `other` reached by epsilon transitions. Used by `repeat` to
     /// keep accept states "clean" when they must remain accepting (so they do
     /// not inherit the next copy's transitions).
+    ///
+    /// On error, `self` may be left partially mutated. The fallible steps can
+    /// only fail on a pre-existing condition/spanning-set desync (a broken
+    /// internal invariant), so a corrupted input is the only way to observe
+    /// a half-concatenated result.
     pub(crate) fn concat_mut_with(
         &mut self,
         other: &FastAutomaton,
@@ -41,7 +46,9 @@ impl FastAutomaton {
     ) -> Result<(), EngineError> {
         let execution_profile = ExecutionProfile::get();
         execution_profile.assert_not_timed_out()?;
-        execution_profile.assert_max_number_of_states(self.concat_state_count_heuristic(other))?;
+        execution_profile.assert_max_number_of_states(
+            self.concat_state_count_heuristic(other, force_no_merge),
+        )?;
 
         if other.is_empty() {
             self.make_empty();
@@ -152,7 +159,15 @@ impl FastAutomaton {
         Ok(())
     }
 
-    pub(crate) fn concat_state_count_heuristic(&self, other: &FastAutomaton) -> usize {
+    /// `force_no_merge` must match the flag later passed to
+    /// [`concat_mut_with`](Self::concat_mut_with): a forced concatenation
+    /// keeps `other`'s start as a fresh state, costing one more state than
+    /// the merging estimate.
+    pub(crate) fn concat_state_count_heuristic(
+        &self,
+        other: &FastAutomaton,
+        force_no_merge: bool,
+    ) -> usize {
         if other.is_empty() {
             return 1;
         } else if other.is_empty_string() {
@@ -166,12 +181,13 @@ impl FastAutomaton {
         }
 
         // Determine if we are forced to create a new state to avoid unintended loops
-        let start_state_and_accept_states_not_mergeable = other.in_degree(other.start_state) > 0
-            && self
-                .accept_states
-                .iter()
-                .cloned()
-                .any(|s| self.out_degree(s) > 0);
+        let start_state_and_accept_states_not_mergeable = force_no_merge
+            || (other.in_degree(other.start_state) > 0
+                && self
+                    .accept_states
+                    .iter()
+                    .cloned()
+                    .any(|s| self.out_degree(s) > 0));
 
         let v1 = self.number_of_states();
         let v2 = other.number_of_states();
@@ -563,7 +579,16 @@ mod tests {
             actual_concat.concat_mut(a2).unwrap();
 
             let actual_states = actual_concat.number_of_states();
-            let heuristic_states = a1.concat_state_count_heuristic(a2);
+            let heuristic_states = a1.concat_state_count_heuristic(a2, false);
+
+            // The forced variant must be exact too.
+            let mut forced_concat = a1.clone();
+            forced_concat.concat_mut_with(a2, true).unwrap();
+            assert_eq!(
+                forced_concat.number_of_states(),
+                a1.concat_state_count_heuristic(a2, true),
+                "force_no_merge heuristic mismatch for {desc}",
+            );
 
             assert_eq!(
                 actual_states, heuristic_states,

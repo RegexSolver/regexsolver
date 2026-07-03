@@ -140,11 +140,13 @@ impl Gnfa {
         if self.transitions.len() - 1 == state {
             self.transitions.remove(state);
 
+            // Compact tombstones that are now trailing; see
+            // `FastAutomaton::remove_state`.
             let mut s = state;
-            while self.removed_states.contains(&s) {
+            while s > 0 && self.removed_states.contains(&(s - 1)) {
+                s -= 1;
                 self.transitions.remove(s);
                 self.removed_states.remove(&s);
-                s -= 1;
             }
         } else {
             self.transitions[state].clear();

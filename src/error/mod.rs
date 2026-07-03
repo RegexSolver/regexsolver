@@ -1,7 +1,7 @@
 use std::fmt::{self};
 
 /// An error thrown by the engine.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum EngineError {
     /// Invalid character used in regex.
@@ -35,34 +35,36 @@ pub enum EngineError {
 impl fmt::Display for EngineError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            EngineError::InvalidCharacterInRegex => write!(f, "Invalid character used in regex."),
-            EngineError::OperationTimeOutError => write!(f, "The operation took too much time."),
-            EngineError::AutomatonHasTooManyStates => {
-                write!(f, "The automaton has too many states.")
+            EngineError::InvalidCharacterInRegex => {
+                write!(f, "invalid character used in regex")
             }
-            EngineError::RegexSyntaxError(err) => write!(f, "{err}."),
+            EngineError::OperationTimeOutError => write!(f, "the operation timed out"),
+            EngineError::AutomatonHasTooManyStates => {
+                write!(f, "the automaton has too many states")
+            }
+            EngineError::RegexSyntaxError(err) => write!(f, "invalid regex syntax: {err}"),
             EngineError::ConditionInvalidRange => write!(
                 f,
-                "The provided range cannot be built from the spanning set."
+                "the provided range cannot be built from the spanning set"
             ),
             EngineError::InvalidRepetitionBounds(min, max) => write!(
                 f,
-                "The repetition maximum ({max}) is below its minimum ({min})."
+                "the repetition maximum ({max}) is below its minimum ({min})"
             ),
             EngineError::IncompatibleSpanningSet => write!(
                 f,
-                "The condition does not match the spanning set it is evaluated against."
+                "the condition does not match the spanning set it is evaluated against"
             ),
             EngineError::DeterministicAutomatonRequired => write!(
                 f,
-                "The operation requires a deterministic automaton, and implicit determinization is disabled by the execution profile."
+                "the operation requires a deterministic automaton, and implicit determinization is disabled by the execution profile"
             ),
             EngineError::UnsupportedRegexFeature(feature) => {
-                write!(f, "Unsupported regex feature: {feature}.")
+                write!(f, "unsupported regex feature: {feature}")
             }
             EngineError::RegexTooDeeplyNested(limit) => write!(
                 f,
-                "The regular expression is nested more than {limit} levels deep."
+                "the regular expression is nested more than {limit} levels deep"
             ),
         }
     }

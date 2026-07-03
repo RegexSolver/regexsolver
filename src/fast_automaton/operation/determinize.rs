@@ -99,11 +99,10 @@ mod tests {
     use crate::regex::RegularExpression;
     use regex_charclass::char::Char;
 
-    // Regression: subset construction iterates `spanning_bases`, which used
-    // to omit the spanning set's "rest" range. A transition whose condition
-    // lies in the rest range was therefore silently dropped, so determinizing a
-    // non-deterministic automaton that uses the rest range produced a DFA with
-    // the wrong (smaller) language.
+    // Subset construction iterates `spanning_bases`, which must include the
+    // spanning set's "rest" range: otherwise a transition whose condition
+    // lies in the rest range would be dropped, giving a DFA with a smaller
+    // language than the input NFA.
     #[test]
     fn determinize_keeps_rest_range_transitions() {
         let rng = |c: char| {

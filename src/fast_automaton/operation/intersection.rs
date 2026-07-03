@@ -221,9 +221,8 @@ impl FastAutomaton {
 mod tests {
     use crate::regex::RegularExpression;
 
-    // Regression: `has_intersection` enforced the timeout but not the state
-    // budget, unlike `intersection`: the product pair map could grow
-    // unchecked.
+    // `has_intersection` must enforce the state budget like `intersection`,
+    // so the product pair map cannot grow unchecked.
     #[test]
     fn has_intersection_respects_state_budget() {
         use crate::error::EngineError;

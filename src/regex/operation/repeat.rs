@@ -8,23 +8,26 @@ impl RegularExpression {
     /// [`FastAutomaton::repeat`](crate::fast_automaton::FastAutomaton::repeat).
     #[tracing::instrument(level = "trace", skip(self), fields(min = min, max_opt = tracing::field::debug(max_opt)))]
     pub fn repeat(&self, min: u32, max_opt: Option<u32>) -> RegularExpression {
-        if self.is_total() {
-            return RegularExpression::new_total();
-        } else if self.is_empty() {
-            return RegularExpression::new_empty();
-        } else if self.is_empty_string() {
-            return Self::new_empty_string();
-        } else if let Some(max) = max_opt {
+        if let Some(max) = max_opt {
             if max < min {
-                // No valid repetition count: the language is empty. This
-                // matches `FastAutomaton::repeat`, which disagreed with the
-                // {""} previously returned here.
                 return RegularExpression::new_empty();
             } else if max == 0 {
                 return RegularExpression::new_empty_string();
-            } else if min == 1 && max == 1 {
-                return self.clone();
             }
+        }
+
+        if self.is_total() {
+            return RegularExpression::new_total();
+        } else if self.is_empty() {
+            return if min == 0 {
+                Self::new_empty_string()
+            } else {
+                RegularExpression::new_empty()
+            };
+        } else if self.is_empty_string() {
+            return Self::new_empty_string();
+        } else if min == 1 && max_opt == Some(1) {
+            return self.clone();
         }
 
         match self {
@@ -37,6 +40,10 @@ impl RegularExpression {
                     let new_min = min.checked_mul(*i_min);
                     let new_max = match (max_opt, i_max_opt) {
                         (Some(o_max), Some(i_max)) => o_max.checked_mul(*i_max).map(Some),
+                        // 0·∞ = 0: an inner maximum of 0 pins the product at
+                        // zero no matter how many copies the unbounded outer
+                        // count allows — `(a{0,0})*` is `{""}`, not `a*`.
+                        (None, Some(0)) => Some(Some(0)),
                         _ => Some(None),
                     };
                     if let (Some(new_min), Some(new_max)) = (new_min, new_max) {
@@ -86,9 +93,8 @@ mod tests {
 
     use crate::{CharRange, regex::RegularExpression};
 
-    // Regression: the nested-repetition simplification used to multiply
-    // bounds unchecked; huge (but valid) bounds must fall back to the nested
-    // form instead of overflowing.
+    // Huge (but valid) bounds whose nested-repetition product would overflow
+    // must fall back to the nested form instead of overflowing.
     #[test]
     fn repeat_bound_overflow_keeps_nested_form() {
         let a = RegularExpression::new("a").unwrap();
@@ -101,9 +107,88 @@ mod tests {
         ));
     }
 
+    // The count guards must apply before the total/∅/ε receiver shortcuts,
+    // in the same order as `FastAutomaton::repeat_mut`: `.*{0,0}` is `{""}`
+    // (not `.*`) and `.*{5,2}` is ∅ (not `.*`).
+    #[test]
+    fn repeat_count_guards_precede_receiver_shortcuts() {
+        let total = RegularExpression::new_total();
+        assert!(total.repeat(0, Some(0)).is_empty_string());
+        assert!(total.repeat(5, Some(2)).is_empty());
+        assert!(total.repeat(0, Some(3)).is_total());
+        assert!(total.repeat(2, None).is_total());
+
+        let empty = RegularExpression::new_empty();
+        assert!(empty.repeat(0, Some(0)).is_empty_string());
+        assert!(empty.repeat(0, Some(5)).is_empty_string());
+        assert!(empty.repeat(0, None).is_empty_string());
+        assert!(empty.repeat(2, Some(5)).is_empty());
+        assert!(empty.repeat(2, None).is_empty());
+
+        let empty_string = RegularExpression::new_empty_string();
+        assert!(empty_string.repeat(0, Some(0)).is_empty_string());
+        assert!(empty_string.repeat(5, Some(2)).is_empty());
+        assert!(empty_string.repeat(3, Some(7)).is_empty_string());
+
+        // Each case must agree with the automaton construction.
+        for receiver in [&total, &empty, &empty_string] {
+            for (min, max_opt) in [
+                (0, Some(0)),
+                (0, Some(3)),
+                (1, Some(1)),
+                (5, Some(2)),
+                (0, None),
+                (2, None),
+            ] {
+                let via_regex = receiver.repeat(min, max_opt).to_automaton().unwrap();
+                let via_automaton = receiver
+                    .to_automaton()
+                    .unwrap()
+                    .repeat(min, max_opt)
+                    .unwrap();
+                assert!(
+                    via_regex.equivalent(&via_automaton).unwrap(),
+                    "{receiver}{{{min},{max_opt:?}}}"
+                );
+            }
+        }
+
+        // `simplify` goes through `repeat` and must stay language-preserving
+        // on these edges.
+        let degenerate =
+            RegularExpression::Repetition(Box::new(RegularExpression::new_total()), 0, Some(0));
+        assert!(degenerate.simplify().is_empty_string());
+    }
+
+    // The nested-repetition collapse must treat 0·∞ as 0: an unbounded
+    // repetition of an inner `r{0,0}` (the language {""}) is still {""},
+    // not `r*`. Reachable through public `union` (merging the bounds of
+    // same-base repetitions) and `simplify` on hand-built trees.
+    #[test]
+    fn unbounded_repeat_of_zero_max_repetition_stays_empty_string() {
+        let a = RegularExpression::new("a").unwrap();
+        let inner = RegularExpression::Repetition(Box::new(a), 0, Some(0)); // a{0,0} = {""}
+
+        let star = inner.repeat(0, None); // ({""})* = {""}
+        let automaton = star.to_automaton().unwrap();
+        assert!(automaton.is_match(""));
+        assert!(!automaton.is_match("a"), "(a{{0,0}})* must not contain 'a'");
+
+        // The union of two {""}-denoting repetitions over the same base is
+        // where the collapse used to produce `a*`.
+        let r1 = RegularExpression::Repetition(Box::new(inner.clone()), 0, None);
+        let r2 = RegularExpression::Repetition(Box::new(inner), 0, Some(0));
+        let union = RegularExpression::union_all([&r1, &r2]);
+        let automaton = union.to_automaton().unwrap();
+        assert!(automaton.is_match(""));
+        assert!(
+            !automaton.is_match("a"),
+            "{{\"\"}} ∪ {{\"\"}} must stay {{\"\"}}"
+        );
+    }
+
     // r{min,max} with max < min has no valid repetition count: the language
-    // is empty, consistently with `FastAutomaton::repeat` (the regex side
-    // used to return {""} instead).
+    // is empty, consistently with `FastAutomaton::repeat`.
     #[test]
     fn repeat_with_max_below_min_is_empty() {
         let a = RegularExpression::new("a").unwrap();

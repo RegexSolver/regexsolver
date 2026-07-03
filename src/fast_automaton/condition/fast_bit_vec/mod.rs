@@ -61,6 +61,7 @@ impl FastBitVec {
 
     #[inline]
     pub fn set(&mut self, i: usize, x: bool) {
+        assert!(i < self.n, "The provided bit index is out of bound.");
         let w = i / 64;
         let b = i % 64;
         let flag = 1 << b;

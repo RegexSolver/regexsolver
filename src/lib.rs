@@ -60,7 +60,6 @@ use std::{
 use cardinality::Cardinality;
 use error::EngineError;
 use fast_automaton::FastAutomaton;
-use nohash_hasher::NoHashHasher;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use regex::RegularExpression;
@@ -81,6 +80,42 @@ pub mod execution_profile;
 pub mod fast_automaton;
 /// The parsed-pattern AST: [`RegularExpression`].
 pub mod regex;
+
+/// Re-export of [`regex-charclass`](https://docs.rs/regex-charclass), the
+/// crate behind [`CharRange`]: everything needed to build transition labels
+/// by hand (`Char`, range sets) without adding a separately version-matched
+/// dependency.
+pub use regex_charclass;
+
+/// A no-op [`Hasher`](std::hash::Hasher) for integer keys that are already
+/// well distributed, such as state ids: the key's value is used as the hash
+/// directly. Only the integer key types it is implemented for can be hashed
+/// with it; anything else does not compile.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoHashHasher<Key>(u64, std::marker::PhantomData<Key>);
+
+macro_rules! impl_no_hash_hasher {
+    ($($int:ty => $write:ident),* $(,)?) => {
+        $(
+            impl std::hash::Hasher for NoHashHasher<$int> {
+                #[inline]
+                fn finish(&self) -> u64 {
+                    self.0
+                }
+
+                fn write(&mut self, _: &[u8]) {
+                    unreachable!("NoHashHasher hashes integer keys through their value");
+                }
+
+                #[inline]
+                fn $write(&mut self, n: $int) {
+                    self.0 = n as u64;
+                }
+            }
+        )*
+    };
+}
+impl_no_hash_hasher!(u32 => write_u32, u64 => write_u64, usize => write_usize);
 
 /// A hash map keyed by integer state ids using a no-op hasher. Internal.
 pub(crate) type IntMap<Key, Value> = HashMap<Key, Value, BuildHasherDefault<NoHashHasher<Key>>>;
@@ -486,6 +521,8 @@ impl Term {
     ///
     /// An unbounded end (`n..`) means unlimited repetition; an unset start
     /// (`..n` or `..=n`) means zero. Exclusive bounds are normalized to inclusive.
+    /// A range containing no count at all (`0..0`, `3..3`, `5..2`) yields the
+    /// empty language.
     ///
     /// # Examples
     ///
@@ -498,10 +535,11 @@ impl Term {
     /// assert_eq!("(abc){3,5}", term.repeat(3..=5).unwrap().to_pattern().unwrap());
     /// assert_eq!("(abc){3,5}", term.repeat(3..6).unwrap().to_pattern().unwrap());
     /// assert_eq!("(abc){0,2}", term.repeat(..=2).unwrap().to_pattern().unwrap());
+    /// assert!(term.repeat(0..0).unwrap().is_empty().unwrap());
     /// ```
     #[tracing::instrument(level = "debug", skip_all, fields(self_deterministic = self.is_deterministic(), min = tracing::field::Empty, max = tracing::field::Empty))]
     pub fn repeat(&self, range: impl RangeBounds<u32>) -> Result<Term, EngineError> {
-        let min = match range.start_bound() {
+        let mut min = match range.start_bound() {
             Bound::Included(&n) => n,
             Bound::Excluded(&n) => n.saturating_add(1),
             Bound::Unbounded => 0,
@@ -511,6 +549,9 @@ impl Term {
             Bound::Excluded(&n) => Some(n.saturating_sub(1)),
             Bound::Unbounded => None,
         };
+        if matches!(range.end_bound(), Bound::Excluded(&0)) {
+            min = min.max(1);
+        }
         let span = tracing::Span::current();
         span.record("min", min);
         span.record("max", tracing::field::debug(max_opt));
@@ -933,12 +974,17 @@ impl Term {
 /// The underlying automaton is computed once at construction. Yields
 /// `Result<String, EngineError>`: errors (from construction or generation)
 /// are surfaced as `Err` items, after which the iterator ends.
+#[derive(Debug)]
 pub struct StringGenerator<'a> {
     automaton: Option<Cow<'a, FastAutomaton>>,
     pending_error: Option<EngineError>,
     offset: usize,
     buffer: VecDeque<String>,
 }
+
+// Every terminal state (language exhausted, or error yielded) drops the
+// automaton, after which `next` returns `None` forever.
+impl std::iter::FusedIterator for StringGenerator<'_> {}
 
 impl Iterator for StringGenerator<'_> {
     type Item = Result<String, EngineError>;
@@ -975,6 +1021,67 @@ mod tests {
     use crate::regex::RegularExpression;
 
     use super::*;
+
+    // A range containing no count at all (`0..0`, `3..3`, `5..2`) is the
+    // empty language, while a range containing exactly the count 0 (`0..=0`,
+    // `0..1`) is the empty-string language.
+    #[test]
+    #[allow(clippy::reversed_empty_ranges)] // deliberately empty ranges are the point
+    fn repeat_empty_ranges_yield_the_empty_language() {
+        let regex_term = Term::from_pattern("abc").unwrap();
+        let automaton_term = regex_term.determinize().unwrap();
+        assert!(matches!(automaton_term, Term::Automaton(..)));
+
+        for term in [regex_term, automaton_term] {
+            // Ranges containing no count at all: the empty language.
+            assert!(term.repeat(0..0).unwrap().is_empty().unwrap());
+            assert!(term.repeat(3..3).unwrap().is_empty().unwrap());
+            assert!(term.repeat(5..2).unwrap().is_empty().unwrap());
+
+            // Ranges containing exactly the count 0: the empty-string language.
+            assert!(term.repeat(0..=0).unwrap().is_empty_string().unwrap());
+            assert!(term.repeat(0..1).unwrap().is_empty_string().unwrap());
+        }
+    }
+
+    // Pins the intentional `Display` behavior: regex-backed terms render
+    // their pattern; automaton-backed terms render Graphviz DOT. Use
+    // `to_pattern` to obtain a parseable pattern for either kind.
+    #[test]
+    fn display_is_pattern_for_regexes_and_dot_for_automata() {
+        let regex_term = Term::from_pattern("(abc){2}").unwrap();
+        assert_eq!("(abc){2}", regex_term.to_string());
+
+        let automaton_term = regex_term.determinize().unwrap();
+        assert!(matches!(automaton_term, Term::Automaton(..)));
+        assert!(automaton_term.to_string().starts_with("digraph"));
+        let reparsed: Term = automaton_term.to_pattern().unwrap().parse().unwrap();
+        assert!(reparsed.equivalent(&automaton_term).unwrap());
+    }
+
+    // `to_pattern` (state elimination) can grow super-polynomially, so it
+    // must honor the execution deadline and fail with a timeout rather than
+    // run unbudgeted.
+    #[test]
+    fn to_pattern_honors_the_execution_deadline() {
+        let term = Term::from_pattern(".*abc.*def.*")
+            .unwrap()
+            .determinize()
+            .unwrap();
+
+        crate::execution_profile::ExecutionProfileBuilder::new()
+            .execution_timeout(0)
+            .build()
+            .run(|| {
+                assert_eq!(
+                    EngineError::OperationTimeOutError,
+                    term.to_pattern().unwrap_err()
+                );
+            });
+
+        // Without the 0ms deadline the very same conversion succeeds.
+        assert!(term.to_pattern().is_ok());
+    }
 
     #[test]
     fn test_complement() -> Result<(), String> {

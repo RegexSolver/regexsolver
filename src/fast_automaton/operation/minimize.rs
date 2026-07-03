@@ -52,8 +52,13 @@ impl FastAutomaton {
             }
         }
 
+        // `in_worklist` is indexed by *partition* id and must stay aligned
+        // with `partitions` (it grows by one per split, below). Sizing it by
+        // state count would leave every split-created partition with a stale
+        // `true` at its slot, breaking Hopcroft's "smaller half" rule and
+        // degrading the splitter work toward O(n²).
         let mut worklist: Vec<usize> = (0..partitions.len()).collect();
-        let mut in_worklist: Vec<bool> = vec![true; max_states];
+        let mut in_worklist: Vec<bool> = vec![true; partitions.len()];
 
         let bases = self.spanning_bases()?;
 

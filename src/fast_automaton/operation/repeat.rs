@@ -200,7 +200,7 @@ impl FastAutomaton {
         // delta must saturate: `repeat_mut` early-returns for those inputs
         // right after this estimate anyway.
         let concat_cost = self
-            .concat_state_count_heuristic(self)
+            .concat_state_count_heuristic(self, false)
             .saturating_sub(v_original);
 
         // 2. Early state allocation for 0-minimum repeats with incoming start edges
@@ -240,25 +240,41 @@ impl FastAutomaton {
                 }
                 return v_modified;
             } else {
-                // r{min,} = rᵐⁱⁿ · r*. `current_states` already accounts for the
-                // rᵐⁱⁿ part. The star r* = repeat(0, None) is independent of
-                // `min` and small, so build it to obtain its exact contribution
-                // under the merging concatenation onto rᵐⁱⁿ (whose accept states
-                // carry outgoing edges iff `acc_out_gt_0`).
+                // r{min,} = rᵐⁱⁿ · r*. `current_states` already accounts for
+                // the rᵐⁱⁿ part. The star's size and whether its start has
+                // incoming edges follow directly from the `repeat_mut(0, None)`
+                // construction, so derive them here rather than building the
+                // star automaton just to measure it:
+                // - start with incoming edges → fresh accepting start
+                //   (v + 1 states); epsilon "transitions" copy outgoing edges,
+                //   so nothing ever points into the fresh start;
+                // - single dead-end accept with an incoming-edge-free start →
+                //   in-place loop rooted at the old accept (v - 1 states),
+                //   which keeps incoming edges (its surviving predecessors, or
+                //   the self-loop copied from a direct start→accept edge);
+                // - otherwise → in-place loop (v states) keeping the
+                //   incoming-edge-free start.
                 let acc_out_gt_0 = self.accept_states.iter().any(|&s| self.out_degree(s) > 0);
-                match self.repeat(0, None) {
-                    Ok(star) => {
-                        let star_states = star.number_of_states();
-                        let not_mergeable = star.in_degree(star.start_state) > 0 && acc_out_gt_0;
-                        let final_concat_cost = if not_mergeable {
-                            star_states
-                        } else {
-                            star_states.saturating_sub(1)
-                        };
-                        return current_states + final_concat_cost;
-                    }
-                    Err(_) => return current_states,
-                }
+                let (star_states, star_start_has_in_edges) = if in_deg_start {
+                    (v_original + 1, false)
+                } else if self.accept_states.len() == 1
+                    && self
+                        .accept_states
+                        .iter()
+                        .next()
+                        .is_some_and(|&s| self.out_degree(s) == 0)
+                {
+                    (v_original - 1, true)
+                } else {
+                    (v_original, false)
+                };
+                let not_mergeable = star_start_has_in_edges && acc_out_gt_0;
+                let final_concat_cost = if not_mergeable {
+                    star_states
+                } else {
+                    star_states.saturating_sub(1)
+                };
+                return current_states + final_concat_cost;
             }
         }
 
@@ -281,15 +297,10 @@ impl FastAutomaton {
 
 #[cfg(test)]
 mod tests {
-    // Regression: the r{0,1} fast path used to insert into `accept_states`
-    // directly, leaving a stale `minimal = true` on a mutated automaton;
-    // `minimize()` (which trusts the flag) then silently refused to
-    // minimize it.
-    // Regression (found by the repeat decomposition-oracle proptest): the
-    // empty-language guard checked `accept_states.is_empty()` only, so an
-    // automaton whose accepts are all unreachable (language ∅ too) fell
-    // through to the general construction, which panicked on the stale
-    // accept ids after concatenation pruned them.
+    // Repeating an empty-language automaton must respect ∅* = {""} and
+    // ∅ⁿ = ∅ even when the emptiness comes from unreachable accept states or
+    // dead-but-reachable transitions (rather than an absent accept set): the
+    // repeat must not revive those dead transitions.
     #[test]
     fn repeat_of_unreachable_accept_empty_language() {
         let mut a = crate::fast_automaton::FastAutomaton::new_empty();
@@ -305,8 +316,7 @@ mod tests {
         assert!(a.repeat(2, None).unwrap().is_empty()); // ∅{2,} = ∅
 
         // A dead automaton with REACHABLE transitions: ∅* must still be
-        // exactly {""}; marking the start accepting used to revive the
-        // dead self-loop into b*.
+        // exactly {""}, without reviving the dead self-loop into b*.
         let range_b = crate::CharRange::new_from_range(
             regex_charclass::char::Char::new('b')..=regex_charclass::char::Char::new('b'),
         );
@@ -320,10 +330,9 @@ mod tests {
         assert!(dead_loop.repeat(1, None).unwrap().is_empty());
     }
 
-    // state-count heuristic underflowed on empty-language automata with
-    // more than one state, because the concat heuristic short-circuits ∅
-    // to 1, panicking in the public `repeat` before the empty-language
-    // early-return could run.
+    // Repeating a multi-state empty-language automaton must not underflow the
+    // state-count heuristic (the concat heuristic short-circuits ∅ to 1) in
+    // the public `repeat` before the empty-language early-return runs.
     #[test]
     fn repeat_of_multi_state_empty_language_does_not_underflow() {
         let mut a = crate::fast_automaton::FastAutomaton::new_empty();
@@ -340,6 +349,9 @@ mod tests {
         assert!(bounded.is_empty());
     }
 
+    // The r{0,1} fast path changes the language (it gains ""), so it must go
+    // through `accept()` and clear the `minimal` flag; otherwise `minimize()`
+    // (which trusts the flag) would refuse to minimize the mutated automaton.
     #[test]
     fn repeat_zero_or_one_clears_the_minimal_flag() {
         let mut a = crate::regex::RegularExpression::new("ab")
@@ -359,9 +371,7 @@ mod tests {
     use crate::fast_automaton::FastAutomaton;
     use crate::regex::RegularExpression;
 
-    // Regression: `repeat(0, Some(0))` on a non-empty language used to return
-    // L ∪ {""} instead of just {""}; the general path left the original
-    // language reachable and only made the start accepting. r⁰ must be {""}.
+    // r⁰ must be exactly {""} for a non-empty language, not L ∪ {""}.
     #[test]
     fn bug_repeat_zero_zero_on_non_empty() {
         let a = RegularExpression::parse("abc", false)
@@ -376,10 +386,9 @@ mod tests {
         );
     }
 
-    // Regression: repeating the empty-string automaton ({""}) used to reach the
-    // unbounded "tight loop" branch, which removed the single state while it was
-    // still the start state and panicked. {""} is a fixpoint of repetition, so
-    // every bound must return {""} without panicking.
+    // {""} is a fixpoint of repetition: every bound must return {""} without
+    // panicking (in particular the unbounded "tight loop" branch must not try
+    // to remove the single state while it is still the start state).
     #[test]
     fn repeat_of_empty_string_is_fixpoint() {
         let empty_string = FastAutomaton::new_empty_string();
@@ -400,10 +409,8 @@ mod tests {
         }
     }
 
-    // Regression: empty.repeat(_, None) used to panic on
-    // `accept_states.iter().next().unwrap()` because the unbounded-repeat
-    // branch assumed at least one accept state. Language theory: ∅* = {""}
-    // and ∅⁺ = ∅; both must be returnable without panic.
+    // Unbounded repetition of the empty language must not panic (the branch
+    // must not assume an accept state exists): ∅* = {""} and ∅⁺ = ∅.
     #[test]
     fn empty_repeat_unbounded_does_not_panic() {
         let empty = FastAutomaton::new_empty();

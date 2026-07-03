@@ -257,9 +257,8 @@ impl RegularExpression {
 mod tests {
     use super::*;
 
-    // Regression: merging adjacent repetitions used to add bounds unchecked;
-    // huge (but valid) bounds must fall back to plain concatenation instead
-    // of overflowing.
+    // Merging adjacent repetitions whose summed bounds would overflow must
+    // fall back to plain concatenation instead of overflowing.
     #[test]
     fn concat_merge_bound_overflow_falls_back_to_concat() {
         let a = RegularExpression::new("a").unwrap();

@@ -62,9 +62,9 @@ impl FastAutomaton {
     #[inline]
     pub fn new_state(&mut self) -> State {
         self.minimal = false;
-        if let Some(new_state) = self.removed_states.clone().iter().next() {
-            self.removed_states.remove(new_state);
-            *new_state
+        if let Some(new_state) = self.removed_states.iter().next().copied() {
+            self.removed_states.remove(&new_state);
+            new_state
         } else {
             self.transitions.push(Transitions::default());
             self.transitions.len() - 1
@@ -345,10 +345,10 @@ impl FastAutomaton {
             self.transitions.remove(state);
 
             let mut s = state;
-            while self.removed_states.contains(&s) {
+            while s > 0 && self.removed_states.contains(&(s - 1)) {
+                s -= 1;
                 self.transitions.remove(s);
                 self.removed_states.remove(&s);
-                s -= 1;
             }
         } else {
             self.transitions[state].clear();
@@ -373,33 +373,32 @@ impl FastAutomaton {
             }
         }
 
+        if states.is_empty() {
+            return;
+        }
+
         self.accept_states.retain(|e| !states.contains(e));
 
         self.minimal = false;
-        let mut states_to_remove = Vec::with_capacity(states.len());
 
         for &state in states {
             if self.transitions.len() - 1 == state {
                 self.transitions.remove(state);
 
                 let mut s = state;
-                while self.removed_states.contains(&s) {
+                while s > 0 && self.removed_states.contains(&(s - 1)) {
+                    s -= 1;
                     self.transitions.remove(s);
                     self.removed_states.remove(&s);
-                    s -= 1;
                 }
             } else {
                 self.transitions[state].clear();
                 self.removed_states.insert(state);
             }
-            states_to_remove.push(state);
-        }
-        if states_to_remove.is_empty() {
-            return;
         }
 
         for transitions in self.transitions.iter_mut() {
-            for state in &states_to_remove {
+            for state in states {
                 if transitions.is_empty() {
                     break;
                 }
@@ -408,11 +407,11 @@ impl FastAutomaton {
             }
         }
 
-        for state in &states_to_remove {
+        for state in states {
             self.transitions_in.remove(state);
         }
         for predecessors in self.transitions_in.values_mut() {
-            for state in &states_to_remove {
+            for state in states {
                 predecessors.remove(state);
             }
         }
@@ -574,10 +573,10 @@ mod tests {
         assert!(!automaton.is_match("a"));
     }
 
-    // Regression guard: `Condition::from_range` silently drops
-    // partially-covered bases, so a naive "convert, merge only on error"
-    // implementation would truncate [a-e] to the existing [a-c] base. The
-    // exactness round-trip must force a spanning-set refinement instead.
+    // `Condition::from_range` only sets bits for fully-covered bases, so
+    // adding a range that partially covers the "rest" (here [a-e] over an
+    // existing [a-c] base) must refine the spanning set to stay exact rather
+    // than truncate [a-e] to [a-c].
     #[test]
     fn add_transition_from_range_is_exact_on_partial_coverage() {
         let mut automaton = FastAutomaton::new_empty();
@@ -598,12 +597,41 @@ mod tests {
         assert!(!automaton.is_match("f"));
     }
 
-    // Regression: `remove_states` used to skip the `transitions_in` cleanup
-    // that the single-state variant `remove_state` performs (drop entries
-    // keyed by removed states; purge them from surviving predecessor sets).
-    // Without that cleanup, `in_degree` of removed states stayed stale and
-    // any caller (repeat, concat, union, difference, to_regex) would see
-    // wrong values.
+    // Removing the trailing state must also physically drop tombstones that
+    // become trailing, so `transitions` does not stay at its peak length
+    // forever.
+    #[test]
+    fn remove_state_compacts_trailing_tombstones() {
+        let mut a = FastAutomaton::new_empty(); // state 0
+        let s1 = a.new_state();
+        let s2 = a.new_state();
+        let s3 = a.new_state();
+
+        a.remove_state(s2); // tombstoned (not trailing)
+        assert_eq!(4, a.transitions.len());
+        a.remove_state(s3); // trailing: pops s3 AND compacts the s2 tombstone
+        assert_eq!(2, a.transitions.len());
+        assert!(a.removed_states.is_empty());
+        assert!(a.has_state(s1));
+
+        // Same through `remove_states`, in one call.
+        let mut a = FastAutomaton::new_empty();
+        let s1 = a.new_state();
+        let s2 = a.new_state();
+        let s3 = a.new_state();
+        let mut to_remove = IntSet::default();
+        to_remove.insert(s2);
+        to_remove.insert(s3);
+        a.remove_states(&to_remove);
+        assert_eq!(2, a.transitions.len());
+        assert!(a.removed_states.is_empty());
+        assert!(a.has_state(s1));
+    }
+
+    // `remove_states` must perform the same `transitions_in` cleanup as the
+    // single-state `remove_state` (drop entries keyed by removed states and
+    // purge them from surviving predecessor sets); otherwise `in_degree` of a
+    // removed state stays stale for callers like repeat/concat/union.
     #[test]
     fn remove_states_cleans_transitions_in() {
         let mut a = FastAutomaton::new_empty();

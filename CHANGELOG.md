@@ -46,13 +46,22 @@ below.
 - `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo doc --no-deps`
   (with `RUSTDOCFLAGS=-D warnings`), and a dependency vulnerability audit
   (`rustsec/audit-check`) to CI.
+- `regex_charclass` is re-exported at the crate root, so automata can be
+  built by hand (`Char`, `CharRange`) without adding a separately
+  version-matched dependency.
+- `NoHashHasher`, the crate-owned no-op hasher behind the `IntSet` state-id
+  sets (replaces the `nohash-hasher` dependency, keeping 0.x types out of
+  the public API).
+- `EngineError` implements `Clone`; `StringGenerator` implements `Debug` and
+  `FusedIterator`; `ExecutionProfileBuilder` implements `Debug` and `Clone`.
 
 ### Changed
 - `Term::to_regex`/`to_pattern` and `FastAutomaton::to_regex` are now fallible
   (`Result<_, EngineError>`) and honor the `ExecutionProfile` timeout, since
   state elimination can grow super-polynomially on adversarial automata.
-  `Term`'s `Display` still renders a pattern but does so best-effort (without a
-  deadline), so it cannot fail.
+  `Term`'s `Display` therefore renders a pattern only for regex-backed terms;
+  automaton-backed terms display as Graphviz DOT (use `to_pattern` for a
+  parseable pattern).
 - `ExecutionProfile` redesigned as an immutable, thread-local-aware config
   built via the new `ExecutionProfileBuilder`, governing execution timeouts,
   state-count limits, and an `implicit_determinization` toggle.
@@ -91,6 +100,8 @@ below.
   `Condition::get_binary_representation` to `binary_representation`,
   `ConditionConverter::get_from_spanning_set`/`get_to_spanning_set` to
   `from_spanning_set`/`to_spanning_set`.
+- Error messages follow the std convention (lowercase, no trailing
+  punctuation) so they compose cleanly when wrapped by callers.
 - Edition bumped to 2024 and `Cargo.toml` metadata (`description`,
   `categories`) updated.
 
@@ -102,6 +113,8 @@ below.
 - The `tokenizer` module.
 - Unused `log`, `rand`, and `lazy_static` dependencies, and the `regex`
   crate dependency (now dev-only, used by integration tests).
+- The `nohash-hasher` dependency (replaced by the crate-owned
+  `NoHashHasher`; see Added).
 - `EngineError` variants `AutomatonShouldBeDeterministic`, `TooMuchTerms`,
   `ConditionIndexOutOfBound`, `TokenError`, and the `is_server_error` method.
 - The `max_number_of_terms` execution-profile limit (no longer enforced).
