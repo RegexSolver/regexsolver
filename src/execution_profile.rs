@@ -124,7 +124,7 @@ impl ExecutionProfile {
     /// Return empty if `execution_timeout` is not exceeded.
     ///
     /// Return [`EngineError::OperationTimeOutError`] otherwise.
-    pub(crate) fn assert_not_timed_out(&self) -> Result<(), EngineError> {
+    pub fn assert_not_timed_out(&self) -> Result<(), EngineError> {
         if let Some(execution_deadline) = self.execution_deadline {
             if Instant::now() > execution_deadline {
                 Err(EngineError::OperationTimeOutError)
@@ -141,10 +141,7 @@ impl ExecutionProfile {
     /// `max_number_of_states` is the largest number of states an automaton may
     /// hold, so `number_of_states == max_number_of_states` is allowed and only
     /// strictly exceeding it returns [`EngineError::AutomatonHasTooManyStates`].
-    pub(crate) fn assert_max_number_of_states(
-        &self,
-        number_of_states: usize,
-    ) -> Result<(), EngineError> {
+    pub fn assert_max_number_of_states(&self, number_of_states: usize) -> Result<(), EngineError> {
         if let Some(max_number_of_states) = self.max_number_of_states
             && number_of_states > max_number_of_states
         {
@@ -158,7 +155,7 @@ impl ExecutionProfile {
     /// Return empty if it is.
     ///
     /// Return [`EngineError::DeterministicAutomatonRequired`] otherwise.
-    pub(crate) fn assert_implicit_determinization_allowed(&self) -> Result<(), EngineError> {
+    pub fn assert_implicit_determinization_allowed(&self) -> Result<(), EngineError> {
         if self.implicit_determinization {
             Ok(())
         } else {
