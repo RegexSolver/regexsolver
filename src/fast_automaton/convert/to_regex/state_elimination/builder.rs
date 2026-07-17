@@ -156,7 +156,7 @@ impl Gnfa {
         for transitions in self.transitions.iter_mut() {
             transitions.remove(&state);
         }
-        for (_, transitions) in self.transitions_in.iter_mut() {
+        for transitions in self.transitions_in.values_mut() {
             transitions.remove(&state);
         }
     }
