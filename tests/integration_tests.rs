@@ -37,7 +37,7 @@ fn test_regular_expression_parsing() {
     let reader = BufReader::new(file);
     for regex in reader.lines() {
         let regex = regex.unwrap();
-        println!("{}", &regex);
+        println!("{}", regex);
         assert_regex(&regex);
     }
 }
