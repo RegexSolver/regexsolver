@@ -789,17 +789,18 @@ impl Term {
 
     /// Returns `true` if the term matches all possible strings.
     pub fn is_total(&self) -> Result<bool, EngineError> {
-        match self {
-            Term::RegularExpression(regex) => Ok(regex.is_total()),
-            Term::Automaton(automaton) => {
-                if automaton.is_total() {
-                    Ok(true)
-                } else if automaton.is_deterministic() {
-                    Ok(false)
-                } else {
-                    Ok(automaton.determinize()?.is_total())
-                }
-            }
+        if let Term::RegularExpression(regex) = self
+            && regex.is_total()
+        {
+            return Ok(true);
+        }
+        let automaton = self.to_automaton()?;
+        if automaton.is_total() {
+            Ok(true)
+        } else if automaton.is_deterministic() {
+            Ok(false)
+        } else {
+            Ok(automaton.determinize()?.is_total())
         }
     }
 
@@ -1112,6 +1113,25 @@ mod tests {
         assert!(union.is_total().unwrap());
 
         Ok(())
+    }
+
+    #[test]
+    fn union_of_regex_with_complement_pattern_is_total() {
+        for pattern in ["(abc|de)", "a", "x*", "[0-9]{2,4}"] {
+            let term = Term::from_pattern(pattern).unwrap();
+            let complement_pattern = term.complement().unwrap().to_pattern().unwrap();
+            let complement = Term::from_pattern(&complement_pattern).unwrap();
+            assert!(matches!(complement, Term::RegularExpression(..)));
+
+            let union = term.union([&complement]).unwrap();
+            assert!(matches!(union, Term::RegularExpression(..)));
+            assert!(union.is_total().unwrap(), "not total for {pattern}");
+            assert_eq!(
+                ".*",
+                union.minimize().unwrap().to_pattern().unwrap(),
+                "wrong minimized pattern for {pattern}"
+            );
+        }
     }
 
     #[test]
