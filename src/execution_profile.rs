@@ -11,7 +11,7 @@ use crate::error::EngineError;
 ///
 /// ## Limiting the number of states
 /// ```
-/// use regexsolver::{Term, execution_profile::{ExecutionProfile, ExecutionProfileBuilder}, error::EngineError};
+/// use regexsolver::{Term, execution_profile::{ExecutionProfile, ExecutionProfileBuilder}, error::EngineError, fast_automaton::GenerationOrder};
 ///
 /// let term1 = Term::from_pattern(".*abcdef.*").unwrap();
 /// let term2 = Term::from_pattern(".*defabc.*").unwrap();
@@ -27,7 +27,7 @@ use crate::error::EngineError;
 ///
 /// ## Limiting the execution time
 /// ```
-/// use regexsolver::{Term, execution_profile::{ExecutionProfile, ExecutionProfileBuilder}, error::EngineError};
+/// use regexsolver::{Term, execution_profile::{ExecutionProfile, ExecutionProfileBuilder}, error::EngineError, fast_automaton::GenerationOrder};
 ///
 /// let term = Term::from_pattern(".*abc.*cdef.*sqdsqf.*").unwrap();
 ///
@@ -36,7 +36,7 @@ use crate::error::EngineError;
 ///     .build();
 ///
 /// execution_profile.run(|| {
-///     assert_eq!(EngineError::OperationTimeOutError, term.generate_strings(1000, 1_000_000).unwrap_err());
+///     assert_eq!(EngineError::OperationTimeOutError, term.generate_strings(1000, 1_000_000, GenerationOrder::Exhaustive).unwrap_err());
 /// });
 /// ```
 ///
@@ -372,7 +372,7 @@ impl ThreadLocalParams {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Term, regex::RegularExpression};
+    use crate::{Term, fast_automaton::GenerationOrder, regex::RegularExpression};
 
     use super::*;
 
@@ -531,7 +531,10 @@ mod tests {
                 assert!(term.is_total().is_ok());
                 assert!(term.cardinality().is_ok());
                 assert!(term.minimize().is_ok());
-                assert!(term.generate_strings(5, 0).is_ok());
+                assert!(
+                    term.generate_strings(5, 0, GenerationOrder::Exhaustive)
+                        .is_ok()
+                );
 
                 // ...and the rest of the API never needed one.
                 assert!(term.concat(std::slice::from_ref(&other)).is_ok());
@@ -577,7 +580,8 @@ mod tests {
             .run(|| {
                 assert_eq!(
                     EngineError::OperationTimeOutError,
-                    term.generate_strings(100, 1_000_000).unwrap_err()
+                    term.generate_strings(100, 1_000_000, GenerationOrder::Exhaustive)
+                        .unwrap_err()
                 );
 
                 let run_duration = Instant::now().duration_since(start_time).as_millis();

@@ -54,6 +54,19 @@ below.
   the public API).
 - `EngineError` implements `Clone`; `StringGenerator` implements `Debug` and
   `FusedIterator`; `ExecutionProfileBuilder` implements `Debug` and `Clone`.
+- `GenerationOrder`, the order `generate_strings`/`iter_strings` walk a
+  language in. `Exhaustive` is the previous behaviour: shortest strings
+  first, one path expanded in full before the next. `Sampled` covers every
+  shape the automaton holds before asking any of them for a second string,
+  and picks representative characters (`a`, `0`, `A`, ` `, ...) spread over
+  each range, so `.*abc.*` yields `abc`, `abc `, `aabc`, `0abc`, ... instead
+  of a million variations of `abc\u{0}`. It stays deterministic and pages
+  with `offset` the same way.
+- `GenerationOptions`, what `generate_strings`/`iter_strings` may generate:
+  the order, plus an optional charset (`with_charset(CharRange)`) that keeps
+  generation to a set of characters. Only strings made entirely of them come
+  out — a path needing a ruled-out character is dropped whole, never
+  shortened — so `.*abc.*` over `[ -~]` yields `abc`, `abc `, `abc!`, ...
 
 ### Changed
 - `Term::to_regex`/`to_pattern` and `FastAutomaton::to_regex` are now fallible
@@ -70,8 +83,10 @@ below.
   `&[a, b]`, `[&a, &b]`, and `Vec<Term>` all work without cloning.
 - `repeat` now takes `impl RangeBounds<u32>` (e.g. `3..6`, `..=2`) instead of
   explicit min/max parameters.
-- `generate_strings` now takes `(limit, offset)` for pagination instead of a
-  single `count`.
+- `generate_strings` now takes `(limit, offset, options)`: pagination instead
+  of a single `count`, plus the `GenerationOptions` to generate under (an
+  order, and optionally a charset). A `GenerationOrder` converts into options,
+  so it can be passed on its own. `iter_strings` takes the same `options`.
 - `is_empty`, `is_total`, and `is_empty_string` now return
   `Result<bool, EngineError>` instead of `bool`.
 - `are_equivalent`/`is_subset_of` renamed to `equivalent`/`subset`.

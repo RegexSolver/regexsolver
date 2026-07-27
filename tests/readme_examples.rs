@@ -7,6 +7,7 @@
 use regexsolver::Term;
 use regexsolver::error::EngineError;
 use regexsolver::execution_profile::ExecutionProfileBuilder;
+use regexsolver::fast_automaton::GenerationOrder;
 
 #[test]
 fn readme_automaton_building_example() -> Result<(), EngineError> {
@@ -44,7 +45,45 @@ fn readme_hero_example() -> Result<(), EngineError> {
     assert!(both.matches("abxy")?);
 
     // ...and sample them:
-    assert_eq!(both.generate_strings(2, 0)?, ["xyxy", "abxy"]);
+    assert_eq!(
+        both.generate_strings(2, 0, GenerationOrder::Exhaustive)?,
+        ["xyxy", "abxy"]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn readme_generating_strings_example() -> Result<(), EngineError> {
+    let term = Term::from_pattern("[a-z]{2}[0-9]")?.minimize()?;
+
+    assert_eq!(
+        term.generate_strings(3, 0, GenerationOrder::Exhaustive)?,
+        ["aa0", "aa1", "aa2"]
+    );
+    assert_eq!(
+        term.generate_strings(3, 0, GenerationOrder::Sampled)?,
+        ["aa0", "re6", "ij2"]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn readme_generating_strings_charset_example() -> Result<(), EngineError> {
+    use regexsolver::CharRange;
+    use regexsolver::fast_automaton::GenerationOptions;
+    use regexsolver::regex_charclass::char::Char;
+
+    let term = Term::from_pattern(".*abc.*")?.minimize()?;
+
+    let printable = CharRange::new_from_range(Char::new(' ')..=Char::new('~'));
+    let options = GenerationOptions::from(GenerationOrder::Exhaustive).with_charset(printable);
+
+    assert_eq!(
+        term.generate_strings(3, 0, options)?,
+        ["abc", "abc ", "abc!"]
+    );
 
     Ok(())
 }

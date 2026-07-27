@@ -4,7 +4,7 @@
 //! cargo run --example relate -- "(abc|de){2}" ".*xy"
 //! ```
 
-use regexsolver::Term;
+use regexsolver::{Term, fast_automaton::GenerationOrder};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
@@ -34,7 +34,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("a ∩ b = [] (no string matches both)");
     } else {
         println!("a ∩ b = {}", intersection.to_pattern()?);
-        println!("        e.g. {:?}", intersection.generate_strings(5, 0)?);
+        println!(
+            "        e.g. {:?}",
+            intersection.generate_strings(5, 0, GenerationOrder::Sampled)?
+        );
     }
 
     let pattern_or_empty = |term: Term| -> Result<String, Box<dyn std::error::Error>> {

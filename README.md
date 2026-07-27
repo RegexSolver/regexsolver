@@ -8,7 +8,7 @@
 The `regex` crate tells you whether a *string* matches a pattern. **RegexSolver treats patterns as the sets of strings they match** — so you can intersect, subtract, compare, complement, and enumerate them, and get the result back as a regex.
 
 ```rust
-use regexsolver::Term;
+use regexsolver::{Term, fast_automaton::GenerationOrder};
 
 let a: Term = "(ab|xy){2}".parse()?;
 let b: Term = ".*xy".parse()?;
@@ -21,13 +21,13 @@ assert_eq!(both.to_pattern()?, "(ab|xy)xy");
 assert!(both.matches("abxy")?);
 
 // ...and sample them:
-assert_eq!(both.generate_strings(2, 0)?, ["xyxy", "abxy"]);
+assert_eq!(both.generate_strings(2, 0, GenerationOrder::Exhaustive)?, ["xyxy", "abxy"]);
 ```
 
 ## What would you use this for?
 
 - **Safe migrations** - `old_rule.subset(&new_rule)?`: does the new validation pattern accept *everything* the old one did?
-- **Test-data generation** - `term.generate_strings(100, 0)?`: produce strings matching any pattern, with pagination.
+- **Test-data generation** - `term.generate_strings(100, 0, GenerationOrder::Sampled)?`: produce strings matching any pattern, spread over the cases the pattern allows, restricted to the characters you can use, with pagination.
 - **Rule analysis**: find shadowed or overlapping routes, firewall rules, and validators with `intersection` / `difference`.
 - **Equivalence proofs** - `a.equivalent(&b)?`: show that two differently-written patterns match exactly the same strings.
 - **Pattern simplification**: every operation returns a `Term` you can turn back into a regex pattern with `to_pattern()`.
@@ -90,11 +90,40 @@ RegexSolver is based on the [regex-syntax](https://docs.rs/regex-syntax/0.8.5/re
 | `concat(&self, terms)` / `repeat(&self, range)` | Sequence and repeat languages; `range` is any Rust range expression (`2..=5`, `1..`, `..3`, ...). |
 | `equivalent(&self, other)` / `subset(&self, other)` | Compare languages. |
 | `is_empty()` / `is_total()` / `length()` / `cardinality()` | Analyze a language: matches nothing? everything? string lengths? how many strings? |
-| `generate_strings(limit, offset)` | Enumerate matching strings eagerly (call `minimize()` once first when paginating). |
-| `iter_strings()` | Lazy iterator equivalent; computes the automaton once and yields strings in batches. |
+| `generate_strings(limit, offset, options)` | Enumerate matching strings eagerly (call `minimize()` once first when paginating). |
+| `iter_strings(options)` | Lazy iterator equivalent; computes the automaton once and yields strings in batches. |
 | `to_pattern()` / `to_automaton()` / `to_regex()` | Convert back out. |
 
 All fallible operations return `Result<_, EngineError>`.
+
+### Generating strings
+
+`generate_strings` takes the options to generate under: the order to walk the language in, and optionally the characters it may use. `Exhaustive` sweeps the language, one path at a time; `Sampled` spreads the strings over the cases the pattern allows, which is what you want when the strings are test data:
+
+```rust
+use regexsolver::{Term, fast_automaton::GenerationOrder};
+
+let term = Term::from_pattern("[a-z]{2}[0-9]")?.minimize()?;
+
+assert_eq!(term.generate_strings(3, 0, GenerationOrder::Exhaustive)?, ["aa0", "aa1", "aa2"]);
+assert_eq!(term.generate_strings(3, 0, GenerationOrder::Sampled)?, ["aa0", "re6", "ij2"]);
+```
+
+Sampling covers every shape the pattern allows before asking any of them for a second string, and `GenerationOptions` also restricts generation to a charset — only strings made entirely of its characters come out, so a path needing a character you ruled out is dropped whole:
+
+```rust
+use regexsolver::{CharRange, Term, fast_automaton::{GenerationOptions, GenerationOrder}};
+use regexsolver::regex_charclass::char::Char;
+
+let term = Term::from_pattern(".*abc.*")?.minimize()?;
+
+let printable = CharRange::new_from_range(Char::new(' ')..=Char::new('~'));
+let options = GenerationOptions::from(GenerationOrder::Exhaustive).with_charset(printable);
+
+assert_eq!(term.generate_strings(3, 0, options)?, ["abc", "abc ", "abc!"]);
+```
+
+Both stay deterministic and page with `offset` the same way.
 
 ### Building automata by hand
 
@@ -166,7 +195,7 @@ Automaton operations can blow up on adversarial inputs, so the engine is built t
 ### Time-Bounded Execution
 
 ```rust
-use regexsolver::{Term, execution_profile::{ExecutionProfile, ExecutionProfileBuilder}, error::EngineError};
+use regexsolver::{Term, execution_profile::{ExecutionProfile, ExecutionProfileBuilder}, error::EngineError, fast_automaton::GenerationOrder};
 
 let term = Term::from_pattern(".*abc.*cdef.*sqdsqf.*")?;
 
@@ -176,7 +205,7 @@ let execution_profile = ExecutionProfileBuilder::new()
 
 // We run the operation with the defined limitation
 execution_profile.run(|| {
-	assert_eq!(EngineError::OperationTimeOutError, term.generate_strings(1000, 1_000_000).unwrap_err());
+	assert_eq!(EngineError::OperationTimeOutError, term.generate_strings(1000, 1_000_000, GenerationOrder::Exhaustive).unwrap_err());
 });
 ```
 
