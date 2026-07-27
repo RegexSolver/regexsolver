@@ -361,7 +361,6 @@ impl<'a> Generation<'a> {
         }
 
         self.visited.clear();
-        ();
         let mut covered = 0usize;
 
         let mut q = BinaryHeap::new();
