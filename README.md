@@ -96,35 +96,6 @@ RegexSolver is based on the [regex-syntax](https://docs.rs/regex-syntax/0.8.5/re
 
 All fallible operations return `Result<_, EngineError>`.
 
-### Generating strings
-
-`generate_strings` takes the options to generate under: the order to walk the language in, and optionally the characters it may use. `Exhaustive` sweeps the language, one path at a time; `Sampled` spreads the strings over the cases the pattern allows, which is what you want when the strings are test data:
-
-```rust
-use regexsolver::{Term, fast_automaton::GenerationOrder};
-
-let term = Term::from_pattern("[a-z]{2}[0-9]")?.minimize()?;
-
-assert_eq!(term.generate_strings(3, 0, GenerationOrder::Exhaustive)?, ["aa0", "aa1", "aa2"]);
-assert_eq!(term.generate_strings(3, 0, GenerationOrder::Sampled)?, ["aa0", "re6", "ij2"]);
-```
-
-Sampling covers every shape the pattern allows before asking any of them for a second string, and `GenerationOptions` also restricts generation to a charset — only strings made entirely of its characters come out, so a path needing a character you ruled out is dropped whole:
-
-```rust
-use regexsolver::{CharRange, Term, fast_automaton::{GenerationOptions, GenerationOrder}};
-use regexsolver::regex_charclass::char::Char;
-
-let term = Term::from_pattern(".*abc.*")?.minimize()?;
-
-let printable = CharRange::new_from_range(Char::new(' ')..=Char::new('~'));
-let options = GenerationOptions::from(GenerationOrder::Exhaustive).with_charset(printable);
-
-assert_eq!(term.generate_strings(3, 0, options)?, ["abc", "abc ", "abc!"]);
-```
-
-Both stay deterministic and page with `offset` the same way.
-
 ### Building automata by hand
 
 `FastAutomaton` is used to directly build, manipulate and analyze automata. To convert an automaton to a `RegularExpression` the method `to_regex()` can be used.
