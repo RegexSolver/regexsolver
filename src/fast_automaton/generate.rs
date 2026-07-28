@@ -1,5 +1,5 @@
 use crate::{EngineError, execution_profile::ExecutionProfile};
-use ahash::{AHashSet, RandomState};
+use ahash::RandomState;
 use indexmap::IndexSet;
 
 use super::*;
@@ -56,13 +56,25 @@ const SAMPLE_CHARS: [char; 10] = [
 /// scalar values have to be shifted down past it to be counted.
 const SURROGATES: Range<u32> = 0xD800..0xE000;
 
+/// The most strings to reserve room for up front. `limit` is caller-controlled
+/// and huge values (up to `usize::MAX`) are legitimate ways to ask for
+/// everything, so it cannot size the allocation on its own; past this hint the
+/// set grows as it fills.
+const STRINGS_CAPACITY_LIMIT: usize = 1 << 12;
+
+/// How much a [`PathCache`] may hold — a finite language can still have far
+/// more paths than fit in memory. Past these, recording gives up and the later
+/// sampled passes search the automaton again: time spent instead of memory.
+const CACHE_IDS_LIMIT: usize = 1 << 20;
+const CACHE_PATHS_LIMIT: usize = 1 << 17;
+
 #[derive(Clone, Eq, PartialEq)]
 struct QueueItem {
     score: usize,
     depth: usize,
     state: usize,
-    ranges: Vec<CharRange>,
-    hash: u64,
+    /// The path's transitions as indices into [`Generation::range_pool`]
+    ranges: Vec<u32>,
 }
 
 impl Ord for QueueItem {
@@ -72,7 +84,7 @@ impl Ord for QueueItem {
             .cmp(&self.score)
             .then_with(|| self.depth.cmp(&other.depth))
             .then_with(|| self.state.cmp(&other.state))
-            .then_with(|| self.hash.cmp(&other.hash))
+            .then_with(|| self.ranges.cmp(&other.ranges))
     }
 }
 
@@ -194,12 +206,15 @@ impl FastAutomaton {
     ) -> Result<Vec<String>, EngineError> {
         let options = options.into();
 
+        // Serializing the charset is not free: only when the span is recorded.
         let span = tracing::Span::current();
-        span.record("order", tracing::field::debug(options.order));
-        span.record(
-            "charset",
-            tracing::field::debug(options.charset.as_ref().map(|charset| charset.to_regex())),
-        );
+        if !span.is_disabled() {
+            span.record("order", tracing::field::debug(options.order));
+            span.record(
+                "charset",
+                tracing::field::debug(options.charset.as_ref().map(|charset| charset.to_regex())),
+            );
+        }
 
         self.generate(limit, offset, &options)
     }
@@ -220,7 +235,7 @@ impl FastAutomaton {
 
         match options.order {
             GenerationOrder::Exhaustive => {
-                generation.walk(self, None)?;
+                generation.walk(self, None, None)?;
             }
             GenerationOrder::Sampled => {
                 // A pass takes at most `window` combinations per path, so no
@@ -228,11 +243,18 @@ impl FastAutomaton {
                 // windows double and pick up where the previous one stopped:
                 // a pass that exhausts the automaton without filling `limit`
                 // is followed by one digging deeper into the same paths, until
-                // a pass finds nothing left to cover.
+                // a pass finds nothing left to cover. Exhausting the automaton
+                // also proves the paths finite and leaves them in `cache`, so
+                // the passes after it replay them instead of searching again.
                 let mut window = 0..1;
+                let mut cache = PathCache::new();
                 loop {
-                    let covered = generation.walk(self, Some(&window))?;
-                    if covered == 0 || generation.is_full() {
+                    let covered = if cache.complete {
+                        generation.replay(&cache, &window)?
+                    } else {
+                        generation.walk(self, Some(&window), Some(&mut cache))?
+                    };
+                    if covered == 0 || generation.emitter.is_full() {
                         break;
                     }
                     window = window.end..window.end.saturating_mul(2).saturating_add(1);
@@ -240,7 +262,7 @@ impl FastAutomaton {
             }
         }
 
-        Ok(generation.strings.into_iter().collect())
+        Ok(generation.emitter.strings.into_iter().collect())
     }
 }
 
@@ -253,15 +275,152 @@ struct Generation<'a> {
     distances: Vec<usize>,
     /// Length of the longest string the automaton matches.
     max_len: usize,
+    /// The characters each transition stands for, resolved once: the paths
+    /// refer to them by index (see [`QueueItem::ranges`]).
+    range_pool: Vec<CharRange>,
+    /// Each transition condition's index into
+    /// [`range_pool`](Self::range_pool), the charset already taken out. A
+    /// condition the charset leaves nothing of holds `None`, which is what
+    /// makes its transition impassable.
+    range_ids: AHashMap<&'a Condition, Option<u32>>,
+    emitter: Emitter,
+}
+
+/// Turns the paths the search pops into strings: the half of a [`Generation`]
+/// the emission mutates, kept apart from the search data so that a borrow of
+/// the range pool can live alongside it.
+struct Emitter {
     limit: usize,
     offset: usize,
     strings: IndexSet<String, RandomState>,
-    visited: AHashSet<(State, usize, u64)>,
-    /// The characters each transition condition stands for, the charset
-    /// already taken out. A condition the charset leaves nothing of is absent,
-    /// which is what makes its transition impassable.
-    ranges: AHashMap<&'a Condition, CharRange>,
     execution_profile: ExecutionProfile,
+}
+
+/// The accepting paths a sampled pass popped, in pop order — flat, path `i`
+/// being `ids[starts[i]..starts[i + 1]]`. A pass that runs out of paths has
+/// recorded all of them, and the passes after it replay the cache instead of
+/// searching the automaton again.
+struct PathCache {
+    ids: Vec<u32>,
+    starts: Vec<usize>,
+    /// The cache holds every path of the automaton and can stand in for it.
+    complete: bool,
+    /// Recording outgrew [`CACHE_IDS_LIMIT`]/[`CACHE_PATHS_LIMIT`] and gave
+    /// up; the cache stays empty and every pass searches.
+    overflowed: bool,
+}
+
+impl PathCache {
+    fn new() -> Self {
+        PathCache {
+            ids: vec![],
+            starts: vec![0],
+            complete: false,
+            overflowed: false,
+        }
+    }
+
+    fn record(&mut self, path: &[u32]) {
+        if self.overflowed {
+            return;
+        }
+        if self.ids.len().saturating_add(path.len()) > CACHE_IDS_LIMIT
+            || self.starts.len() > CACHE_PATHS_LIMIT
+        {
+            self.overflowed = true;
+            self.ids = vec![];
+            self.starts = vec![0];
+            return;
+        }
+
+        self.ids.extend_from_slice(path);
+        self.starts.push(self.ids.len());
+    }
+
+    fn paths(&self) -> impl Iterator<Item = &[u32]> {
+        self.starts
+            .windows(2)
+            .map(|window| &self.ids[window[0]..window[1]])
+    }
+}
+
+/// What every transition condition leaves once the charset is taken out.
+/// Resolved up front rather than as the walk reaches them, so that the search
+/// already knows which transitions are impassable: a pool of the non-empty
+/// ranges, and each condition's index into it — `None` for the conditions the
+/// charset leaves nothing of.
+fn resolve_ranges<'a>(
+    automaton: &'a FastAutomaton,
+    charset: Option<&CharRange>,
+) -> Result<(Vec<CharRange>, AHashMap<&'a Condition, Option<u32>>), EngineError> {
+    let mut range_pool: Vec<CharRange> = Vec::new();
+    let mut range_ids: AHashMap<&Condition, Option<u32>> =
+        AHashMap::with_capacity(automaton.transitions.len());
+
+    for state in automaton.states() {
+        for (cond, _) in automaton.transitions_from(state) {
+            if range_ids.contains_key(cond) {
+                continue;
+            }
+            let range = cond.to_range(&automaton.spanning_set)?;
+            let range = match charset {
+                Some(charset) => range.intersection(charset),
+                None => range,
+            };
+            let id = if range.is_empty() {
+                None
+            } else {
+                range_pool.push(range);
+                Some((range_pool.len() - 1) as u32)
+            };
+            range_ids.insert(cond, id);
+        }
+    }
+
+    Ok((range_pool, range_ids))
+}
+
+/// REVERSE BFS: the exact distance from every state to an accept state, which
+/// drives the A* search and prunes the states that never accept; `usize::MAX`
+/// for the states that cannot reach one. A state the charset leaves no way out
+/// of (no id in `range_ids`) is one of those dead ends.
+fn distances_to_accept(
+    automaton: &FastAutomaton,
+    range_ids: &AHashMap<&Condition, Option<u32>>,
+) -> Vec<usize> {
+    let num_states = automaton.transitions.len();
+    let mut incoming = vec![vec![]; num_states];
+    let mut dist_q = VecDeque::new();
+    let mut distances = vec![usize::MAX; num_states];
+
+    for state in automaton.states() {
+        if automaton.is_accepted(state) {
+            distances[state] = 0;
+            dist_q.push_back(state);
+        }
+        for (cond, &to_state) in automaton.transitions_from(state) {
+            if range_ids[cond].is_some() {
+                incoming[to_state].push(state);
+            }
+        }
+    }
+
+    while let Some(state) = dist_q.pop_front() {
+        let d = distances[state];
+        for &prev in &incoming[state] {
+            if distances[prev] == usize::MAX {
+                distances[prev] = d + 1;
+                dist_q.push_back(prev);
+            }
+        }
+    }
+
+    distances
+}
+
+/// The ranges of a path's transitions, looked up from the pool.
+fn resolve<'p>(pool: &'p [CharRange], path: &[u32]) -> Vec<&'p CharRange> {
+    path.iter().map(|&id| &pool[id as usize]).collect()
 }
 
 impl<'a> Generation<'a> {
@@ -271,74 +430,25 @@ impl<'a> Generation<'a> {
         offset: usize,
         charset: Option<&CharRange>,
     ) -> Result<Self, EngineError> {
-        let num_states = automaton.transitions.len();
-
-        // What every transition condition leaves once the charset is taken
-        // out. Resolved up front rather than as the walk reaches them, so that
-        // the search below already knows which transitions are impassable.
-        let mut ranges: AHashMap<&Condition, CharRange> = AHashMap::with_capacity(num_states);
-        for state in automaton.states() {
-            for (cond, _) in automaton.transitions_from(state) {
-                if ranges.contains_key(cond) {
-                    continue;
-                }
-                let range = cond.to_range(&automaton.spanning_set)?;
-                ranges.insert(
-                    cond,
-                    match charset {
-                        Some(charset) => range.intersection(charset),
-                        None => range,
-                    },
-                );
-            }
-        }
-
-        // REVERSE BFS: the exact distance from every state to an accept state,
-        // which drives the A* search and prunes the states that never accept.
-        // A state the charset leaves no way out of is one of those dead ends.
-        let mut incoming = vec![vec![]; num_states];
-        let mut dist_q = VecDeque::new();
-        let mut distances = vec![usize::MAX; num_states];
-
-        for state in automaton.states() {
-            if automaton.is_accepted(state) {
-                distances[state] = 0;
-                dist_q.push_back(state);
-            }
-            for (cond, &to_state) in automaton.transitions_from(state) {
-                if !ranges[cond].is_empty() {
-                    incoming[to_state].push(state);
-                }
-            }
-        }
-
-        while let Some(state) = dist_q.pop_front() {
-            let d = distances[state];
-            for &prev in &incoming[state] {
-                if distances[prev] == usize::MAX {
-                    distances[prev] = d + 1;
-                    dist_q.push_back(prev);
-                }
-            }
-        }
-
+        let (range_pool, range_ids) = resolve_ranges(automaton, charset)?;
+        let distances = distances_to_accept(automaton, &range_ids);
         let (_, max) = automaton.length();
 
         Ok(Generation {
             distances,
             max_len: max.unwrap_or(u32::MAX) as usize,
-            limit,
-            offset,
-            strings: IndexSet::with_capacity_and_hasher(limit, RandomState::default()),
-            visited: AHashSet::with_capacity(num_states),
-            ranges,
-            execution_profile: ExecutionProfile::get(),
+            range_pool,
+            range_ids,
+            emitter: Emitter {
+                limit,
+                offset,
+                strings: IndexSet::with_capacity_and_hasher(
+                    limit.min(STRINGS_CAPACITY_LIMIT),
+                    RandomState::default(),
+                ),
+                execution_profile: ExecutionProfile::get(),
+            },
         })
-    }
-
-    #[inline]
-    fn is_full(&self) -> bool {
-        self.strings.len() >= self.limit
     }
 
     /// A* SEARCH: walks the automaton once, shortest path first, emitting the
@@ -346,12 +456,16 @@ impl<'a> Generation<'a> {
     /// collected or the automaton runs out of paths.
     ///
     /// `window` restricts each path to the combinations whose index falls
-    /// inside it; `None` takes them all. Returns how many combinations the
-    /// pass covered, the ones `offset` skipped included.
+    /// inside it; `None` takes them all. `cache`, when given, records the
+    /// accepting paths in pop order, and running out of paths marks it
+    /// complete: [`replay`](Self::replay) then stands in for the next passes.
+    /// Returns how many combinations the pass covered, the ones `offset`
+    /// skipped included.
     fn walk(
         &mut self,
         automaton: &'a FastAutomaton,
         window: Option<&Range<usize>>,
+        mut cache: Option<&mut PathCache>,
     ) -> Result<usize, EngineError> {
         let start_state = automaton.start_state();
 
@@ -360,7 +474,6 @@ impl<'a> Generation<'a> {
             return Ok(0);
         }
 
-        self.visited.clear();
         let mut covered = 0usize;
 
         let mut q = BinaryHeap::new();
@@ -369,26 +482,29 @@ impl<'a> Generation<'a> {
             depth: 0,
             state: start_state,
             ranges: vec![],
-            hash: 0u64,
         });
 
         while let Some(QueueItem {
             score: _,
             depth: current_depth,
             state,
-            mut ranges,
-            hash: h,
+            ranges,
         }) = q.pop()
         {
-            self.execution_profile.assert_not_timed_out()?;
+            self.emitter.execution_profile.assert_not_timed_out()?;
 
             if automaton.is_accepted(state) {
+                if let Some(cache) = cache.as_deref_mut() {
+                    cache.record(&ranges);
+                }
+
+                let resolved = resolve(&self.range_pool, &ranges);
                 covered = covered.saturating_add(match window {
-                    Some(window) => self.emit_sampled(&ranges, window)?,
-                    None => self.emit_all(&ranges)?,
+                    Some(window) => self.emitter.emit_sampled(&resolved, window)?,
+                    None => self.emitter.emit_all(&resolved)?,
                 });
 
-                if self.is_full() {
+                if self.emitter.is_full() {
                     break;
                 }
             }
@@ -397,60 +513,101 @@ impl<'a> Generation<'a> {
                 continue;
             }
 
-            let next_depth = current_depth + 1;
-            let mut valid_transitions = Vec::new();
+            self.expand(automaton, &mut q, current_depth + 1, state, ranges);
+        }
 
-            for (cond, &to_state) in automaton.transitions_from(state) {
-                // DEAD-END PRUNING: Instantly kill paths that cannot accept
-                if self.distances[to_state] == usize::MAX {
-                    continue;
-                }
-
-                // ...and the transitions the charset closed off.
-                let range = &self.ranges[cond];
-                if range.is_empty() {
-                    continue;
-                }
-
-                let hash = path_mix(h, mix64(state as u64 ^ mix64(to_state as u64)));
-
-                if self.visited.insert((to_state, next_depth, hash)) {
-                    valid_transitions.push((to_state, range.clone(), hash));
-                }
-            }
-
-            // Vector Reuse Optimization
-            if let Some((last_state, last_range, last_hash)) = valid_transitions.pop() {
-                for (to_state, range, hash) in valid_transitions {
-                    let mut new_ranges = ranges.clone();
-                    new_ranges.push(range);
-                    q.push(QueueItem {
-                        score: next_depth + self.distances[to_state], // A* Score Formula
-                        depth: next_depth,
-                        state: to_state,
-                        ranges: new_ranges,
-                        hash,
-                    });
-                }
-
-                ranges.push(last_range);
-                q.push(QueueItem {
-                    score: next_depth + self.distances[last_state], // A* Score Formula
-                    depth: next_depth,
-                    state: last_state,
-                    ranges,
-                    hash: last_hash,
-                });
-            }
+        // An empty queue means every path was popped, so a recording cache
+        // now holds them all.
+        if q.is_empty()
+            && let Some(cache) = cache
+            && !cache.overflowed
+        {
+            cache.complete = true;
         }
 
         Ok(covered)
     }
 
+    /// Queues every passable one-transition extension of a popped path, the
+    /// last one taking over the path's own vector instead of cloning it.
+    fn expand(
+        &self,
+        automaton: &'a FastAutomaton,
+        q: &mut BinaryHeap<QueueItem>,
+        next_depth: usize,
+        state: State,
+        mut ranges: Vec<u32>,
+    ) {
+        let mut valid_transitions = Vec::new();
+
+        for (cond, &to_state) in automaton.transitions_from(state) {
+            // DEAD-END PRUNING: Instantly kill paths that cannot accept
+            if self.distances[to_state] == usize::MAX {
+                continue;
+            }
+
+            // ...and the transitions the charset closed off.
+            let Some(range_id) = self.range_ids[cond] else {
+                continue;
+            };
+
+            valid_transitions.push((to_state, range_id));
+        }
+
+        // Vector Reuse Optimization
+        if let Some((last_state, last_id)) = valid_transitions.pop() {
+            for (to_state, range_id) in valid_transitions {
+                let mut new_ranges = ranges.clone();
+                new_ranges.push(range_id);
+                q.push(QueueItem {
+                    score: next_depth + self.distances[to_state], // A* Score Formula
+                    depth: next_depth,
+                    state: to_state,
+                    ranges: new_ranges,
+                });
+            }
+
+            ranges.push(last_id);
+            q.push(QueueItem {
+                score: next_depth + self.distances[last_state], // A* Score Formula
+                depth: next_depth,
+                state: last_state,
+                ranges,
+            });
+        }
+    }
+
+    /// Emits `window` from every path of a complete [`PathCache`], in the
+    /// order the search popped them: what a [`walk`](Self::walk) pass would
+    /// do, minus the search.
+    fn replay(&mut self, cache: &PathCache, window: &Range<usize>) -> Result<usize, EngineError> {
+        let mut covered = 0usize;
+
+        for path in cache.paths() {
+            self.emitter.execution_profile.assert_not_timed_out()?;
+
+            let resolved = resolve(&self.range_pool, path);
+            covered = covered.saturating_add(self.emitter.emit_sampled(&resolved, window)?);
+
+            if self.emitter.is_full() {
+                break;
+            }
+        }
+
+        Ok(covered)
+    }
+}
+
+impl Emitter {
+    #[inline]
+    fn is_full(&self) -> bool {
+        self.strings.len() >= self.limit
+    }
+
     /// Emits every combination of `ranges` that `offset` does not skip, in
     /// ascending character order. Returns the number of combinations the path
     /// holds.
-    fn emit_all(&mut self, ranges: &[CharRange]) -> Result<usize, EngineError> {
+    fn emit_all(&mut self, ranges: &[&CharRange]) -> Result<usize, EngineError> {
         let range_lengths: Vec<usize> = ranges
             .iter()
             .map(|r| r.get_cardinality() as usize)
@@ -466,52 +623,82 @@ impl<'a> Generation<'a> {
             return Ok(total_combinations);
         }
 
-        let mut current_str = String::with_capacity(ranges.len());
-        self.emit_combinations(ranges, &range_lengths, 0, &mut current_str)?;
+        self.emit_combinations(ranges, &range_lengths)?;
         Ok(total_combinations)
     }
 
+    /// Walks the combinations depth-first over an explicit stack of range
+    /// cursors, one per position: recursing per character would overflow the
+    /// stack on the paths thousands of transitions long.
     fn emit_combinations(
         &mut self,
-        ranges: &[CharRange],
+        ranges: &[&CharRange],
         range_lengths: &[usize],
-        depth: usize,
-        current_str: &mut String,
     ) -> Result<(), EngineError> {
-        if depth == ranges.len() {
-            if self.offset > 0 {
-                self.offset -= 1;
-            } else {
-                self.strings.insert(current_str.clone());
-            }
+        if ranges.is_empty() {
+            // A single-combination path: `emit_all` either skipped it whole or
+            // arrived here with nothing left of the offset.
+            debug_assert_eq!(0, self.offset);
+            self.strings.insert(String::new());
             return Ok(());
         }
 
-        // Calculate combinations for the remaining suffix of ranges
-        let mut sub_combinations = 1usize;
-        for &len in &range_lengths[depth + 1..] {
-            sub_combinations = sub_combinations.saturating_mul(len);
+        // Combinations under a single character at each position: the product
+        // of the range lengths past it.
+        let mut sub_combinations = vec![1usize; ranges.len()];
+        for position in (0..ranges.len() - 1).rev() {
+            sub_combinations[position] =
+                sub_combinations[position + 1].saturating_mul(range_lengths[position + 1]);
         }
 
-        for ch in ranges[depth].iter() {
+        let mut current_str = String::with_capacity(ranges.len());
+        let mut cursors = Vec::with_capacity(ranges.len());
+        cursors.push(self.descend(ranges[0], sub_combinations[0]));
+
+        while let Some(cursor) = cursors.last_mut() {
+            let next = cursor.next();
+            let position = cursors.len() - 1;
+
+            let Some(ch) = next else {
+                // The range is exhausted: back up to the previous position and
+                // move it to its next character.
+                cursors.pop();
+                current_str.pop();
+                continue;
+            };
+
             self.execution_profile.assert_not_timed_out()?;
 
-            // If skipping this character's subtree fits within the remaining offset
-            if self.offset >= sub_combinations {
-                self.offset -= sub_combinations;
-                continue;
-            }
-
             current_str.push(ch.to_char());
-            self.emit_combinations(ranges, range_lengths, depth + 1, current_str)?;
-            current_str.pop();
+            if position + 1 == ranges.len() {
+                // A full combination; whatever `offset` had left to skip was
+                // consumed by the descents, so this string is on the page.
+                self.strings.insert(current_str.clone());
+                current_str.pop();
 
-            if self.is_full() {
-                break;
+                if self.is_full() {
+                    break;
+                }
+            } else {
+                cursors.push(self.descend(ranges[position + 1], sub_combinations[position + 1]));
             }
         }
 
         Ok(())
+    }
+
+    /// A cursor over `range`, opened on the first combination `offset` does
+    /// not skip: the subtrees of `sub_combinations` strings each before it are
+    /// stepped over in one division, not walked character by character.
+    fn descend<'r>(&mut self, range: &'r CharRange, sub_combinations: usize) -> RangeCursor<'r> {
+        // Past the first emitted string the offset is zero and every cursor
+        // starts at its range's first character. `skip` stays within the
+        // range: the offset was left smaller than the previous position's
+        // subtree, which this whole range spans. (A saturated subtree count
+        // under-skips into the first character, never past the range.)
+        let skip = self.offset / sub_combinations;
+        self.offset -= skip * sub_combinations;
+        RangeCursor::new(range, skip as u32)
     }
 
     /// Emits the combinations of `ranges` whose index falls inside `window`,
@@ -519,7 +706,7 @@ impl<'a> Generation<'a> {
     /// them the window covered, the ones `offset` skipped included.
     fn emit_sampled(
         &mut self,
-        ranges: &[CharRange],
+        ranges: &[&CharRange],
         window: &Range<usize>,
     ) -> Result<usize, EngineError> {
         let range_lengths: Vec<u128> = ranges.iter().map(|r| r.get_cardinality() as u128).collect();
@@ -573,13 +760,13 @@ impl<'a> Generation<'a> {
 /// consecutive combinations then differ from their first character on, instead
 /// of only in their last one.
 fn sample_string(
-    ranges: &[CharRange],
+    ranges: &[&CharRange],
     range_lengths: &[u128],
     mut combination: u128,
 ) -> Result<String, EngineError> {
     let mut string = String::with_capacity(ranges.len());
 
-    for (position, (range, &length)) in ranges.iter().zip(range_lengths).enumerate() {
+    for (position, (&range, &length)) in ranges.iter().zip(range_lengths).enumerate() {
         let index = (combination % length) as u32;
         combination /= length;
         string.push(sample_char(range, position, index)?.to_char());
@@ -625,6 +812,64 @@ fn sample_char(range: &CharRange, position: usize, index: u32) -> Result<Char, E
     char_at(range, ordinal).ok_or(EngineError::InvalidCharacterInRegex)
 }
 
+/// A cursor over the characters a [`CharRange`] holds, in order, opened at an
+/// arbitrary ordinal: what the range's own iterator cannot do, and what lets
+/// [`Emitter::descend`] skip an offset in one step.
+struct RangeCursor<'a> {
+    /// The `(low, high)` bound pairs the range is made of.
+    bounds: &'a [Char],
+    /// Index of the current pair's low bound; past `bounds` once exhausted.
+    pair: usize,
+    /// [`scalar`] of the next character to hand out.
+    next_scalar: u32,
+}
+
+impl<'a> RangeCursor<'a> {
+    /// A cursor whose first character is `range`'s `ordinal`-th; exhausted
+    /// from the start when `ordinal` is past the range's cardinality.
+    fn new(range: &'a CharRange, mut ordinal: u32) -> Self {
+        let bounds = range.0.as_slice();
+        let mut pair = 0;
+        let mut next_scalar = 0;
+
+        while pair < bounds.len() {
+            let (low, high) = (scalar(bounds[pair]), scalar(bounds[pair + 1]));
+            let length = high - low + 1;
+            if ordinal < length {
+                next_scalar = low + ordinal;
+                break;
+            }
+            ordinal -= length;
+            pair += 2;
+        }
+
+        RangeCursor {
+            bounds,
+            pair,
+            next_scalar,
+        }
+    }
+
+    fn next(&mut self) -> Option<Char> {
+        if self.pair >= self.bounds.len() {
+            return None;
+        }
+
+        let ch = from_scalar(self.next_scalar);
+        if self.next_scalar == scalar(self.bounds[self.pair + 1]) {
+            // Past the current interval: on to the next one.
+            self.pair += 2;
+            if self.pair < self.bounds.len() {
+                self.next_scalar = scalar(self.bounds[self.pair]);
+            }
+        } else {
+            self.next_scalar += 1;
+        }
+
+        ch
+    }
+}
+
 /// The `(low, high)` scalar bounds of the intervals `range` is made of.
 fn intervals(range: &CharRange) -> impl Iterator<Item = (u32, u32)> + '_ {
     range
@@ -635,6 +880,10 @@ fn intervals(range: &CharRange) -> impl Iterator<Item = (u32, u32)> + '_ {
 
 /// The number of characters `range` holds before `target`, which it contains.
 fn ordinal_of(range: &CharRange, target: Char) -> u32 {
+    // An absent target would underflow `target - low` below, silently in
+    // release builds.
+    debug_assert!(range.contains(target), "{target} is not in {range}");
+
     let target = scalar(target);
     let mut ordinal = 0;
 
@@ -649,16 +898,8 @@ fn ordinal_of(range: &CharRange, target: Char) -> u32 {
 }
 
 /// The character `range` holds at `ordinal`, `None` past its cardinality.
-fn char_at(range: &CharRange, mut ordinal: u32) -> Option<Char> {
-    for (low, high) in intervals(range) {
-        let length = high - low + 1;
-        if ordinal < length {
-            return from_scalar(low + ordinal);
-        }
-        ordinal -= length;
-    }
-
-    None
+fn char_at(range: &CharRange, ordinal: u32) -> Option<Char> {
+    RangeCursor::new(range, ordinal).next()
 }
 
 /// The index of `ch` among all the characters, the surrogate block excluded.
@@ -714,24 +955,9 @@ fn gcd(mut a: u128, mut b: u128) -> u128 {
     a
 }
 
-#[inline]
-fn mix64(mut x: u64) -> u64 {
-    // splitmix64
-    x = x.wrapping_add(0x9E3779B97F4A7C15);
-    let mut z = x;
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
-    z ^ (z >> 31)
-}
-
-#[inline]
-fn path_mix(h: u64, x: u64) -> u64 {
-    h.wrapping_mul(0x9E3779B97F4A7C15).rotate_left(7) ^ x
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{GenerationOptions, GenerationOrder, char_at, sample_char};
+    use super::{GenerationOptions, GenerationOrder, RangeCursor, char_at, sample_char};
     use crate::CharRange;
     use crate::cardinality::Cardinality;
     use crate::{fast_automaton::FastAutomaton, regex::RegularExpression};
@@ -1000,6 +1226,75 @@ mod tests {
             strings.sort();
 
             assert_eq!(vec!["aa", "ae", "ea", "ee"], strings, "{order:?}");
+        }
+    }
+
+    /// The offset steps over whole subtrees at once: a page from deep inside a
+    /// large language comes back without walking everything before it.
+    #[test]
+    fn test_generate_strings_offset_reaches_deep_pages() {
+        let automaton = automaton_of("[a-z]{5}");
+        let total = 26usize.pow(5);
+
+        let strings = automaton
+            .generate_strings(2, total - 2, GenerationOrder::Exhaustive)
+            .unwrap();
+
+        assert_eq!(vec!["zzzzy".to_string(), "zzzzz".to_string()], strings);
+    }
+
+    /// The cursor hands out exactly the characters past its opening ordinal,
+    /// across intervals and over the surrogate hole, like the plain iterator.
+    #[test]
+    fn test_range_cursor_opens_at_any_ordinal() {
+        let range = CharRange::new_from_ranges(&[
+            AnyRange::from(Char::new('0')..=Char::new('9')),
+            AnyRange::from(Char::new('\u{d7fe}')..=Char::new('\u{e001}')),
+        ]);
+
+        for start in 0..=range.get_cardinality() {
+            let expected: Vec<char> = range
+                .iter()
+                .skip(start as usize)
+                .map(|c| c.to_char())
+                .collect();
+
+            let mut cursor = RangeCursor::new(&range, start);
+            let mut walked = vec![];
+            while let Some(ch) = cursor.next() {
+                walked.push(ch.to_char());
+            }
+
+            assert_eq!(expected, walked, "start {start}");
+        }
+    }
+
+    /// A huge `limit` means "everything the language holds", not "reserve this
+    /// much memory": it must not size an allocation before generation starts.
+    #[test]
+    fn test_generate_strings_limit_does_not_preallocate() {
+        let automaton = automaton_of("[ab]{2}");
+
+        for order in ORDERS {
+            let mut strings = automaton.generate_strings(usize::MAX, 0, order).unwrap();
+            strings.sort();
+
+            assert_eq!(vec!["aa", "ab", "ba", "bb"], strings, "{order:?}");
+        }
+    }
+
+    /// Combination emission walks an explicit stack, not the call stack: a
+    /// path tens of thousands of transitions long emits without overflowing.
+    #[test]
+    fn test_generate_strings_very_long_string() {
+        let automaton = automaton_of("[ab]{20000}");
+
+        for order in ORDERS {
+            let strings = automaton.generate_strings(2, 0, order).unwrap();
+            assert_eq!(2, strings.len(), "{order:?}");
+            for string in &strings {
+                assert_eq!(20_000, string.len(), "{order:?}");
+            }
         }
     }
 

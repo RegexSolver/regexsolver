@@ -5,11 +5,8 @@ impl FastAutomaton {
     #[tracing::instrument(level = "debug", skip(self), fields(states = self.number_of_states(), deterministic = self.is_deterministic(), min = min, max_opt = tracing::field::debug(max_opt)))]
     pub fn repeat(&self, min: u32, max_opt: Option<u32>) -> Result<FastAutomaton, EngineError> {
         let mut automaton = self.clone();
-        if let Err(error) = automaton.repeat_mut(min, max_opt) {
-            Err(error)
-        } else {
-            Ok(automaton)
-        }
+        automaton.repeat_mut(min, max_opt)?;
+        Ok(automaton)
     }
 
     pub(crate) fn repeat_mut(&mut self, min: u32, max_opt: Option<u32>) -> Result<(), EngineError> {
@@ -93,9 +90,14 @@ impl FastAutomaton {
             return Ok(());
         }
 
+        // From here on `self` and `automaton_to_repeat` are known to be
+        // neither ∅ nor {""} (checked above), and concatenating two such
+        // languages preserves that: the loops call the concatenation core
+        // directly, since re-checking the growing chain on every iteration is
+        // quadratic.
         let iter = if min == 0 { 0..0 } else { 0..min - 1 };
         for _ in iter {
-            self.concat_mut(&automaton_to_repeat)?;
+            self.concat_mut_nondegenerate(&automaton_to_repeat, false)?;
         }
 
         if max_opt.is_none() {
@@ -137,8 +139,10 @@ impl FastAutomaton {
                 // clean accepting start instead of marking the looping start
                 // accepting, which would otherwise accept partial copies
                 // (e.g. `(a*b)+` matching "aaba").
+                // The star of a non-degenerate language is non-degenerate: it
+                // keeps every string of `r` and gains "".
                 let star = automaton_to_repeat.repeat(0, None)?;
-                self.concat_mut(&star)?;
+                self.concat_mut_nondegenerate(&star, false)?;
             }
 
             return Ok(());
@@ -158,7 +162,7 @@ impl FastAutomaton {
         let force_no_merge = automaton_to_repeat.in_degree(automaton_to_repeat.start_state) > 0;
         let mut end_states = self.accept_states.iter().cloned().collect::<Vec<_>>();
         for _ in cmp::max(min, 1)..max_opt.unwrap() {
-            self.concat_mut_with(&automaton_to_repeat, force_no_merge)?;
+            self.concat_mut_nondegenerate(&automaton_to_repeat, force_no_merge)?;
             end_states.extend(self.accept_states.iter());
         }
         for end_state in end_states {
@@ -297,6 +301,22 @@ impl FastAutomaton {
 
 #[cfg(test)]
 mod tests {
+    // Building a large bounded repetition must stay linear in the bound: the
+    // per-copy concatenations run against a growing chain, and re-checking
+    // that chain's emptiness on every copy made this quadratic (~10 s in
+    // debug builds at this size, milliseconds when linear).
+    #[test]
+    fn repeat_large_bounded_stays_linear() {
+        let automaton = crate::regex::RegularExpression::parse("[ab]{5000}", false)
+            .unwrap()
+            .to_automaton()
+            .unwrap();
+
+        assert_eq!(5001, automaton.number_of_states());
+        assert!(automaton.is_match(&"ab".repeat(2500)));
+        assert!(!automaton.is_match(&"ab".repeat(2499)));
+    }
+
     // Repeating an empty-language automaton must respect ∅* = {""} and
     // ∅ⁿ = ∅ even when the emptiness comes from unreachable accept states or
     // dead-but-reachable transitions (rather than an absent accept set): the

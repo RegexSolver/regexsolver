@@ -22,6 +22,14 @@ struct AbstractNFAMetadata {
     start: AbstractStateMetadata,
     accepted: Vec<AbstractStateMetadata>,
     number_of_states: usize,
+    /// Whether the language contains the empty string, i.e. the start state
+    /// is accepting. Exact for the constructions modeled here.
+    accepts_empty_string: bool,
+    /// Whether some accept state may sit one transition away from the start
+    /// state. Over-approximate (may be `true` when none does), never
+    /// under-approximate: `alternate` withholds a merge discount on it, so
+    /// erring towards `true` keeps the estimate an upper bound.
+    accept_adjacent_to_start: bool,
 }
 
 impl AbstractNFAMetadata {
@@ -30,6 +38,8 @@ impl AbstractNFAMetadata {
             start: AbstractStateMetadata::new(false, true),
             accepted: vec![AbstractStateMetadata::new(true, false)],
             number_of_states: 2,
+            accepts_empty_string: false,
+            accept_adjacent_to_start: true,
         }
     }
 
@@ -38,6 +48,8 @@ impl AbstractNFAMetadata {
             start: AbstractStateMetadata::new(false, false),
             accepted: vec![AbstractStateMetadata::new(false, false)],
             number_of_states: 1,
+            accepts_empty_string: true,
+            accept_adjacent_to_start: false,
         }
     }
 
@@ -46,7 +58,18 @@ impl AbstractNFAMetadata {
             start: AbstractStateMetadata::new(false, false),
             accepted: vec![],
             number_of_states: 1,
+            accepts_empty_string: false,
+            accept_adjacent_to_start: false,
         }
+    }
+
+    /// [`accept_adjacent_to_start`](Self::accept_adjacent_to_start) of the
+    /// concatenation `self · nfa`: the boundary attaches `nfa`'s structure to
+    /// `self`'s accept states, so an accept can only end up next to the start
+    /// through an accepting start on one side of the boundary.
+    fn concat_accept_adjacency(&self, nfa: &AbstractNFAMetadata) -> bool {
+        (nfa.accepts_empty_string && self.accept_adjacent_to_start)
+            || (self.accepts_empty_string && nfa.accept_adjacent_to_start)
     }
 
     pub(crate) fn concat(&self, nfa: &AbstractNFAMetadata) -> Self {
@@ -68,12 +91,16 @@ impl AbstractNFAMetadata {
                 start: self.start.clone(),
                 accepted: nfa.accepted.clone(),
                 number_of_states: self.number_of_states.saturating_add(nfa.number_of_states),
+                accepts_empty_string: self.accepts_empty_string && nfa.accepts_empty_string,
+                accept_adjacent_to_start: self.concat_accept_adjacency(nfa),
             }
         } else {
             AbstractNFAMetadata {
                 start: self.start.clone(),
                 accepted: nfa.accepted.clone(),
                 number_of_states: self.number_of_states.saturating_add(nfa.number_of_states) - 1,
+                accepts_empty_string: self.accepts_empty_string && nfa.accepts_empty_string,
+                accept_adjacent_to_start: self.concat_accept_adjacency(nfa),
             }
         }
     }
@@ -105,6 +132,11 @@ impl AbstractNFAMetadata {
                 number_of_states: self
                     .number_of_states
                     .saturating_add((min as usize - 1).saturating_mul(appended_copy_cost)),
+                accepts_empty_string: self.accepts_empty_string,
+                // An accept of rᵐⁱⁿ can neighbour the start only when it is
+                // one copy deep, or when copies collapse over "" ∈ r.
+                accept_adjacent_to_start: self.accept_adjacent_to_start
+                    && (min == 1 || self.accepts_empty_string),
             };
             return mandatory.concat(&self.repeat(0, &None));
         }
@@ -139,6 +171,8 @@ impl AbstractNFAMetadata {
                 start: return_start,
                 accepted: return_accepted,
                 number_of_states: (self.number_of_states - 1).max(1),
+                accepts_empty_string: true,
+                accept_adjacent_to_start: self.accept_adjacent_to_start,
             };
         }
 
@@ -197,6 +231,11 @@ impl AbstractNFAMetadata {
             start: return_start,
             accepted: return_accepted,
             number_of_states: return_number_of_states,
+            accepts_empty_string: min == 0 || self.accepts_empty_string,
+            // An accept can neighbour the start only when it is one copy deep
+            // (min <= 1), or when copies collapse over "" ∈ r.
+            accept_adjacent_to_start: self.accept_adjacent_to_start
+                && (min <= 1 || self.accepts_empty_string),
         }
     }
 
@@ -221,6 +260,13 @@ impl AbstractNFAMetadata {
 
         if !self_accepted_not_mergeable
             && !nfa_accepted_not_mergeable
+            // A looping start (incoming edges) makes the union materialize
+            // the start's direct successors before accept states are merged,
+            // and an accept among those successors never merges (e.g. `a*a`,
+            // whose accept hangs directly off the looping start). Withhold the
+            // saving when an accept may sit there: an upper bound may
+            // overshoot, but never undershoot.
+            && !(nfa_start_state_not_mergeable && nfa.accept_adjacent_to_start)
             && !self.accepted.is_empty()
             && !nfa.accepted.is_empty()
             && self.number_of_states > 1
@@ -246,6 +292,10 @@ impl AbstractNFAMetadata {
         AbstractNFAMetadata {
             start: return_start,
             accepted: return_accepted,
+            accepts_empty_string: self.accepts_empty_string || nfa.accepts_empty_string,
+            // The union's entry state carries both operands' start edges.
+            accept_adjacent_to_start: self.accept_adjacent_to_start
+                || nfa.accept_adjacent_to_start,
             // Both merge discounts can apply to two single-state {""}
             // operands (e.g. `a{0,0}|b{0,0}`); clamp so the count never
             // reaches zero (see `repeat`).

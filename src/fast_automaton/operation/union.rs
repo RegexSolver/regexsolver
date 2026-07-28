@@ -11,7 +11,9 @@ use super::*;
 impl FastAutomaton {
     /// Computes the union between `self` and `other`.
     pub fn union(&self, other: &FastAutomaton) -> Result<Self, EngineError> {
-        Self::union_all([self, other])
+        let mut new_automaton = self.clone();
+        new_automaton.union_mut(other)?;
+        Ok(new_automaton)
     }
 
     /// Computes the union of all automata in the given iterator.
@@ -19,9 +21,27 @@ impl FastAutomaton {
     pub fn union_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(
         automata: I,
     ) -> Result<Self, EngineError> {
+        // Each operand's degenerate checks run once, on the operand: running
+        // them per fold step, on the growing result, made large alternations
+        // quadratic.
         let mut new_automaton = FastAutomaton::new_empty();
+        let mut seeded = false;
         for automaton in automata {
-            new_automaton.union_mut(automaton)?;
+            if automaton.is_empty() {
+                // ∅ is the identity.
+                continue;
+            }
+            if automaton.is_total() {
+                // Σ* absorbs the whole union.
+                new_automaton.make_total();
+                return Ok(new_automaton);
+            }
+            if seeded {
+                new_automaton.union_mut_nondegenerate(automaton)?;
+            } else {
+                new_automaton.apply_model(automaton);
+                seeded = true;
+            }
         }
         Ok(new_automaton)
     }
@@ -187,9 +207,7 @@ impl FastAutomaton {
      * - the accept states can't be merged if they have outgoing edges
      */
     pub(crate) fn union_mut(&mut self, other: &FastAutomaton) -> Result<(), EngineError> {
-        let execution_profile = ExecutionProfile::get();
-        execution_profile.assert_not_timed_out()?;
-        execution_profile.assert_max_number_of_states(self.union_state_count_heuristic(other))?;
+        ExecutionProfile::get().assert_not_timed_out()?;
 
         if other.is_empty() || self.is_total() {
             return Ok(());
@@ -200,6 +218,21 @@ impl FastAutomaton {
             self.apply_model(other);
             return Ok(());
         }
+
+        self.union_mut_nondegenerate(other)
+    }
+
+    /// The union core: neither operand may be the empty language `∅` or all
+    /// strings `Σ*`. Callers folding many operands
+    /// ([`union_all`](Self::union_all)) establish that invariant per operand
+    /// and call this directly: the degenerate checks of
+    /// [`union_mut`](Self::union_mut) walk the whole automaton, and re-running
+    /// them on the growing result at every fold step made large alternations
+    /// quadratic.
+    fn union_mut_nondegenerate(&mut self, other: &FastAutomaton) -> Result<(), EngineError> {
+        self.assert_nondegenerate_operation_fits(other, || {
+            self.union_state_count_nondegenerate(other)
+        })?;
 
         let new_spanning_set = &self.spanning_set.merge(&other.spanning_set);
         self.apply_new_spanning_set(new_spanning_set)?;
@@ -241,6 +274,10 @@ impl FastAutomaton {
     }
 
     /// Computes the expected number of states after calling `union_mut`.
+    /// Kept as the specification of the union's state growth; the exactness
+    /// tests validate it against `union_mut`, and the non-degenerate half
+    /// backs the state-limit check in the union core.
+    #[cfg(test)]
     fn union_state_count_heuristic(&self, other: &FastAutomaton) -> usize {
         // Edge cases
         if other.is_empty() || self.is_total() {
@@ -249,6 +286,12 @@ impl FastAutomaton {
             return other.number_of_states();
         }
 
+        self.union_state_count_nondegenerate(other)
+    }
+
+    /// [`union_state_count_heuristic`](Self::union_state_count_heuristic) for
+    /// operands already known to be non-degenerate: no emptiness walks.
+    fn union_state_count_nondegenerate(&self, other: &FastAutomaton) -> usize {
         let v1 = self.number_of_states();
         let v2 = other.number_of_states();
 

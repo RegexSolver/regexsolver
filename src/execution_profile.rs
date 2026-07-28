@@ -36,7 +36,7 @@ use crate::error::EngineError;
 ///     .build();
 ///
 /// execution_profile.run(|| {
-///     assert_eq!(EngineError::OperationTimeOutError, term.generate_strings(1000, 1_000_000, GenerationOrder::Exhaustive).unwrap_err());
+///     assert_eq!(EngineError::OperationTimeOutError, term.generate_strings(100_000_000, 0, GenerationOrder::Exhaustive).unwrap_err());
 /// });
 /// ```
 ///
@@ -119,6 +119,15 @@ impl ExecutionProfile {
         ThreadLocalParams::get_execution_profile()
     }
 
+    /// Whether a execution deadline is configured. When it is not,
+    /// [`assert_not_timed_out`](Self::assert_not_timed_out) can be
+    /// skipped entirely instead of being computed for a check that
+    /// cannot fail.
+    #[inline]
+    pub fn limits_execution_time(&self) -> bool {
+        self.execution_deadline.is_some()
+    }
+
     /// Assert that `execution_timeout` is not exceeded.
     ///
     /// Return empty if `execution_timeout` is not exceeded.
@@ -134,6 +143,16 @@ impl ExecutionProfile {
         } else {
             Ok(())
         }
+    }
+
+    /// Whether a maximum number of states is configured. When it is not, the
+    /// state-count heuristics feeding
+    /// [`assert_max_number_of_states`](Self::assert_max_number_of_states) can
+    /// be skipped entirely instead of being computed for a check that cannot
+    /// fail.
+    #[inline]
+    pub fn limits_number_of_states(&self) -> bool {
+        self.max_number_of_states.is_some()
     }
 
     /// Assert that `max_number_of_states` is not exceeded.
@@ -580,7 +599,7 @@ mod tests {
             .run(|| {
                 assert_eq!(
                     EngineError::OperationTimeOutError,
-                    term.generate_strings(100, 1_000_000, GenerationOrder::Exhaustive)
+                    term.generate_strings(100_000_000, 1_000_000, GenerationOrder::Exhaustive)
                         .unwrap_err()
                 );
 
