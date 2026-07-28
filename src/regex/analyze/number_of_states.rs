@@ -294,8 +294,7 @@ impl AbstractNFAMetadata {
             accepted: return_accepted,
             accepts_empty_string: self.accepts_empty_string || nfa.accepts_empty_string,
             // The union's entry state carries both operands' start edges.
-            accept_adjacent_to_start: self.accept_adjacent_to_start
-                || nfa.accept_adjacent_to_start,
+            accept_adjacent_to_start: self.accept_adjacent_to_start || nfa.accept_adjacent_to_start,
             // Both merge discounts can apply to two single-state {""}
             // operands (e.g. `a{0,0}|b{0,0}`); clamp so the count never
             // reaches zero (see `repeat`).

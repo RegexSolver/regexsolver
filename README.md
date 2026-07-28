@@ -90,8 +90,8 @@ RegexSolver is based on the [regex-syntax](https://docs.rs/regex-syntax/0.8.5/re
 | `concat(&self, terms)` / `repeat(&self, range)` | Sequence and repeat languages; `range` is any Rust range expression (`2..=5`, `1..`, `..3`, ...). |
 | `equivalent(&self, other)` / `subset(&self, other)` | Compare languages. |
 | `is_empty()` / `is_total()` / `length()` / `cardinality()` | Analyze a language: matches nothing? everything? string lengths? how many strings? |
-| `generate_strings(limit, offset, options)` | Enumerate matching strings eagerly (call `minimize()` once first when paginating). |
-| `iter_strings(options)` | Lazy iterator equivalent; computes the automaton once and yields strings in batches. |
+| `generate_strings(limit, offset, options)` | Enumerate matching strings eagerly (call `determinize()` or `minimize()` once first when paginating). |
+| `iter_strings(options)` | Lazy iterator equivalent; computes the deterministic automaton once and yields strings in batches. |
 | `to_pattern()` / `to_automaton()` / `to_regex()` | Convert back out. |
 
 All fallible operations return `Result<_, EngineError>`.

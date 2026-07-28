@@ -639,13 +639,10 @@ impl Term {
     /// given [`GenerationOptions`], fetched in batches behind the scenes so you
     /// can stop early without choosing a limit up front.
     ///
-    /// The underlying automaton is computed once at construction time, not on
+    /// The underlying deterministic automaton is computed once at construction time, not on
     /// every batch. Each item is a `Result`: a construction or generation error
     /// (e.g. a timeout from the active [`ExecutionProfile`]) surfaces as an
-    /// `Err`, after which the iterator ends. The same determinism caveat as
-    /// [`generate_strings`](Self::generate_strings) applies: call
-    /// [`determinize`](Self::determinize) (or [`minimize`](Self::minimize))
-    /// first for distinct, stable enumeration.
+    /// `Err`, after which the iterator ends.
     ///
     /// # Examples
     ///
@@ -664,7 +661,7 @@ impl Term {
     /// ```
     pub fn iter_strings(&self, options: impl Into<GenerationOptions>) -> StringGenerator<'_> {
         let options = options.into();
-        match self.to_automaton() {
+        match self.to_deterministic_automaton() {
             Ok(automaton) => StringGenerator {
                 automaton: Some(automaton),
                 pending_error: None,
@@ -938,6 +935,14 @@ impl Term {
             Term::RegularExpression(regex) => Cow::Owned(regex.to_automaton()?),
             Term::Automaton(automaton) => Cow::Borrowed(automaton),
         })
+    }
+
+    fn to_deterministic_automaton(&self) -> Result<Cow<'_, FastAutomaton>, EngineError> {
+        let automaton = self.to_automaton()?;
+        if automaton.is_deterministic() {
+            return Ok(automaton);
+        }
+        Ok(Cow::Owned(automaton.determinize()?.into_owned()))
     }
 
     /// Converts the term to a [`RegularExpression`].
