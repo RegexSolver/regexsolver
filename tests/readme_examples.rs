@@ -7,6 +7,7 @@
 use regexsolver::Term;
 use regexsolver::error::EngineError;
 use regexsolver::execution_profile::ExecutionProfileBuilder;
+use regexsolver::fast_automaton::GenerationOrder;
 
 #[test]
 fn readme_automaton_building_example() -> Result<(), EngineError> {
@@ -44,7 +45,10 @@ fn readme_hero_example() -> Result<(), EngineError> {
     assert!(both.matches("abxy")?);
 
     // ...and sample them:
-    assert_eq!(both.generate_strings(2, 0)?, ["xyxy", "abxy"]);
+    assert_eq!(
+        both.generate_strings(2, 0, GenerationOrder::Exhaustive)?,
+        ["xyxy", "abxy"]
+    );
 
     Ok(())
 }

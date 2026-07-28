@@ -26,6 +26,8 @@ mod operation;
 /// character ranges, over which transition conditions are defined.
 pub mod spanning_set;
 
+pub use generate::{GenerationOptions, GenerationOrder};
+
 /// Represents a finite-state automaton.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[must_use = "non-`_mut` operations return a new automaton"]

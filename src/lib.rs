@@ -59,7 +59,7 @@ use std::{
 
 use cardinality::Cardinality;
 use error::EngineError;
-use fast_automaton::FastAutomaton;
+use fast_automaton::{FastAutomaton, GenerationOptions};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use regex::RegularExpression;
@@ -133,6 +133,7 @@ pub type CharRange = RangeSet<Char>;
 /// ```rust
 /// use regexsolver::Term;
 /// use regexsolver::error::EngineError;
+/// use regexsolver::fast_automaton::GenerationOrder;
 ///
 /// fn main() -> Result<(), EngineError> {
 ///     // Create terms from regex
@@ -168,7 +169,7 @@ pub type CharRange = RangeSet<Char>;
 ///
 ///     // Generate examples
 ///     let samples = Term::from_pattern("(x|y){1,3}")?
-///         .generate_strings(5, 0)?;
+///         .generate_strings(5, 0, GenerationOrder::Sampled)?;
 ///     println!("Some matches: {:?}", samples);
 ///
 ///     // Equivalence & subset
@@ -566,14 +567,25 @@ impl Term {
         }
     }
 
-    /// Generates up to `limit` distinct strings matched by the term, skipping the first `offset` strings.
+    /// Generates up to `limit` distinct strings matched by the term under the
+    /// given [`GenerationOptions`], skipping the first `offset` strings.
+    ///
+    /// `options` is a [`GenerationOrder`](fast_automaton::GenerationOrder) on
+    /// its own, or a full [`GenerationOptions`] to also restrict the
+    /// characters used.
+    /// [`Exhaustive`](fast_automaton::GenerationOrder::Exhaustive) sweeps the
+    /// language, one path at a time;
+    /// [`Sampled`](fast_automaton::GenerationOrder::Sampled) spreads the
+    /// strings over the shapes the pattern allows, which is what you want to
+    /// derive test cases from a pattern.
     ///
     /// Strings are only guaranteed to be distinct **within a single call**:
     /// the offset fast-skips by counting paths, and in a non-deterministic
     /// automaton the same string can be reached through several paths, so
     /// calls with different offsets may repeat strings (or skip some). The
     /// enumeration order also depends on the automaton's structure, so
-    /// offsets are only consistent across calls made on the same term.
+    /// offsets are only consistent across calls made on the same term with
+    /// the same options.
     ///
     /// For pagination without repetition or skipped strings, make the term deterministic once and generate
     /// from it. To check if a term is deterministic use [`is_deterministic`](Self::is_deterministic).
@@ -582,65 +594,86 @@ impl Term {
     /// # Examples
     ///
     /// ```
-    /// use regexsolver::Term;
+    /// use regexsolver::{CharRange, Term, fast_automaton::{GenerationOptions, GenerationOrder}};
+    /// use regexsolver::regex_charclass::char::Char;
     ///
     /// // Minimize once, then paginate with consistent offsets.
     /// let term = Term::from_pattern("(abc|de){2}").unwrap().minimize().unwrap();
     ///
-    /// let batch = term.generate_strings(2, 0).unwrap();
+    /// let batch = term.generate_strings(2, 0, GenerationOrder::Exhaustive).unwrap();
     /// assert_eq!(2, batch.len()); // ["dede", "deabc"]
     ///
-    /// let batch = term.generate_strings(2, 2).unwrap();
+    /// let batch = term.generate_strings(2, 2, GenerationOrder::Exhaustive).unwrap();
     /// assert_eq!(2, batch.len()); // ["abcde", "abcabc"]
+    ///
+    /// // The exhaustive order works through one path at a time, so a limit
+    /// // spent on `.*abc.*` never leaves the strings starting with `abc`.
+    /// let term = Term::from_pattern(".*abc.*").unwrap().minimize().unwrap();
+    ///
+    /// let batch = term.generate_strings(5, 0, GenerationOrder::Exhaustive).unwrap();
+    /// assert!(batch.iter().all(|s| s.starts_with("abc")));
+    ///
+    /// // The sampled order covers the pattern instead.
+    /// let batch = term.generate_strings(5, 0, GenerationOrder::Sampled).unwrap();
+    /// assert!(batch.iter().any(|s| !s.starts_with("abc")));
+    ///
+    /// // A charset keeps generation to the characters you can use.
+    /// let printable = CharRange::new_from_range(Char::new(' ')..=Char::new('~'));
+    /// let options = GenerationOptions::from(GenerationOrder::Sampled).with_charset(printable);
+    ///
+    /// let batch = term.generate_strings(5, 0, options).unwrap();
+    /// assert!(batch.iter().all(|s| s.chars().all(|c| c.is_ascii_graphic() || c == ' ')));
     /// ```
-    #[tracing::instrument(level = "debug", skip(self), fields(self_deterministic = self.is_deterministic(), limit = limit, offset = offset))]
+    #[tracing::instrument(level = "debug", skip(self, options), fields(self_deterministic = self.is_deterministic(), limit = limit, offset = offset))]
     pub fn generate_strings(
         &self,
         limit: usize,
         offset: usize,
+        options: impl Into<GenerationOptions>,
     ) -> Result<Vec<String>, EngineError> {
-        self.to_automaton()?.generate_strings(limit, offset)
+        self.to_automaton()?
+            .generate_strings(limit, offset, options)
     }
 
-    /// Returns a lazy iterator over the strings matched by the term, fetched in
-    /// batches behind the scenes so you can stop early without choosing a limit
-    /// up front.
+    /// Returns a lazy iterator over the strings matched by the term under the
+    /// given [`GenerationOptions`], fetched in batches behind the scenes so you
+    /// can stop early without choosing a limit up front.
     ///
-    /// The underlying automaton is computed once at construction time, not on
+    /// The underlying deterministic automaton is computed once at construction time, not on
     /// every batch. Each item is a `Result`: a construction or generation error
     /// (e.g. a timeout from the active [`ExecutionProfile`]) surfaces as an
-    /// `Err`, after which the iterator ends. The same determinism caveat as
-    /// [`generate_strings`](Self::generate_strings) applies: call
-    /// [`determinize`](Self::determinize) (or [`minimize`](Self::minimize))
-    /// first for distinct, stable enumeration.
+    /// `Err`, after which the iterator ends.
     ///
     /// # Examples
     ///
     /// ```
-    /// use regexsolver::Term;
+    /// use regexsolver::{Term, fast_automaton::GenerationOrder};
     ///
     /// let term = Term::from_pattern("(abc|de){2}").unwrap().minimize().unwrap();
     ///
     /// // Take the first three matches lazily.
     /// let first_three = term
-    ///     .iter_strings()
+    ///     .iter_strings(GenerationOrder::Exhaustive)
     ///     .take(3)
     ///     .collect::<Result<Vec<_>, _>>()
     ///     .unwrap();
     /// assert_eq!(3, first_three.len());
     /// ```
-    pub fn iter_strings(&self) -> StringGenerator<'_> {
-        match self.to_automaton() {
+    pub fn iter_strings(&self, options: impl Into<GenerationOptions>) -> StringGenerator<'_> {
+        let options = options.into();
+        match self.to_deterministic_automaton() {
             Ok(automaton) => StringGenerator {
                 automaton: Some(automaton),
                 pending_error: None,
                 offset: 0,
+                options,
                 buffer: VecDeque::new(),
             },
             Err(e) => StringGenerator {
                 automaton: None,
                 pending_error: Some(e),
                 offset: 0,
+                options,
                 buffer: VecDeque::new(),
             },
         }
@@ -904,6 +937,14 @@ impl Term {
         })
     }
 
+    fn to_deterministic_automaton(&self) -> Result<Cow<'_, FastAutomaton>, EngineError> {
+        let automaton = self.to_automaton()?;
+        if automaton.is_deterministic() {
+            return Ok(automaton);
+        }
+        Ok(Cow::Owned(automaton.determinize()?.into_owned()))
+    }
+
     /// Converts the term to a [`RegularExpression`].
     ///
     /// Returns a [`Cow`]: borrows the expression when the term is already
@@ -980,6 +1021,7 @@ pub struct StringGenerator<'a> {
     automaton: Option<Cow<'a, FastAutomaton>>,
     pending_error: Option<EngineError>,
     offset: usize,
+    options: GenerationOptions,
     buffer: VecDeque<String>,
 }
 
@@ -1000,7 +1042,7 @@ impl Iterator for StringGenerator<'_> {
             return Some(Err(e));
         }
         let automaton = self.automaton.as_ref()?;
-        match automaton.generate_strings(BATCH, self.offset) {
+        match automaton.generate(BATCH, self.offset, &self.options) {
             Ok(batch) => {
                 if batch.len() < BATCH {
                     self.automaton = None;
@@ -1019,6 +1061,7 @@ impl Iterator for StringGenerator<'_> {
 
 #[cfg(test)]
 mod tests {
+    use crate::fast_automaton::GenerationOrder;
     use crate::regex::RegularExpression;
 
     use super::*;
@@ -1217,8 +1260,13 @@ mod tests {
             .minimize()
             .unwrap();
 
-        let eager = term.generate_strings(1000, 0).unwrap();
-        let lazy = term.iter_strings().collect::<Result<Vec<_>, _>>().unwrap();
+        let eager = term
+            .generate_strings(1000, 0, GenerationOrder::Exhaustive)
+            .unwrap();
+        let lazy = term
+            .iter_strings(GenerationOrder::Exhaustive)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
 
         assert_eq!(eager.len(), lazy.len());
         assert_eq!(eager, lazy);
@@ -1352,7 +1400,7 @@ mod tests {
         // Must not hang on an infinite language: take a finite prefix.
         let term = Term::from_pattern("a+").unwrap();
         let first = term
-            .iter_strings()
+            .iter_strings(GenerationOrder::Exhaustive)
             .take(5)
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -1371,7 +1419,7 @@ mod tests {
             .build();
 
         profile.run(|| {
-            let mut it = term.iter_strings();
+            let mut it = term.iter_strings(GenerationOrder::Exhaustive);
             assert!(matches!(
                 it.next(),
                 Some(Err(EngineError::AutomatonHasTooManyStates))

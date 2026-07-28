@@ -11,6 +11,27 @@ mod repeat;
 mod union;
 
 impl FastAutomaton {
+    /// The shared preamble of the non-degenerate operation cores
+    /// (`concat_mut_nondegenerate`, `union_mut_nondegenerate`): a cheap
+    /// necessary condition for the caller-guaranteed invariant (the full
+    /// degenerate checks are exactly what the cores exist to avoid re-running),
+    /// the timeout check, and — only when a state limit is configured — the
+    /// predicted-size check.
+    fn assert_nondegenerate_operation_fits(
+        &self,
+        other: &FastAutomaton,
+        predicted_states: impl FnOnce() -> usize,
+    ) -> Result<(), crate::error::EngineError> {
+        debug_assert!(!self.accept_states.is_empty() && !other.accept_states.is_empty());
+
+        let execution_profile = crate::execution_profile::ExecutionProfile::get();
+        execution_profile.assert_not_timed_out()?;
+        if execution_profile.limits_number_of_states() {
+            execution_profile.assert_max_number_of_states(predicted_states())?;
+        }
+        Ok(())
+    }
+
     /// Removes "dead" states (those that cannot reach any accept state), since
     /// they never contribute to the language. If the language is empty the whole
     /// automaton collapses to the canonical empty automaton.

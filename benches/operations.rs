@@ -13,7 +13,7 @@
 
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use regex_charclass::char::Char;
-use regexsolver::fast_automaton::FastAutomaton;
+use regexsolver::fast_automaton::{FastAutomaton, GenerationOptions, GenerationOrder};
 use regexsolver::regex::RegularExpression;
 use regexsolver::{CharRange, Term};
 use std::hint::black_box;
@@ -215,13 +215,42 @@ fn bench_generate_strings(c: &mut Criterion) {
 
     let automaton = dfa("[a-z]{1,4}");
     group.bench_function("first_2000", |b| {
-        b.iter(|| black_box(&automaton).generate_strings(2000, 0).unwrap())
+        b.iter(|| {
+            black_box(&automaton)
+                .generate_strings(2000, 0, GenerationOrder::Exhaustive)
+                .unwrap()
+        })
     });
 
     // The offset fast-skips whole subtrees by counting paths.
     let deep = dfa("[a-z]{1,10}");
     group.bench_function("deep_offset", |b| {
-        b.iter(|| black_box(&deep).generate_strings(100, 1_000_000).unwrap())
+        b.iter(|| {
+            black_box(&deep)
+                .generate_strings(100, 1_000_000, GenerationOrder::Exhaustive)
+                .unwrap()
+        })
+    });
+
+    // Sampling walks the automaton once per pass instead of settling on one
+    // path, so it pays for the paths it spreads over.
+    group.bench_function("sampled_2000", |b| {
+        b.iter(|| {
+            black_box(&automaton)
+                .generate_strings(2000, 0, GenerationOrder::Sampled)
+                .unwrap()
+        })
+    });
+
+    // A charset costs one intersection per transition condition, up front.
+    let printable = CharRange::new_from_range(Char::new(' ')..=Char::new('~'));
+    let options = GenerationOptions::from(GenerationOrder::Exhaustive).with_charset(printable);
+    group.bench_function("charset_2000", |b| {
+        b.iter(|| {
+            black_box(&automaton)
+                .generate_strings(2000, 0, options.clone())
+                .unwrap()
+        })
     });
 
     group.finish();

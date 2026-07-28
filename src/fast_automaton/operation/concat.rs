@@ -9,7 +9,9 @@ use super::*;
 impl FastAutomaton {
     /// Computes the concatenation between `self` and `other`.
     pub fn concat(&self, other: &FastAutomaton) -> Result<Self, EngineError> {
-        Self::concat_all([self, other])
+        let mut new_automaton = self.clone();
+        new_automaton.concat_mut(other)?;
+        Ok(new_automaton)
     }
 
     /// Computes the concatenation of all automata in the given iterator.
@@ -17,9 +19,26 @@ impl FastAutomaton {
     pub fn concat_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(
         automata: I,
     ) -> Result<Self, EngineError> {
+        // Each operand's degenerate checks run once, on the operand: running
+        // them per fold step, on the growing result, made long concatenations
+        // quadratic.
         let mut new_automaton = FastAutomaton::new_empty_string();
+        let mut seeded = false;
         for automaton in automata {
-            new_automaton.concat_mut(automaton)?;
+            if automaton.is_empty() {
+                // ∅ annihilates the whole concatenation.
+                return Ok(FastAutomaton::new_empty());
+            }
+            if automaton.is_empty_string() {
+                // {""} is the identity.
+                continue;
+            }
+            if seeded {
+                new_automaton.concat_mut_nondegenerate(automaton, false)?;
+            } else {
+                new_automaton.apply_model(automaton);
+                seeded = true;
+            }
         }
 
         Ok(new_automaton)
@@ -44,11 +63,7 @@ impl FastAutomaton {
         other: &FastAutomaton,
         force_no_merge: bool,
     ) -> Result<(), EngineError> {
-        let execution_profile = ExecutionProfile::get();
-        execution_profile.assert_not_timed_out()?;
-        execution_profile.assert_max_number_of_states(
-            self.concat_state_count_heuristic(other, force_no_merge),
-        )?;
+        ExecutionProfile::get().assert_not_timed_out()?;
 
         if other.is_empty() {
             self.make_empty();
@@ -64,6 +79,25 @@ impl FastAutomaton {
             self.apply_model(other);
             return Ok(());
         }
+
+        self.concat_mut_nondegenerate(other, force_no_merge)
+    }
+
+    /// The concatenation core: both operands must be neither the empty
+    /// language `∅` nor the empty-string language `{""}`. Callers looping over
+    /// a growing accumulator (`repeat_mut`, [`concat_all`](Self::concat_all))
+    /// establish that invariant once and call this directly: the degenerate
+    /// checks of [`concat_mut_with`](Self::concat_mut_with) walk the whole
+    /// automaton, and re-running them on every iteration made those loops
+    /// quadratic.
+    pub(crate) fn concat_mut_nondegenerate(
+        &mut self,
+        other: &FastAutomaton,
+        force_no_merge: bool,
+    ) -> Result<(), EngineError> {
+        self.assert_nondegenerate_operation_fits(other, || {
+            self.concat_state_count_nondegenerate(other, force_no_merge)
+        })?;
 
         let new_spanning_set = &self.spanning_set.merge(&other.spanning_set);
         self.apply_new_spanning_set(new_spanning_set)?;
@@ -180,6 +214,16 @@ impl FastAutomaton {
             return other.number_of_states();
         }
 
+        self.concat_state_count_nondegenerate(other, force_no_merge)
+    }
+
+    /// [`concat_state_count_heuristic`](Self::concat_state_count_heuristic)
+    /// for operands already known to be non-degenerate: no emptiness walks.
+    fn concat_state_count_nondegenerate(
+        &self,
+        other: &FastAutomaton,
+        force_no_merge: bool,
+    ) -> usize {
         // Determine if we are forced to create a new state to avoid unintended loops
         let start_state_and_accept_states_not_mergeable = force_no_merge
             || (other.in_degree(other.start_state) > 0
