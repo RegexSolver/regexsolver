@@ -7,6 +7,11 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::ops::Range;
 
+/// Each transition condition's index into the range pool the generation
+/// resolved, the charset already taken out; `None` for the conditions the
+/// charset leaves nothing of.
+type RangeIds<'a> = AHashMap<&'a Condition, Option<u32>>;
+
 /// The order in which [`FastAutomaton::generate_strings`] walks a language.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum GenerationOrder {
@@ -282,7 +287,7 @@ struct Generation<'a> {
     /// [`range_pool`](Self::range_pool), the charset already taken out. A
     /// condition the charset leaves nothing of holds `None`, which is what
     /// makes its transition impassable.
-    range_ids: AHashMap<&'a Condition, Option<u32>>,
+    range_ids: RangeIds<'a>,
     emitter: Emitter,
 }
 
@@ -352,10 +357,9 @@ impl PathCache {
 fn resolve_ranges<'a>(
     automaton: &'a FastAutomaton,
     charset: Option<&CharRange>,
-) -> Result<(Vec<CharRange>, AHashMap<&'a Condition, Option<u32>>), EngineError> {
+) -> Result<(Vec<CharRange>, RangeIds<'a>), EngineError> {
     let mut range_pool: Vec<CharRange> = Vec::new();
-    let mut range_ids: AHashMap<&Condition, Option<u32>> =
-        AHashMap::with_capacity(automaton.transitions.len());
+    let mut range_ids: RangeIds = AHashMap::with_capacity(automaton.transitions.len());
 
     for state in automaton.states() {
         for (cond, _) in automaton.transitions_from(state) {
@@ -384,10 +388,7 @@ fn resolve_ranges<'a>(
 /// drives the A* search and prunes the states that never accept; `usize::MAX`
 /// for the states that cannot reach one. A state the charset leaves no way out
 /// of (no id in `range_ids`) is one of those dead ends.
-fn distances_to_accept(
-    automaton: &FastAutomaton,
-    range_ids: &AHashMap<&Condition, Option<u32>>,
-) -> Vec<usize> {
+fn distances_to_accept(automaton: &FastAutomaton, range_ids: &RangeIds) -> Vec<usize> {
     let num_states = automaton.transitions.len();
     let mut incoming = vec![vec![]; num_states];
     let mut dist_q = VecDeque::new();
