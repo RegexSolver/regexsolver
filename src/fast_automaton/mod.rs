@@ -28,6 +28,34 @@ pub mod spanning_set;
 
 pub use generate::{GenerationOptions, GenerationOrder};
 
+/// The block of code points `char` cannot hold: [`regex_charclass::char::Char`]
+/// values skip it, so scalar values have to be shifted down past it to be
+/// counted.
+const SURROGATES: std::ops::Range<u32> = 0xD800..0xE000;
+
+/// The index of `ch` among all the characters, the surrogate block excluded.
+/// Consecutive scalars are consecutive `Char`s, so `+ 1` arithmetic in scalar
+/// space cannot land inside the surrogate hole.
+#[inline]
+fn scalar(ch: regex_charclass::char::Char) -> u32 {
+    let code = ch.to_u32();
+    if code >= SURROGATES.end {
+        code - (SURROGATES.end - SURROGATES.start)
+    } else {
+        code
+    }
+}
+
+/// The inverse of [`scalar`].
+#[inline]
+fn from_scalar(index: u32) -> Option<regex_charclass::char::Char> {
+    regex_charclass::char::Char::from_u32(if index >= SURROGATES.start {
+        index + (SURROGATES.end - SURROGATES.start)
+    } else {
+        index
+    })
+}
+
 /// Represents a finite-state automaton.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[must_use = "non-`_mut` operations return a new automaton"]
@@ -99,10 +127,7 @@ impl FastAutomaton {
     /// Returns the number of transitions to the provided state.
     #[inline]
     pub fn in_degree(&self, state: State) -> usize {
-        self.transitions_in
-            .get(&state)
-            .unwrap_or(&IntSet::new())
-            .len()
+        self.transitions_in.get(&state).map_or(0, IntSet::len)
     }
 
     /// Returns the number of transitions from the provided state.
@@ -146,14 +171,14 @@ impl FastAutomaton {
 
     /// Returns a vector of transitions to the given state.
     pub fn transitions_to_vec(&self, state: State) -> Vec<(State, Condition)> {
-        // Direct `(from, state)` lookups: scanning each predecessor's whole
-        // out-list made this O(predecessors × out-degree), and `minimize`
-        // builds its inverse-transition table through here.
         if !self.has_state(state) {
             return vec![];
         }
+        let Some(predecessors) = self.transitions_in.get(&state) else {
+            return vec![];
+        };
         let mut in_transitions = vec![];
-        for from_state in self.transitions_in.get(&state).unwrap_or(&IntSet::new()) {
+        for from_state in predecessors {
             if !self.has_state(*from_state) {
                 continue;
             }

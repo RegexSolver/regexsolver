@@ -99,9 +99,20 @@ impl FastAutomaton {
             self.concat_state_count_nondegenerate(other, force_no_merge)
         })?;
 
-        let new_spanning_set = &self.spanning_set.merge(&other.spanning_set);
-        self.apply_new_spanning_set(new_spanning_set)?;
-        let condition_converter = ConditionConverter::new(&other.spanning_set, new_spanning_set)?;
+        // Equal spanning sets (the dominant case: `repeat_mut` concatenates
+        // the same operand over and over) skip the quadratic merge and treat
+        // every condition conversion as identity.
+        let new_spanning_set;
+        let condition_converter = if self.spanning_set == other.spanning_set {
+            None
+        } else {
+            new_spanning_set = self.spanning_set.merge(&other.spanning_set);
+            self.apply_new_spanning_set(&new_spanning_set)?;
+            Some(ConditionConverter::new(
+                &other.spanning_set,
+                &new_spanning_set,
+            )?)
+        };
 
         let mut new_states: IntMap<usize, usize> = IntMap::with_capacity_and_hasher(
             other.number_of_states(),
@@ -135,44 +146,54 @@ impl FastAutomaton {
             }
         }
 
+        // `other`'s start maps to all of `self`'s accept states (when merging);
+        // every other state maps to exactly one. Borrowing a slice for both
+        // shapes keeps the per-transition loop allocation-free.
         for from_state in other.states() {
-            let new_from_states = match new_states.entry(from_state) {
+            let single_from;
+            let new_from_states: &[usize] = match new_states.entry(from_state) {
                 Entry::Occupied(o) => {
-                    vec![*o.get()]
+                    single_from = [*o.get()];
+                    &single_from
                 }
                 Entry::Vacant(v) => {
                     if from_state == other.start_state {
-                        accept_states.clone()
+                        &accept_states
                     } else {
                         let new_state = self.new_state();
                         if other.accept_states.contains(&from_state) {
                             self.accept(new_state);
                         }
                         v.insert(new_state);
-                        vec![new_state]
+                        single_from = [new_state];
+                        &single_from
                     }
                 }
             };
 
             for (condition, to_state) in other.transitions_from(from_state) {
-                let new_to_states = match new_states.entry(*to_state) {
+                let single_to;
+                let new_to_states: &[usize] = match new_states.entry(*to_state) {
                     Entry::Occupied(o) => {
-                        vec![*o.get()]
+                        single_to = [*o.get()];
+                        &single_to
                     }
                     Entry::Vacant(v) => {
                         if *to_state == other.start_state {
-                            accept_states.clone()
+                            &accept_states
                         } else {
                             let new_state = self.new_state();
                             if other.accept_states.contains(to_state) {
                                 self.accept(new_state);
                             }
                             v.insert(new_state);
-                            vec![new_state]
+                            single_to = [new_state];
+                            &single_to
                         }
                     }
                 };
-                let projected_condition = condition_converter.convert(condition)?;
+                let projected_condition =
+                    convert_condition(condition_converter.as_ref(), condition)?;
                 for new_from_state in new_from_states.iter() {
                     for new_to_state in new_to_states.iter() {
                         self.add_transition(*new_from_state, *new_to_state, &projected_condition);

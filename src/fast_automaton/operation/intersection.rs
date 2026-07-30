@@ -74,12 +74,34 @@ impl FastAutomaton {
         }
         let execution_profile = ExecutionProfile::get();
 
-        let new_spanning_set = self.spanning_set.merge(&other.spanning_set);
+        // Equal spanning sets (the dominant case in operation chains) need no
+        // merge and no condition projection at all.
+        let same_spanning_set = self.spanning_set == other.spanning_set;
+        let new_spanning_set = if same_spanning_set {
+            self.spanning_set.clone()
+        } else {
+            self.spanning_set.merge(&other.spanning_set)
+        };
 
-        let condition_converter_self_to_new =
-            ConditionConverter::new(&self.spanning_set, &new_spanning_set)?;
-        let condition_converter_other_to_new =
-            ConditionConverter::new(&other.spanning_set, &new_spanning_set)?;
+        let condition_converter_self_to_new = if same_spanning_set {
+            None
+        } else {
+            Some(ConditionConverter::new(
+                &self.spanning_set,
+                &new_spanning_set,
+            )?)
+        };
+        let condition_converter_other_to_new = if same_spanning_set {
+            None
+        } else {
+            Some(ConditionConverter::new(
+                &other.spanning_set,
+                &new_spanning_set,
+            )?)
+        };
+
+        let mut projected_self: IntMap<State, Vec<(Condition, State)>> = IntMap::default();
+        let mut projected_other: IntMap<State, Vec<(Condition, State)>> = IntMap::default();
 
         let mut new_automaton = FastAutomaton::new_empty();
         let mut worklist =
@@ -103,22 +125,28 @@ impl FastAutomaton {
                 new_automaton.accept(p.0);
             }
 
-            let transitions_1 =
-                self.get_projected_transitions(p.1, &condition_converter_self_to_new)?;
-            let transitions_2 =
-                other.get_projected_transitions(p.2, &condition_converter_other_to_new)?;
+            let transitions_1 = self.projected_transitions(
+                &mut projected_self,
+                p.1,
+                condition_converter_self_to_new.as_ref(),
+            )?;
+            let transitions_2 = other.projected_transitions(
+                &mut projected_other,
+                p.2,
+                condition_converter_other_to_new.as_ref(),
+            )?;
 
             for (condition_1, n1) in transitions_1 {
-                for (condition_2, n2) in &transitions_2 {
+                for (condition_2, n2) in transitions_2 {
                     let intersection = condition_1.intersection(condition_2);
                     if intersection.is_empty() {
                         continue;
                     }
-                    let k = (n1, *n2);
+                    let k = (*n1, *n2);
                     let r = match new_states.get(&k) {
                         Some(new_r) => *new_r,
                         None => {
-                            let new_r = (new_automaton.new_state(), n1, *n2);
+                            let new_r = (new_automaton.new_state(), *n1, *n2);
                             worklist.push_back(new_r);
                             new_states.insert(k, new_r);
                             new_r
@@ -143,12 +171,32 @@ impl FastAutomaton {
         }
         let execution_profile = ExecutionProfile::get();
 
-        let new_spanning_set = self.spanning_set.merge(&other.spanning_set);
+        let same_spanning_set = self.spanning_set == other.spanning_set;
+        let new_spanning_set = if same_spanning_set {
+            self.spanning_set.clone()
+        } else {
+            self.spanning_set.merge(&other.spanning_set)
+        };
 
-        let condition_converter_self_to_new =
-            ConditionConverter::new(&self.spanning_set, &new_spanning_set)?;
-        let condition_converter_other_to_new =
-            ConditionConverter::new(&other.spanning_set, &new_spanning_set)?;
+        let condition_converter_self_to_new = if same_spanning_set {
+            None
+        } else {
+            Some(ConditionConverter::new(
+                &self.spanning_set,
+                &new_spanning_set,
+            )?)
+        };
+        let condition_converter_other_to_new = if same_spanning_set {
+            None
+        } else {
+            Some(ConditionConverter::new(
+                &other.spanning_set,
+                &new_spanning_set,
+            )?)
+        };
+
+        let mut projected_self: IntMap<State, Vec<(Condition, State)>> = IntMap::default();
+        let mut projected_other: IntMap<State, Vec<(Condition, State)>> = IntMap::default();
 
         let mut new_automaton = FastAutomaton::new_empty();
         let mut worklist =
@@ -172,22 +220,28 @@ impl FastAutomaton {
                 return Ok(true);
             }
 
-            let transitions_1 =
-                self.get_projected_transitions(p.1, &condition_converter_self_to_new)?;
-            let transitions_2 =
-                other.get_projected_transitions(p.2, &condition_converter_other_to_new)?;
+            let transitions_1 = self.projected_transitions(
+                &mut projected_self,
+                p.1,
+                condition_converter_self_to_new.as_ref(),
+            )?;
+            let transitions_2 = other.projected_transitions(
+                &mut projected_other,
+                p.2,
+                condition_converter_other_to_new.as_ref(),
+            )?;
 
             for (condition_1, n1) in transitions_1 {
-                for (condition_2, n2) in &transitions_2 {
+                for (condition_2, n2) in transitions_2 {
                     let intersection = condition_1.intersection(condition_2);
                     if intersection.is_empty() {
                         continue;
                     }
-                    let k = (n1, *n2);
+                    let k = (*n1, *n2);
                     let r = match new_states.get(&k) {
                         Some(new_r) => *new_r,
                         None => {
-                            let new_r = (new_automaton.new_state(), n1, *n2);
+                            let new_r = (new_automaton.new_state(), *n1, *n2);
                             worklist.push_back(new_r);
                             new_states.insert(k, new_r);
                             new_r
@@ -200,20 +254,30 @@ impl FastAutomaton {
         Ok(false)
     }
 
-    fn get_projected_transitions(
+    /// Returns `state`'s outgoing transitions projected on the operation's
+    /// spanning set (`condition_converter` is `None` when both inputs already
+    /// share it), memoized in `cache`: a component state participates in up
+    /// to |other| product pairs, and projecting it once instead of once per
+    /// pair keeps the product construction's inner loop allocation-free.
+    fn projected_transitions<'m>(
         &self,
+        cache: &'m mut IntMap<State, Vec<(Condition, State)>>,
         state: State,
-        condition_converter: &ConditionConverter,
-    ) -> Result<Vec<(Condition, State)>, EngineError> {
-        let transitions_1: Result<Vec<_>, EngineError> = self
-            .transitions_from(state)
-            .map(|(c, &s)| match condition_converter.convert(c) {
-                Ok(condition) => Ok((condition, s)),
-                Err(err) => Err(err),
-            })
-            .collect();
-
-        transitions_1
+        condition_converter: Option<&ConditionConverter>,
+    ) -> Result<&'m Vec<(Condition, State)>, EngineError> {
+        match cache.entry(state) {
+            Entry::Occupied(o) => Ok(o.into_mut()),
+            Entry::Vacant(v) => {
+                let transitions: Result<Vec<_>, EngineError> = self
+                    .transitions_from(state)
+                    .map(|(c, &s)| match condition_converter {
+                        Some(converter) => converter.convert(c).map(|c| (c, s)),
+                        None => Ok((c.clone(), s)),
+                    })
+                    .collect();
+                Ok(v.insert(transitions?))
+            }
+        }
     }
 }
 

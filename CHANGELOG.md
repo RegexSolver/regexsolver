@@ -58,10 +58,11 @@ below.
   language in. `Exhaustive` is the previous behaviour: shortest strings
   first, one path expanded in full before the next. `Sampled` covers every
   shape the automaton holds before asking any of them for a second string,
-  and picks representative characters (`a`, `0`, `A`, ` `, ...) spread over
-  each range, so `.*abc.*` yields `abc`, `abc `, `aabc`, `0abc`, ... instead
-  of a million variations of `abc\u{0}`. It stays deterministic and pages
-  with `offset` the same way.
+  so `.*abc.*` yields `abc`, `abc\u{0}`, `\u{0}abc`, ... instead of a
+  million variations of `abc\u{0}`. Within a shape, characters come in the
+  same ascending order `Exhaustive` uses — the order chooses which strings
+  come first, never the characters they are made of. It stays deterministic
+  and pages with `offset` the same way.
 - `GenerationOptions`, what `generate_strings`/`iter_strings` may generate:
   the order, plus an optional charset (`with_charset(CharRange)`) that keeps
   generation to a set of characters. Only strings made entirely of them come

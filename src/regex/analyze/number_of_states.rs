@@ -258,15 +258,18 @@ impl AbstractNFAMetadata {
             return_number_of_states = return_number_of_states.saturating_add(1);
         }
 
+        // A looping start (incoming edges) makes the union materialize
+        // the start's direct successors before accept states are merged,
+        // and an accept among those successors never merges (e.g. `a*a`,
+        // whose accept hangs directly off the looping start). Withhold the
+        // saving when an accept may sit there: an upper bound may
+        // overshoot, but never undershoot.
+        let nfa_accept_beside_looping_start =
+            nfa_start_state_not_mergeable && nfa.accept_adjacent_to_start;
+
         if !self_accepted_not_mergeable
             && !nfa_accepted_not_mergeable
-            // A looping start (incoming edges) makes the union materialize
-            // the start's direct successors before accept states are merged,
-            // and an accept among those successors never merges (e.g. `a*a`,
-            // whose accept hangs directly off the looping start). Withhold the
-            // saving when an accept may sit there: an upper bound may
-            // overshoot, but never undershoot.
-            && !(nfa_start_state_not_mergeable && nfa.accept_adjacent_to_start)
+            && !nfa_accept_beside_looping_start
             && !self.accepted.is_empty()
             && !nfa.accepted.is_empty()
             && self.number_of_states > 1
@@ -351,8 +354,7 @@ mod tests {
 
     #[test]
     fn test_number_of_states_in_nfa() -> Result<(), String> {
-        //TODO:
-        //assert_number_of_states_in_nfa("(ab|c)+");
+        assert_number_of_states_in_nfa("(ab|c)+");
         assert_number_of_states_in_nfa("A+");
         assert_number_of_states_in_nfa("B*");
         assert_number_of_states_in_nfa("([ab]*a)");
@@ -525,8 +527,6 @@ mod tests {
     fn assert_number_of_states_in_nfa(regex: &str) {
         println!("{}", regex);
         let regex = RegularExpression::new(regex).unwrap();
-
-        //regex.to_automaton().unwrap().to_dot();
 
         let number_of_states_in_nfa = regex.get_number_of_states_in_nfa();
 

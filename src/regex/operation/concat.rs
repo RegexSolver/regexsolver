@@ -167,6 +167,27 @@ impl RegularExpression {
         }
     }
 
+    /// Appends `that` to the fold accumulator `elements`, merging with the
+    /// back element when possible: the in-place equivalent of
+    /// `acc = acc.concat(&that, true)` for a char-by-char fold.
+    ///
+    /// `that` must be neither the empty language nor the empty string (both
+    /// are handled by `concat`'s degenerate checks, not here), and a merge
+    /// between the whole accumulated `Concat` and a single element is
+    /// structurally impossible, so only the back element needs checking.
+    pub(crate) fn push_concat_element(
+        elements: &mut VecDeque<RegularExpression>,
+        that: RegularExpression,
+    ) {
+        if let Some(back) = elements.back()
+            && let Some(merged) = Self::opconcat_can_be_merged(back, &that)
+        {
+            *elements.back_mut().expect("back() was Some") = merged;
+            return;
+        }
+        elements.push_back(that);
+    }
+
     /// Merges the bounds of two adjacent repetitions of the same expression,
     /// `r{a,b}r{c,d}` → `r{a+c,b+d}`. Returns `None` ("cannot be merged",
     /// falling back to plain concatenation) when an addition would overflow.

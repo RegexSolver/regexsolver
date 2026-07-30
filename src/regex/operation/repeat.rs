@@ -370,8 +370,6 @@ mod tests {
 
         let repeat = repeat.to_automaton().unwrap();
 
-        //repeat.to_dot();
-
         let result = got.to_automaton().unwrap();
 
         assert!(repeat.equivalent(&result).unwrap());

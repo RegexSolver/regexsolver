@@ -107,17 +107,20 @@ impl RegularExpression {
         match hir.kind() {
             HirKind::Empty => Ok(RegularExpression::new_empty_string()),
             HirKind::Literal(literal) => {
-                let mut regex_concat = RegularExpression::new_empty_string();
-                if let Ok(string) = String::from_utf8(literal.0.clone().into_vec()) {
+                if let Ok(string) = std::str::from_utf8(&literal.0) {
+                    let mut elements = VecDeque::new();
                     for char in string.chars() {
-                        regex_concat = regex_concat.concat(
-                            &RegularExpression::Character(CharRange::new_from_range(
+                        RegularExpression::push_concat_element(
+                            &mut elements,
+                            RegularExpression::Character(CharRange::new_from_range(
                                 Char::new(char)..=Char::new(char),
                             )),
-                            true,
                         );
                     }
-                    Ok(regex_concat)
+                    Ok(match elements.len() {
+                        1 => elements.pop_front().expect("len() == 1"),
+                        _ => RegularExpression::Concat(elements),
+                    })
                 } else {
                     Err(EngineError::InvalidCharacterInRegex)
                 }

@@ -22,9 +22,8 @@ pub enum GenerationOrder {
     #[default]
     Exhaustive,
     /// Samples the language instead of sweeping it: a few strings per path
-    /// before moving to the next one, with representative characters (`a`,
-    /// `0`, `A`, ` `, ...) spread over each range rather than always its first
-    /// one. `.*abc.*` yields `abc`, `0abc`, `aabc`, `abc0`, ... — the shapes
+    /// before moving to the next one, so `.*abc.*` yields `abc` and a string
+    /// for each of the other shapes (`abc\u{0}`, `\u{0}abc`, ...) — the shapes
     /// the pattern allows, instead of a million variations of one of them,
     /// which is what makes it usable to derive test cases.
     ///
@@ -33,33 +32,18 @@ pub enum GenerationOrder {
     /// the number of shapes is spent entirely on distinct shapes, and only a
     /// larger one starts varying the characters within them.
     ///
+    /// Within a path, characters come in the same ascending order
+    /// [`Exhaustive`](Self::Exhaustive) uses: the order chooses which strings
+    /// come first, never the characters they are made of. To generate from
+    /// specific characters, restrict generation with
+    /// [`GenerationOptions::with_charset`].
+    ///
     /// Deterministic, and pages with `offset` like [`Exhaustive`](Self::Exhaustive).
     /// Each pass takes twice as many strings per path as the previous one, so
     /// a finite language is still enumerated in full given a large enough
     /// `limit`; those repeated passes make it slower than `Exhaustive`.
     Sampled,
 }
-
-/// The characters a sampled string reaches for first, in order of preference:
-/// one per kind of character a range is usually built from, so that an early
-/// sample lands on a letter, a digit or a space rather than on `\u{0}`. The
-/// list is rotated by position, so neighbouring characters of a sample differ.
-const SAMPLE_CHARS: [char; 10] = [
-    'a',
-    '0',
-    'A',
-    ' ',
-    '_',
-    '~',
-    '\n',
-    '\u{e9}',
-    '\u{4e2d}',
-    '\u{1f600}',
-];
-
-/// The block of code points `char` cannot hold: [`Char`] values skip it, so
-/// scalar values have to be shifted down past it to be counted.
-const SURROGATES: Range<u32> = 0xD800..0xE000;
 
 /// The most strings to reserve room for up front. `limit` is caller-controlled
 /// and huge values (up to `usize::MAX`) are legitimate ways to ask for
@@ -363,9 +347,9 @@ fn resolve_ranges<'a>(
 
     for state in automaton.states() {
         for (cond, _) in automaton.transitions_from(state) {
-            if range_ids.contains_key(cond) {
+            let std::collections::hash_map::Entry::Vacant(vacant) = range_ids.entry(cond) else {
                 continue;
-            }
+            };
             let range = cond.to_range(&automaton.spanning_set)?;
             let range = match charset {
                 Some(charset) => range.intersection(charset),
@@ -377,7 +361,7 @@ fn resolve_ranges<'a>(
                 range_pool.push(range);
                 Some((range_pool.len() - 1) as u32)
             };
-            range_ids.insert(cond, id);
+            vacant.insert(id);
         }
     }
 
@@ -703,8 +687,9 @@ impl Emitter {
     }
 
     /// Emits the combinations of `ranges` whose index falls inside `window`,
-    /// spread over the ranges by the sampling permutation. Returns how many of
-    /// them the window covered, the ones `offset` skipped included.
+    /// in the ascending order [`emit_all`](Self::emit_all) walks them in.
+    /// Returns how many of them the window covered, the ones `offset` skipped
+    /// included.
     fn emit_sampled(
         &mut self,
         ranges: &[&CharRange],
@@ -726,25 +711,13 @@ impl Emitter {
             return Ok(covered);
         }
 
-        // The permutation needs `index * multiplier` to stay within `u128`;
-        // beyond that the mixed-radix digits alone give enough variety, since
-        // consecutive indices already differ from their first character on.
-        let scramble = total_combinations
-            .filter(|&total| total <= u64::MAX as u128)
-            .map(|total| (scramble_multiplier(total), total));
-
         let first = window.start.min(bound) + self.offset;
         self.offset = 0;
 
         for index in first..window.end.min(bound) {
             self.execution_profile.assert_not_timed_out()?;
 
-            let combination = match scramble {
-                Some((multiplier, total)) => (index as u128 * multiplier) % total,
-                None => index as u128,
-            };
-
-            let string = sample_string(ranges, &range_lengths, combination)?;
+            let string = sample_string(ranges, &range_lengths, index as u128)?;
             self.strings.insert(string);
 
             if self.is_full() {
@@ -757,60 +730,28 @@ impl Emitter {
 }
 
 /// Builds the combination of `ranges` at index `combination`, read as a
-/// mixed-radix number whose least significant digit is the first character:
-/// consecutive combinations then differ from their first character on, instead
-/// of only in their last one.
+/// mixed-radix number whose least significant digit is the last character,
+/// each digit indexing its range in ascending order: combinations come out in
+/// the lexicographic order [`Emitter::emit_all`] walks them in.
+///
+/// The mapping is a bijection over the combinations, which is what keeps the
+/// sampled strings distinct and `offset` exact.
 fn sample_string(
     ranges: &[&CharRange],
     range_lengths: &[u128],
     mut combination: u128,
 ) -> Result<String, EngineError> {
-    let mut string = String::with_capacity(ranges.len());
+    let mut chars = Vec::with_capacity(ranges.len());
 
-    for (position, (&range, &length)) in ranges.iter().zip(range_lengths).enumerate() {
+    for (&range, &length) in ranges.iter().zip(range_lengths).rev() {
         let index = (combination % length) as u32;
         combination /= length;
-        string.push(sample_char(range, position, index)?.to_char());
+        let ch = char_at(range, index).ok_or(EngineError::InvalidCharacterInRegex)?;
+        chars.push(ch.to_char());
     }
 
-    Ok(string)
-}
-
-/// Returns the character `range` holds at `index` in sampling order: the
-/// [`SAMPLE_CHARS`] it contains first, rotated by `position` so that adjacent
-/// characters of a sample differ, then the rest of the range in order.
-///
-/// The mapping is a permutation of the range, which is what keeps the sampled
-/// strings distinct and `offset` exact.
-fn sample_char(range: &CharRange, position: usize, index: u32) -> Result<Char, EngineError> {
-    let mut sampled = [0u32; SAMPLE_CHARS.len()];
-    let mut count = 0;
-
-    for rotation in 0..SAMPLE_CHARS.len() {
-        let ch = Char::new(SAMPLE_CHARS[(position + rotation) % SAMPLE_CHARS.len()]);
-        if !range.contains(ch) {
-            continue;
-        }
-        if count as u32 == index {
-            return Ok(ch);
-        }
-        sampled[count] = ordinal_of(range, ch);
-        count += 1;
-    }
-
-    // Past the sample characters: take the `index - count`-th character of the
-    // range that is not one of them, so none is handed out twice.
-    let sampled = &mut sampled[..count];
-    sampled.sort_unstable();
-    let mut ordinal = index - count as u32;
-    for &taken in sampled.iter() {
-        if taken > ordinal {
-            break;
-        }
-        ordinal += 1;
-    }
-
-    char_at(range, ordinal).ok_or(EngineError::InvalidCharacterInRegex)
+    chars.reverse();
+    Ok(chars.into_iter().collect())
 }
 
 /// A cursor over the characters a [`CharRange`] holds, in order, opened at an
@@ -871,94 +812,14 @@ impl<'a> RangeCursor<'a> {
     }
 }
 
-/// The `(low, high)` scalar bounds of the intervals `range` is made of.
-fn intervals(range: &CharRange) -> impl Iterator<Item = (u32, u32)> + '_ {
-    range
-        .0
-        .chunks_exact(2)
-        .map(|bounds| (scalar(bounds[0]), scalar(bounds[1])))
-}
-
-/// The number of characters `range` holds before `target`, which it contains.
-fn ordinal_of(range: &CharRange, target: Char) -> u32 {
-    // An absent target would underflow `target - low` below, silently in
-    // release builds.
-    debug_assert!(range.contains(target), "{target} is not in {range}");
-
-    let target = scalar(target);
-    let mut ordinal = 0;
-
-    for (low, high) in intervals(range) {
-        if target <= high {
-            return ordinal + (target - low);
-        }
-        ordinal += high - low + 1;
-    }
-
-    ordinal
-}
-
 /// The character `range` holds at `ordinal`, `None` past its cardinality.
 fn char_at(range: &CharRange, ordinal: u32) -> Option<Char> {
     RangeCursor::new(range, ordinal).next()
 }
 
-/// The index of `ch` among all the characters, the surrogate block excluded.
-#[inline]
-fn scalar(ch: Char) -> u32 {
-    let code = ch.to_u32();
-    if code >= SURROGATES.end {
-        code - (SURROGATES.end - SURROGATES.start)
-    } else {
-        code
-    }
-}
-
-/// The inverse of [`scalar`].
-#[inline]
-fn from_scalar(index: u32) -> Option<Char> {
-    Char::from_u32(if index >= SURROGATES.start {
-        index + (SURROGATES.end - SURROGATES.start)
-    } else {
-        index
-    })
-}
-
-/// A stride coprime with `total`, close to its golden-ratio fraction, so that
-/// consecutive sample indices land far apart in the combination space instead
-/// of walking it in order. Being coprime keeps `index * stride % total` a
-/// permutation, so no combination comes up twice.
-fn scramble_multiplier(total: u128) -> u128 {
-    if total < 3 {
-        return 1;
-    }
-
-    let mut multiplier = ((total as f64) * 0.618_033_988_749_895) as u128;
-    multiplier = multiplier.clamp(1, total - 1);
-
-    for _ in 0..64 {
-        if gcd(multiplier, total) == 1 {
-            return multiplier;
-        }
-        multiplier += 1;
-        if multiplier >= total {
-            multiplier = 1;
-        }
-    }
-
-    1
-}
-
-fn gcd(mut a: u128, mut b: u128) -> u128 {
-    while b != 0 {
-        (a, b) = (b, a % b);
-    }
-    a
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{GenerationOptions, GenerationOrder, RangeCursor, char_at, sample_char};
+    use super::{GenerationOptions, GenerationOrder, RangeCursor, char_at};
     use crate::CharRange;
     use crate::cardinality::Cardinality;
     use crate::{fast_automaton::FastAutomaton, regex::RegularExpression};
@@ -1128,47 +989,154 @@ mod tests {
         assert_eq!(expected, sampled);
     }
 
-    /// The sample characters are what a range is reached for first, so a
-    /// pattern made of wide ranges samples as readable text rather than as
-    /// control characters.
+    /// The order chooses which strings come first, never the characters they
+    /// are made of: a sampled string reaches for the same low end of each
+    /// range the exhaustive order starts from, and a charset is how specific
+    /// characters are asked for.
     #[test]
-    fn test_generate_strings_sampled_prefers_representative_characters() {
+    fn test_generate_strings_sampled_uses_the_same_characters_as_exhaustive() {
         let automaton = automaton_of(".{3}");
 
         let sampled = automaton
             .generate_strings(1, 0, GenerationOrder::Sampled)
             .unwrap();
+        let exhaustive = automaton
+            .generate_strings(1, 0, GenerationOrder::Exhaustive)
+            .unwrap();
+        assert_eq!(exhaustive, sampled);
 
-        assert_eq!(vec!["a0A".to_string()], sampled);
+        let lowercase = CharRange::new_from_range_char('a'..='z');
+        let options = GenerationOptions::from(GenerationOrder::Sampled).with_charset(lowercase);
+        assert_eq!(
+            vec!["aaa".to_string()],
+            automaton.generate_strings(1, 0, options).unwrap()
+        );
     }
 
-    /// Sampling hands out each character of a range exactly once: anything else
-    /// and a path would repeat a string, or `offset` would drift off its page.
+    /// A single-path language has only one shape, so there is nothing for the
+    /// sampled order to spread over: within a path the characters come in the
+    /// lexicographic order the exhaustive order walks.
     #[test]
-    fn test_sample_char_is_a_permutation_of_the_range() {
-        let ranges = [
-            CharRange::new_from_range_char('a'..='z'),
-            // Several intervals, one of them straddling the surrogate hole.
-            CharRange::new_from_ranges(&[
-                AnyRange::from(Char::new('0')..=Char::new('9')),
-                AnyRange::from(Char::new('\u{d7fe}')..=Char::new('\u{e001}')),
-            ]),
-            // Past the hole, around one of the sample characters.
-            CharRange::new_from_range_char('\u{1f5ff}'..='\u{1f601}'),
+    fn test_generate_strings_sampled_matches_exhaustive_on_a_single_path() {
+        let automaton = automaton_of("[a-z]{2}");
+
+        let exhaustive = automaton
+            .generate_strings(10, 0, GenerationOrder::Exhaustive)
+            .unwrap();
+        let sampled = automaton
+            .generate_strings(10, 0, GenerationOrder::Sampled)
+            .unwrap();
+
+        assert_eq!(exhaustive, sampled);
+    }
+
+    /// The strongest form of "the order chooses which strings come first,
+    /// never the characters": on a finite language, sampled and exhaustive
+    /// enumerate exactly the same set — including through nondeterministic
+    /// automata, multi-interval charsets, and ranges straddling the surrogate
+    /// hole.
+    #[test]
+    fn test_generate_strings_sampled_and_exhaustive_agree_as_sets() {
+        let multi_interval = CharRange::new_from_ranges(&[
+            AnyRange::from(Char::new('x')..=Char::new('z')),
+            AnyRange::from(Char::new('0')..=Char::new('1')),
+        ]);
+        let surrogate_straddle = CharRange::new_from_range_char('\u{d7fe}'..='\u{e001}');
+
+        let cases: Vec<(&str, Option<CharRange>)> = vec![
+            ("(a|bc){0,3}", None),
+            // Nondeterministic: "ab" is reachable through both branches.
+            ("(ab|a)b{0,2}", None),
+            ("[a-e]{0,2}[0-3]?", None),
+            (".{0,2}", Some(multi_interval)),
+            (".", Some(surrogate_straddle)),
         ];
 
-        for range in ranges {
-            let expected: Vec<char> = range.iter().map(|ch| ch.to_char()).collect();
+        for (pattern, charset) in cases {
+            for determinize in [false, true] {
+                let automaton = if determinize {
+                    automaton_of(pattern).determinize().unwrap().into_owned()
+                } else {
+                    automaton_of(pattern)
+                };
 
-            for position in 0..3 {
-                let mut sampled: Vec<char> = (0..range.get_cardinality())
-                    .map(|index| sample_char(&range, position, index).unwrap().to_char())
-                    .collect();
-                sampled.sort_unstable();
+                let options = |order| match &charset {
+                    Some(charset) => GenerationOptions::from(order).with_charset(charset.clone()),
+                    None => GenerationOptions::from(order),
+                };
 
-                assert_eq!(expected, sampled, "range {range}, position {position}");
+                let mut exhaustive = automaton
+                    .generate_strings(100_000, 0, options(GenerationOrder::Exhaustive))
+                    .unwrap();
+                let mut sampled = automaton
+                    .generate_strings(100_000, 0, options(GenerationOrder::Sampled))
+                    .unwrap();
+
+                exhaustive.sort();
+                sampled.sort();
+                assert_eq!(
+                    exhaustive, sampled,
+                    "{pattern:?} (determinized: {determinize})"
+                );
             }
         }
+    }
+
+    /// Sampled pages stay consistent at every chunk size, not only at the
+    /// window boundaries: an offset landing mid-window or mid-path continues
+    /// exactly where the previous page stopped.
+    #[test]
+    fn test_generate_strings_sampled_pages_at_any_boundary() {
+        for pattern in ["(a|bc){0,3}", "[a-c]{1,3}", "(x|yy)(0|11)?"] {
+            // Deterministic and minimal, so pages are exactly disjoint.
+            let mut automaton = automaton_of(pattern).determinize().unwrap().into_owned();
+            automaton.minimize().unwrap();
+
+            let bulk = automaton
+                .generate_strings(60, 0, GenerationOrder::Sampled)
+                .unwrap();
+
+            for chunk in 1..=7usize {
+                let mut paged = vec![];
+                loop {
+                    let page = automaton
+                        .generate_strings(chunk, paged.len(), GenerationOrder::Sampled)
+                        .unwrap();
+                    if page.is_empty() {
+                        break;
+                    }
+                    paged.extend(page);
+                    if paged.len() >= bulk.len() {
+                        break;
+                    }
+                }
+                paged.truncate(bulk.len());
+
+                assert_eq!(bulk, paged, "{pattern:?} at chunk size {chunk}");
+            }
+        }
+    }
+
+    /// A path holding more combinations than `u128` fits still samples the
+    /// ascending sequence: the decode consumes the index from the last
+    /// position, so the positions it never reaches keep their range's first
+    /// character.
+    #[test]
+    fn test_generate_strings_sampled_orders_huge_paths() {
+        let automaton = automaton_of(".{40}");
+
+        let sampled = automaton
+            .generate_strings(3, 0, GenerationOrder::Sampled)
+            .unwrap();
+
+        assert_eq!(
+            vec![
+                "\u{0}".repeat(40),
+                format!("{}\u{1}", "\u{0}".repeat(39)),
+                format!("{}\u{2}", "\u{0}".repeat(39)),
+            ],
+            sampled
+        );
     }
 
     /// A charset rules out whole paths, not single characters: a path that

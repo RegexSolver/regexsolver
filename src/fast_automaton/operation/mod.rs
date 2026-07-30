@@ -1,6 +1,20 @@
 use std::cmp;
 
 use super::*;
+use condition::converter::ConditionConverter;
+
+/// Projects `condition` through `converter`, or borrows it unchanged when no
+/// projection is needed (`None`: both operands already share the spanning
+/// set, the dominant case in operation chains).
+fn convert_condition<'c>(
+    converter: Option<&ConditionConverter<'_, '_>>,
+    condition: &'c Condition,
+) -> Result<std::borrow::Cow<'c, Condition>, EngineError> {
+    Ok(match converter {
+        Some(converter) => std::borrow::Cow::Owned(converter.convert(condition)?),
+        None => std::borrow::Cow::Borrowed(condition),
+    })
+}
 
 mod concat;
 mod determinize;

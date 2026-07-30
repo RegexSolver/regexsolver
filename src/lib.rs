@@ -135,52 +135,48 @@ pub type CharRange = RangeSet<Char>;
 /// use regexsolver::error::EngineError;
 /// use regexsolver::fast_automaton::GenerationOrder;
 ///
-/// fn main() -> Result<(), EngineError> {
-///     // Create terms from regex
-///     let t1 = Term::from_pattern("abc.*")?;
-///     let t2 = Term::from_pattern(".*xyz")?;
+/// // Create terms from regex
+/// let t1 = Term::from_pattern("abc.*")?;
+/// let t2 = Term::from_pattern(".*xyz")?;
 ///
-///     // Concatenate
-///     let concat = t1.concat(&[t2])?;
-///     assert_eq!(concat.to_pattern()?, "abc.*xyz");
+/// // Concatenate
+/// let concat = t1.concat(&[t2])?;
+/// assert_eq!(concat.to_pattern()?, "abc.*xyz");
 ///
-///     // Union
-///     let union = t1.union(&[Term::from_pattern("fgh")?])?;
-///     assert_eq!(union.to_pattern()?, "(abc.*|fgh)");
+/// // Union
+/// let union = t1.union(&[Term::from_pattern("fgh")?])?;
+/// assert_eq!(union.to_pattern()?, "(abc.*|fgh)");
 ///
-///     // Intersection
-///     let inter = Term::from_pattern("(ab|xy){2}")?
-///         .intersection(&[Term::from_pattern(".*xy")?])?;
-///     assert_eq!(inter.to_pattern()?, "(ab|xy)xy");
+/// // Intersection
+/// let inter = Term::from_pattern("(ab|xy){2}")?
+///     .intersection(&[Term::from_pattern(".*xy")?])?;
+/// assert_eq!(inter.to_pattern()?, "(ab|xy)xy");
 ///
-///     // Difference
-///     let diff = Term::from_pattern("a*")?
-///         .difference(&Term::from_pattern("")?)?;
-///     assert_eq!(diff.to_pattern()?, "a+");
+/// // Difference
+/// let diff = Term::from_pattern("a*")?
+///     .difference(&Term::from_pattern("")?)?;
+/// assert_eq!(diff.to_pattern()?, "a+");
 ///
-///     // Repetition
-///     let rep = Term::from_pattern("abc")?
-///         .repeat(2..=4)?;
-///     assert_eq!(rep.to_pattern()?, "(abc){2,4}");
+/// // Repetition
+/// let rep = Term::from_pattern("abc")?
+///     .repeat(2..=4)?;
+/// assert_eq!(rep.to_pattern()?, "(abc){2,4}");
 ///
-///     // Analyze
-///     assert_eq!(rep.length(), (Some(6), Some(12)));
-///     assert!(!rep.is_empty()?);
+/// // Analyze
+/// assert_eq!(rep.length(), (Some(6), Some(12)));
+/// assert!(!rep.is_empty()?);
 ///
-///     // Generate examples
-///     let samples = Term::from_pattern("(x|y){1,3}")?
-///         .generate_strings(5, 0, GenerationOrder::Sampled)?;
-///     println!("Some matches: {:?}", samples);
+/// // Generate examples
+/// let samples = Term::from_pattern("(x|y){1,3}")?
+///     .generate_strings(5, 0, GenerationOrder::Sampled)?;
+/// println!("Some matches: {:?}", samples);
 ///
-///     // Equivalence & subset
-///     let a = Term::from_pattern("a+")?;
-///     let b = Term::from_pattern("a*")?;
-///     assert!(!a.equivalent(&b)?);
-///     assert!(a.subset(&b)?);
-///
-///     Ok(())
-/// }
-/// # main();
+/// // Equivalence & subset
+/// let a = Term::from_pattern("a+")?;
+/// let b = Term::from_pattern("a*")?;
+/// assert!(!a.equivalent(&b)?);
+/// assert!(a.subset(&b)?);
+/// # Ok::<(), EngineError>(())
 /// ```
 ///
 /// To put constraint and limitation on the execution of operations please refer to [`ExecutionProfile`].
