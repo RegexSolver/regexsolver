@@ -84,7 +84,7 @@ impl FastAutomaton {
         &mut self,
         other: &FastAutomaton,
         new_states: &mut IntMap<usize, usize>,
-        condition_converter: &ConditionConverter,
+        condition_converter: Option<&ConditionConverter>,
     ) -> Result<IntSet<usize>, EngineError> {
         let mut imcomplete_states = IntSet::with_capacity(other.out_degree(other.start_state) + 1);
         // If `other` accepts the empty string we must make the union's *entry*
@@ -116,9 +116,9 @@ impl FastAutomaton {
                 new_states.insert(other.start_state, new_state);
                 imcomplete_states.insert(new_state);
 
-                for (cond, other_to_state) in other.transitions_from_vec(other.start_state) {
-                    let cond = condition_converter.convert(&cond)?;
-                    let to_state = match new_states.entry(other_to_state) {
+                for (cond, other_to_state) in other.transitions_from(other.start_state) {
+                    let cond = convert_condition(condition_converter, cond)?;
+                    let to_state = match new_states.entry(*other_to_state) {
                         Entry::Occupied(o) => *o.get(),
                         Entry::Vacant(v) => {
                             let new_state = self.new_state();
@@ -234,9 +234,19 @@ impl FastAutomaton {
             self.union_state_count_nondegenerate(other)
         })?;
 
-        let new_spanning_set = &self.spanning_set.merge(&other.spanning_set);
-        self.apply_new_spanning_set(new_spanning_set)?;
-        let condition_converter = ConditionConverter::new(&other.spanning_set, new_spanning_set)?;
+        // Equal spanning sets (the dominant case in `union_all` folds) skip
+        // the quadratic merge and treat every condition conversion as identity.
+        let new_spanning_set;
+        let condition_converter = if self.spanning_set == other.spanning_set {
+            None
+        } else {
+            new_spanning_set = self.spanning_set.merge(&other.spanning_set);
+            self.apply_new_spanning_set(&new_spanning_set)?;
+            Some(ConditionConverter::new(
+                &other.spanning_set,
+                &new_spanning_set,
+            )?)
+        };
 
         let mut new_states: IntMap<usize, usize> = IntMap::with_capacity_and_hasher(
             other.number_of_states(),
@@ -244,7 +254,7 @@ impl FastAutomaton {
         );
 
         let imcomplete_states =
-            self.prepare_start_states(other, &mut new_states, &condition_converter)?;
+            self.prepare_start_states(other, &mut new_states, condition_converter.as_ref())?;
         self.prepare_accept_states(other, &mut new_states, &imcomplete_states);
 
         for from_state in other.states() {
@@ -257,7 +267,7 @@ impl FastAutomaton {
                 }
             };
             for (condition, to_state) in other.transitions_from(from_state) {
-                let new_condition = condition_converter.convert(condition)?;
+                let new_condition = convert_condition(condition_converter.as_ref(), condition)?;
                 let new_to_state = match new_states.entry(*to_state) {
                     Entry::Occupied(o) => *o.get(),
                     Entry::Vacant(v) => {
@@ -309,7 +319,7 @@ impl FastAutomaton {
 
         // Track which 'other' states are already mapped in the start phase
         // so we don't double-count them when calculating accept state savings.
-        let mut mapped_other_states = std::collections::HashSet::new();
+        let mut mapped_other_states = IntSet::new();
         mapped_other_states.insert(other.start_state);
 
         if other_in != 0 {
@@ -321,8 +331,7 @@ impl FastAutomaton {
         // --- 2. Accept States Math ---
         // Gather self's accept states. If other.start_state is accepted,
         // it virtually triggers self.accept(self.start_state) early.
-        let mut self_accepts: std::collections::HashSet<usize> =
-            self.accept_states.iter().cloned().collect();
+        let mut self_accepts: IntSet<usize> = self.accept_states.iter().cloned().collect();
 
         if other.is_accepted(other.start_state) {
             self_accepts.insert(self.start_state);

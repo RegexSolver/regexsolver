@@ -50,63 +50,56 @@ pub enum RegularExpression {
 
 impl Display for RegularExpression {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let str = match self {
+        match self {
             RegularExpression::Character(range) => {
                 if range.is_empty() {
                     return write!(f, "[]");
                 }
-                range.to_regex()
+                write!(f, "{}", range.to_regex())
             }
             RegularExpression::Repetition(regular_expression, min, max_opt) => {
-                let regex_part = regular_expression.to_string();
-                let multiplicator_part;
+                if RegularExpression::quantifier_needs_parens(regular_expression) {
+                    write!(f, "({regular_expression})")?;
+                } else {
+                    write!(f, "{regular_expression}")?;
+                }
                 if *min == 0 && max_opt.is_none() {
-                    multiplicator_part = String::from("*");
+                    write!(f, "*")
                 } else if *min == 1 && max_opt.is_none() {
-                    multiplicator_part = String::from("+");
-                } else if *min == 0 && max_opt.is_some() && max_opt.unwrap() == 1 {
-                    multiplicator_part = String::from("?");
+                    write!(f, "+")
+                } else if *min == 0 && *max_opt == Some(1) {
+                    write!(f, "?")
                 } else if let Some(max) = max_opt {
                     if max == min {
-                        multiplicator_part = format!("{{{max}}}");
+                        write!(f, "{{{max}}}")
                     } else {
-                        multiplicator_part = format!("{{{min},{max}}}");
+                        write!(f, "{{{min},{max}}}")
                     }
                 } else {
-                    multiplicator_part = format!("{{{min},}}");
-                }
-                if RegularExpression::quantifier_needs_parens(regular_expression) {
-                    format!("({regex_part}){multiplicator_part}")
-                } else {
-                    format!("{regex_part}{multiplicator_part}")
+                    write!(f, "{{{min},}}")
                 }
             }
             RegularExpression::Concat(concat) => {
-                let mut sb = String::new();
                 for regex in concat.iter() {
-                    sb.push_str(regex.to_string().as_str());
+                    write!(f, "{regex}")?;
                 }
-                sb
+                Ok(())
             }
-            RegularExpression::Alternation(alternation) => {
-                if alternation.is_empty() {
-                    return write!(f, "[]");
-                }
-                let mut sb = String::new();
-                for i in 0..alternation.len() {
-                    sb.push_str(alternation[i].to_string().as_str());
-                    if i != alternation.len() - 1 {
-                        sb.push('|');
+            RegularExpression::Alternation(alternation) => match alternation.as_slice() {
+                [] => write!(f, "[]"),
+                [single] => write!(f, "{single}"),
+                _ => {
+                    write!(f, "(")?;
+                    for (i, regex) in alternation.iter().enumerate() {
+                        if i != 0 {
+                            write!(f, "|")?;
+                        }
+                        write!(f, "{regex}")?;
                     }
+                    write!(f, ")")
                 }
-                if alternation.len() == 1 {
-                    sb
-                } else {
-                    format!("({sb})")
-                }
-            }
-        };
-        write!(f, "{str}")
+            },
+        }
     }
 }
 
@@ -205,8 +198,24 @@ impl RegularExpression {
     /// Converts the regular expression to an equivalent [`FastAutomaton`].
     #[tracing::instrument(level = "trace", skip_all)]
     pub fn to_automaton(&self) -> Result<FastAutomaton, EngineError> {
+        // Both whole-tree checks run once here: a subtree can never nest
+        // deeper than the tree it came from, and the execution profile's
+        // thread-locals don't change mid-conversion.
         self.assert_depth_within_limit()?;
-        ExecutionProfile::get().assert_max_number_of_states(self.get_number_of_states_in_nfa())?;
+        self.to_automaton_inner(&ExecutionProfile::get())
+    }
+
+    fn to_automaton_inner(
+        &self,
+        execution_profile: &ExecutionProfile,
+    ) -> Result<FastAutomaton, EngineError> {
+        // The per-node state estimate is load-bearing (a subtree like the
+        // inner of `big{0,0}` can exceed the budget even when the root's
+        // estimate doesn't), but is only worth its O(subtree) walk when a
+        // state limit is actually configured.
+        if execution_profile.limits_number_of_states() {
+            execution_profile.assert_max_number_of_states(self.get_number_of_states_in_nfa())?;
+        }
 
         match self {
             RegularExpression::Character(range) => Ok(FastAutomaton::new_from_range(range)),
@@ -218,21 +227,21 @@ impl RegularExpression {
                 {
                     return Err(EngineError::InvalidRepetitionBounds(*min, *max));
                 }
-                let mut automaton = regular_expression.to_automaton()?;
+                let mut automaton = regular_expression.to_automaton_inner(execution_profile)?;
                 automaton.repeat_mut(*min, *max_opt)?;
                 Ok(automaton)
             }
             RegularExpression::Concat(concat) => {
                 let mut concats = Vec::with_capacity(concat.len());
                 for c in concat.iter() {
-                    concats.push(c.to_automaton()?);
+                    concats.push(c.to_automaton_inner(execution_profile)?);
                 }
                 FastAutomaton::concat_all(&concats)
             }
             RegularExpression::Alternation(alternation) => {
                 let mut alternates = Vec::with_capacity(alternation.len());
                 for c in alternation.iter() {
-                    alternates.push(c.to_automaton()?);
+                    alternates.push(c.to_automaton_inner(execution_profile)?);
                 }
                 FastAutomaton::union_all(&alternates)
             }

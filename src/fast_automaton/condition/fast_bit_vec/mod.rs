@@ -113,6 +113,14 @@ impl FastBitVec {
     }
 
     #[inline]
+    pub fn difference(&mut self, other: &Self) {
+        self.assert_same_len(other);
+        for (a, b) in self.bits.iter_mut().zip(&other.bits) {
+            *a &= !b;
+        }
+    }
+
+    #[inline]
     pub fn has_intersection(&self, other: &Self) -> bool {
         self.assert_same_len(other);
         for (a, b) in self.bits.iter().zip(&other.bits) {
@@ -148,5 +156,26 @@ impl FastBitVec {
             bits.push(self.get(i));
         }
         bits
+    }
+
+    /// Iterates the indices of the set bits in ascending order, word-wise
+    /// (no allocation).
+    #[inline]
+    pub fn iter_set_bits(&self) -> impl Iterator<Item = usize> + '_ {
+        self.bits
+            .iter()
+            .enumerate()
+            .flat_map(|(word_index, &word)| {
+                let mut remaining = word;
+                std::iter::from_fn(move || {
+                    if remaining == 0 {
+                        None
+                    } else {
+                        let bit = remaining.trailing_zeros() as usize;
+                        remaining &= remaining - 1;
+                        Some(word_index * 64 + bit)
+                    }
+                })
+            })
     }
 }

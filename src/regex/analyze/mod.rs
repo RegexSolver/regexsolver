@@ -159,7 +159,6 @@ mod tests {
         let (min, max_opt) = regex.length();
 
         let automaton = regex.to_automaton().unwrap();
-        //automaton.to_dot();
 
         let (min_automaton_opt, max_automaton_opt) = automaton.length();
 

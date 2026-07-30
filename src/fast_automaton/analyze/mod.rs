@@ -1,5 +1,3 @@
-use std::hash::BuildHasherDefault;
-
 use crate::{cardinality::Cardinality, error::EngineError};
 
 use super::*;
@@ -75,7 +73,7 @@ impl FastAutomaton {
                 if cond.is_empty() {
                     continue;
                 }
-                covered = covered.union(cond);
+                covered.union_with(cond);
                 if visited.insert(*to) {
                     worklist.push_back(*to);
                 }
@@ -158,34 +156,27 @@ impl FastAutomaton {
     /// This is co-reachability; note it is *not* the set of states reachable
     /// from the start state.
     pub fn live_states(&self) -> IntSet<State> {
-        let mut states_map: IntMap<usize, IntSet<usize>> =
-            IntMap::with_capacity_and_hasher(self.transitions.len(), BuildHasherDefault::default());
-        for from_state in self.states() {
-            for (condition, to_state) in self.transitions_from(from_state) {
-                if condition.is_empty() {
-                    continue;
-                }
-                match states_map.entry(*to_state) {
-                    Entry::Occupied(mut o) => o.get_mut().insert(from_state),
-                    Entry::Vacant(v) => {
-                        let mut new_states = IntSet::default();
-                        new_states.insert(from_state);
-                        v.insert(new_states);
-                        true
-                    }
-                };
-            }
-        }
-
+        // Reverse BFS over the maintained `transitions_in` adjacency.
+        // `transitions_in` doesn't filter empty-condition edges
+        // (constructible via the public `add_transition`), so each edge's
+        // condition is checked on traversal — the lookup on `transitions`
+        // also makes tombstoned predecessors fall out naturally.
         let mut worklist = VecDeque::from_iter(self.accept_states.iter().cloned());
         let mut live = self.accept_states.clone();
         while let Some(live_state) = worklist.pop_front() {
-            if let Some(states) = states_map.get(&live_state) {
-                for state in states {
-                    if !live.contains(state) {
-                        live.insert(*state);
-                        worklist.push_back(*state);
-                    }
+            let Some(predecessors) = self.transitions_in.get(&live_state) else {
+                continue;
+            };
+            for &from_state in predecessors {
+                if live.contains(&from_state) {
+                    continue;
+                }
+                let takeable = self
+                    .condition(from_state, live_state)
+                    .is_some_and(|condition| !condition.is_empty());
+                if takeable {
+                    live.insert(from_state);
+                    worklist.push_back(from_state);
                 }
             }
         }
@@ -203,11 +194,10 @@ impl FastAutomaton {
     /// spanning set with an empty rest this is exactly the spanning ranges, so
     /// well-formed automata are unaffected.)
     pub fn spanning_bases(&self) -> Result<Vec<Condition>, EngineError> {
-        self.spanning_set
-            .spanning_ranges_with_rest()
-            .iter()
-            .map(|range| Condition::from_range(range, &self.spanning_set))
-            .collect()
+        // Base `i` is by construction exactly bit `i` of a condition.
+        Ok((0..self.spanning_set.spanning_ranges_with_rest_len())
+            .map(|i| Condition::single_base(i, &self.spanning_set))
+            .collect())
     }
 }
 
@@ -241,5 +231,27 @@ mod tests {
         assert!(!FastAutomaton::new_empty().is_total());
 
         Ok(())
+    }
+
+    // An empty-condition transition (constructible via the public
+    // `add_transition`) can't be taken, so a state whose only path to an
+    // accept state goes through one is dead. `live_states` walks
+    // `transitions_in`, which records such edges — it must check the
+    // condition instead of trusting the adjacency.
+    #[test]
+    fn live_states_ignores_empty_condition_edges() {
+        use crate::fast_automaton::condition::Condition;
+
+        let mut a = FastAutomaton::new_empty();
+        let s1 = a.new_state();
+        let s2 = a.new_state();
+        a.add_transition(0, s1, &Condition::total(a.spanning_set()));
+        a.add_transition(s2, s1, &Condition::empty(a.spanning_set()));
+        a.accept(s1);
+
+        let live = a.live_states();
+        assert!(live.contains(&0));
+        assert!(live.contains(&s1));
+        assert!(!live.contains(&s2));
     }
 }

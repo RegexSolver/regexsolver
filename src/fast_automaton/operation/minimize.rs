@@ -62,10 +62,12 @@ impl FastAutomaton {
 
         let bases = self.spanning_bases()?;
 
+        // One forward sweep with direct indexing; going through
+        // `transitions_to_vec` per state would pay two hash lookups per edge.
         let mut inverse_transitions: Vec<Vec<(usize, Condition)>> = vec![Vec::new(); max_states];
-        for to_state in self.states() {
-            for (from_state, condition) in self.transitions_to_vec(to_state) {
-                inverse_transitions[to_state].push((from_state, condition));
+        for from_state in self.states() {
+            for (condition, &to_state) in self.transitions_from(from_state) {
+                inverse_transitions[to_state].push((from_state, condition.clone()));
             }
         }
 

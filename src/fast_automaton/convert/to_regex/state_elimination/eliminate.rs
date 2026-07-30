@@ -7,76 +7,98 @@ impl Gnfa {
         }
 
         let execution_profile = crate::execution_profile::ExecutionProfile::get();
-        while let Some(state) = self.get_next_state_to_eliminate() {
-            execution_profile.assert_not_timed_out()?;
-            self.eliminate_state(state);
+
+        // Cached elimination scores, indexed by state. Ids are stable during
+        // elimination (no state is created; tombstone compaction only pops
+        // trailing, already-removed entries), and `None` marks
+        // non-candidates: start, accept, and eliminated states.
+        //
+        // A state's score depends only on its own in/out edges, and
+        // eliminating `k` only touches edges incident to k's predecessors
+        // and successors — so exactly those need re-scoring each round.
+        let mut scores: Vec<Option<u128>> = vec![None; self.transitions.len()];
+        for state in self.all_states_iter() {
+            if state != self.start_state && state != self.accept_state {
+                scores[state] = Some(self.score_state(state));
+            }
         }
 
+        loop {
+            execution_profile.assert_not_timed_out()?;
+
+            // Lowest score wins; `<=` keeps the last minimal state on ties
+            // (the order `convert_reference` pins).
+            let mut best: Option<(u128, usize)> = None;
+            for (state, &score) in scores.iter().enumerate() {
+                if let Some(score) = score
+                    && best.is_none_or(|(best_score, _)| score <= best_score)
+                {
+                    best = Some((score, state));
+                }
+            }
+            let Some((_, k)) = best else {
+                break;
+            };
+
+            scores[k] = None;
+            let (predecessors, successors) = self.eliminate_state(k);
+            for state in predecessors.into_iter().chain(successors) {
+                if scores[state].is_some() {
+                    scores[state] = Some(self.score_state(state));
+                }
+            }
+        }
+
+        // Moved out, not cloned: the `Gnfa` is discarded right after.
         Ok(self
-            .get_transition(self.start_state, self.accept_state)
-            .cloned()
-            .unwrap_or(RegularExpression::new_empty_string()))
+            .transitions
+            .get_mut(self.start_state)
+            .and_then(|transitions| transitions.remove(&self.accept_state))
+            .unwrap_or_else(RegularExpression::new_empty_string))
     }
 
-    fn get_next_state_to_eliminate(&self) -> Option<usize> {
-        let states: Vec<usize> = self
-            .all_states_iter()
-            .filter(|&s| s != self.start_state && s != self.accept_state)
-            .collect();
+    /// The elimination score. It reads only `state`'s own degrees and label
+    /// complexities, which is what makes the cached, neighbors-only
+    /// re-scoring in [`convert`](Self::convert) sound.
+    fn score_state(&self, state: usize) -> u128 {
+        let mut in_deg: u128 = 0;
+        let mut label_cost: u128 = 0;
+        for (_, regex) in self.transitions_to_iter(state) {
+            in_deg += 1;
+            label_cost += regex.evaluate_complexity() as u128;
+        }
+        let mut out_deg: u128 = 0;
+        for (regex, _) in self.transitions_from_iter(state) {
+            out_deg += 1;
+            label_cost += regex.evaluate_complexity() as u128;
+        }
 
-        let score_state = |state: usize| -> Option<(u128, usize)> {
-            let preds = self.transitions_to_vec(state);
-            let succs = self.transitions_from_vec(state);
+        if in_deg == 0 || out_deg == 0 {
+            return (state as u128) & 0xFF;
+        }
 
-            let in_deg = preds.len() as u128;
-            let out_deg = succs.len() as u128;
+        let mut score: u128 = in_deg * out_deg;
 
-            if in_deg == 0 || out_deg == 0 {
-                let score = (state as u128) & 0xFF;
-                return Some((score, state));
-            }
+        if self.has_self_loop(state) {
+            score = score + (score >> 1);
+        }
 
-            let mut score: u128 = in_deg * out_deg;
+        if let Some(re) = self.get_transition(state, state) {
+            label_cost += (re.evaluate_complexity() as u128) * 2;
+        }
 
-            if self.has_self_loop(state) {
-                score = score + (score >> 1);
-            }
+        score = score.saturating_add(label_cost);
 
-            let mut label_cost: u128 = 0;
-
-            for (_, regex) in &preds {
-                label_cost += regex.evaluate_complexity() as u128;
-            }
-            for (regex, _) in &succs {
-                label_cost += regex.evaluate_complexity() as u128;
-            }
-            if let Some(re) = self.get_transition(state, state) {
-                label_cost += (re.evaluate_complexity() as u128) * 2;
-            }
-
-            score = score.saturating_add(label_cost);
-
-            let tie = (state as u128) & 0xFFFF;
-            Some((score.saturating_add(tie), state))
-        };
-
-        #[cfg(feature = "parallel")]
-        let best = states
-            .into_par_iter()
-            .filter_map(score_state)
-            .reduce_with(|a, b| if a.0 < b.0 { a } else { b });
-        #[cfg(not(feature = "parallel"))]
-        let best = states
-            .into_iter()
-            .filter_map(score_state)
-            .reduce(|a, b| if a.0 < b.0 { a } else { b });
-
-        best.map(|(_, state)| state)
+        let tie = (state as u128) & 0xFFFF;
+        score.saturating_add(tie)
     }
 
-    fn eliminate_state(&mut self, k: usize) {
+    /// Bridges every predecessor to every successor and removes `k`,
+    /// returning those predecessors and successors (`k` excluded): the only
+    /// states whose elimination scores the operation changed.
+    fn eliminate_state(&mut self, k: usize) -> (Vec<usize>, Vec<usize>) {
         if self.removed_states.contains(&k) {
-            return;
+            return (vec![], vec![]);
         }
 
         let in_states = self
@@ -93,29 +115,66 @@ impl Gnfa {
             .filter(|&s| s != k)
             .collect::<Vec<_>>();
 
-        for p in in_states {
+        // The k→k self-loop star is the same for every (p, q) pair, and
+        // bridging never touches the (k, k) edge, so build it once.
+        let star = self
+            .get_transition(k, k)
+            .map(|self_loop| self_loop.repeat(0, None));
+
+        for &p in &in_states {
             for &q in &out_states {
-                self.bridge(p, k, q);
+                self.bridge(p, k, q, star.as_ref());
             }
         }
 
         self.remove_state(k);
+
+        (in_states, out_states)
     }
 
-    fn bridge(&mut self, p: usize, k: usize, q: usize) {
+    fn bridge(&mut self, p: usize, k: usize, q: usize, star: Option<&RegularExpression>) {
         let rpk = self.get_transition(p, k);
-        let rkk = self.get_transition(k, k);
         let rkq = self.get_transition(k, q);
 
         if let (Some(rpk), Some(rkq)) = (rpk, rkq) {
             let mut regex = rpk.clone();
-            if let Some(rkk) = rkk {
-                //regex = RegularExpression::Concat(VecDeque::from_iter(vec![regex, RegularExpression::Repetition(Box::new(rkk.clone()), 0, None)]));
-                regex = regex.concat(&rkk.repeat(0, None), true);
+            if let Some(star) = star {
+                regex = regex.concat(star, true);
             }
-            //regex = RegularExpression::Concat(VecDeque::from_iter(vec![regex, rkq.clone()]));
             regex = regex.concat(rkq, true);
             self.add_transition(p, q, regex);
         }
+    }
+}
+
+#[cfg(test)]
+impl Gnfa {
+    /// [`convert`](Self::convert) with the score cache disabled: every
+    /// candidate is re-scored from scratch each round, with the serial fold
+    /// (last minimal state wins on ties) the cached version replaced. The
+    /// oracle proving the cache never yields a stale score — i.e. the
+    /// produced pattern is identical to the pre-cache implementation's.
+    pub(super) fn convert_reference(&mut self) -> Result<RegularExpression, EngineError> {
+        if self.empty {
+            return Ok(RegularExpression::new_empty());
+        }
+
+        loop {
+            let best = self
+                .all_states_iter()
+                .filter(|&s| s != self.start_state && s != self.accept_state)
+                .map(|state| (self.score_state(state), state))
+                .reduce(|a, b| if a.0 < b.0 { a } else { b });
+            let Some((_, state)) = best else {
+                break;
+            };
+            self.eliminate_state(state);
+        }
+
+        Ok(self
+            .transitions
+            .get_mut(self.start_state)
+            .and_then(|transitions| transitions.remove(&self.accept_state))
+            .unwrap_or_else(RegularExpression::new_empty_string))
     }
 }

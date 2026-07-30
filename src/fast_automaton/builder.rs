@@ -159,7 +159,7 @@ impl FastAutomaton {
             .insert(from_state);
         match self.transitions[from_state].entry(to_state) {
             Entry::Occupied(mut o) => {
-                o.insert(o.get().union(new_cond));
+                o.get_mut().union_with(new_cond);
             }
             Entry::Vacant(v) => {
                 v.insert(new_cond.clone());
@@ -307,7 +307,7 @@ impl FastAutomaton {
                 .insert(from_state);
             match self.transitions[from_state].entry(state) {
                 Entry::Occupied(mut o) => {
-                    o.insert(o.get().union(&cond));
+                    o.get_mut().union_with(&cond);
                 }
                 Entry::Vacant(v) => {
                     v.insert(cond);
@@ -441,14 +441,11 @@ impl FastAutomaton {
             return Ok(());
         }
         let condition_converter = ConditionConverter::new(&self.spanning_set, new_spanning_set)?;
-        for &from_state in &self.states_vec() {
-            for to_state in self.direct_states_vec(from_state) {
-                match self.transitions[from_state].entry(to_state) {
-                    Entry::Occupied(mut o) => {
-                        o.insert(condition_converter.convert(o.get())?);
-                    }
-                    Entry::Vacant(_) => {}
-                };
+        // Removed states keep a cleared transition map (see `remove_state`),
+        // so every stored condition can be converted in place directly.
+        for transitions in self.transitions.iter_mut() {
+            for condition in transitions.values_mut() {
+                *condition = condition_converter.convert(condition)?;
             }
         }
         self.spanning_set = new_spanning_set.clone();

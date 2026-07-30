@@ -1,6 +1,4 @@
-use ahash::HashMapExt;
-
-use crate::{IntMap, error::EngineError, fast_automaton::spanning_set::SpanningSet};
+use crate::{CharRange, error::EngineError, fast_automaton::spanning_set::SpanningSet};
 
 use super::Condition;
 
@@ -24,28 +22,25 @@ impl<'a, 'b> ConditionConverter<'a, 'b> {
         from_spanning_set: &'a SpanningSet,
         to_spanning_set: &'b SpanningSet,
     ) -> Result<Self, EngineError> {
-        let mut to_base_map =
-            IntMap::with_capacity(to_spanning_set.spanning_ranges_with_rest_len());
-        for (i, base) in to_spanning_set
+        // Each target base maps to at most one source base; consumed entries
+        // are marked `None` so later source bases skip them.
+        let mut to_bases: Vec<Option<&CharRange>> = to_spanning_set
             .spanning_ranges_with_rest()
-            .into_iter()
-            .enumerate()
-        {
-            to_base_map.insert(i, base);
-        }
+            .map(Some)
+            .collect();
 
         let mut equivalence_map: Vec<Vec<usize>> =
-            Vec::with_capacity(from_spanning_set.number_of_spanning_ranges() + 1);
-        for from_base in from_spanning_set.spanning_ranges_with_rest().iter() {
+            Vec::with_capacity(from_spanning_set.spanning_ranges_with_rest_len());
+        for from_base in from_spanning_set.spanning_ranges_with_rest() {
             let mut index = Vec::with_capacity(1);
-            for (i, to_base) in &to_base_map {
-                if from_base == to_base || from_base.has_intersection(to_base) {
-                    index.push(*i);
+            for (i, slot) in to_bases.iter_mut().enumerate() {
+                if let Some(to_base) = slot
+                    && (from_base == *to_base || from_base.has_intersection(to_base))
+                {
+                    index.push(i);
+                    *slot = None;
                 }
             }
-            index.iter().for_each(|i| {
-                to_base_map.remove(i);
-            });
             equivalence_map.push(index);
         }
 

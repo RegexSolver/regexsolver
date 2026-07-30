@@ -62,12 +62,12 @@ impl FastAutomaton {
                         continue;
                     }
                     let condition_cardinality = condition.cardinality(&self.spanning_set)?;
-                    if let Some(distance) = current_distance.checked_mul(condition_cardinality)
-                        && let Some(new_distance) =
-                            distances.get(to_state).unwrap_or(&0).checked_add(distance)
-                    {
-                        distances.insert(*to_state, new_distance);
-                        continue;
+                    if let Some(distance) = current_distance.checked_mul(condition_cardinality) {
+                        let slot = distances.entry(*to_state).or_insert(0);
+                        if let Some(new_distance) = slot.checked_add(distance) {
+                            *slot = new_distance;
+                            continue;
+                        }
                     }
 
                     return Ok(Cardinality::BigInteger);

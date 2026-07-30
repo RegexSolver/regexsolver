@@ -65,7 +65,7 @@ impl Condition {
 
         let mut cond = Self::empty(spanning_set);
 
-        for (i, base) in spanning_set.spanning_ranges_with_rest().iter().enumerate() {
+        for (i, base) in spanning_set.spanning_ranges_with_rest().enumerate() {
             if range.contains_all(base) {
                 cond.0.set(i, true);
             }
@@ -76,6 +76,16 @@ impl Condition {
         }
 
         Ok(cond)
+    }
+
+    /// Returns the condition whose only set bit is base `i` of `spanning_set`
+    /// (bit `i` corresponds to `spanning_ranges_with_rest()`'s element `i`,
+    /// the rest range first when present).
+    #[inline]
+    pub(crate) fn single_base(i: usize, spanning_set: &SpanningSet) -> Self {
+        let mut cond = Self::empty(spanning_set);
+        cond.0.set(i, true);
+        cond
     }
 
     /// Converts this `Condition` back to the [`CharRange`] it represents,
@@ -94,7 +104,7 @@ impl Condition {
 
         let mut range = CharRange::empty();
 
-        for (i, base) in spanning_set.spanning_ranges_with_rest().iter().enumerate() {
+        for (i, base) in spanning_set.spanning_ranges_with_rest().enumerate() {
             if self.0.get(i) {
                 range = range.union(base);
             }
@@ -110,6 +120,13 @@ impl Condition {
         let mut new_cond = self.clone();
         new_cond.0.union(&other.0);
         new_cond
+    }
+
+    /// Unions `other` into `self` in place (bitwise OR). Both must share the
+    /// same spanning set.
+    #[inline]
+    pub fn union_with(&mut self, other: &Condition) {
+        self.0.union(&other.0);
     }
 
     /// Returns the condition matching characters in both `self` and `other`
@@ -135,8 +152,7 @@ impl Condition {
     #[inline]
     pub fn difference(&self, other: &Condition) -> Self {
         let mut new_cond = self.clone();
-        let subtrahend = other.complement();
-        new_cond.0.intersection(&subtrahend.0);
+        new_cond.0.difference(&other.0);
         new_cond
     }
 
@@ -200,9 +216,24 @@ impl Condition {
 
     /// Returns the number of characters the condition matches, evaluated
     /// against `spanning_set`.
+    ///
+    /// Returns [`EngineError::IncompatibleSpanningSet`] if this condition's
+    /// bit width does not match `spanning_set`.
     #[inline]
     pub fn cardinality(&self, spanning_set: &SpanningSet) -> Result<u32, EngineError> {
-        Ok(self.to_range(spanning_set)?.get_cardinality())
+        if self.0.len() != spanning_set.spanning_ranges_with_rest_len() {
+            return Err(EngineError::IncompatibleSpanningSet);
+        }
+
+        // The bases are disjoint, so the cardinality of their union is the
+        // sum of their cardinalities.
+        let mut cardinality = 0u32;
+        for (i, base) in spanning_set.spanning_ranges_with_rest().enumerate() {
+            if self.0.get(i) {
+                cardinality += base.get_cardinality();
+            }
+        }
+        Ok(cardinality)
     }
 
     /// Returns the condition as a vector of bits, one per range of the spanning
@@ -210,6 +241,13 @@ impl Condition {
     #[inline]
     pub fn binary_representation(&self) -> Vec<bool> {
         self.0.bits()
+    }
+
+    /// Iterates the indices of the set bits (i.e., the bases the condition
+    /// covers) in ascending order, without allocating.
+    #[inline]
+    pub(crate) fn iter_set_bits(&self) -> impl Iterator<Item = usize> + '_ {
+        self.0.iter_set_bits()
     }
 }
 
@@ -288,14 +326,12 @@ mod tests {
     fn test_empty_total() -> Result<(), String> {
         let spanning_set = spanning_set();
         let empty = Condition::empty(&spanning_set);
-        //println!("{empty}");
         assert!(empty.is_empty());
         assert_eq!(
             vec![false, false, false, false],
             empty.binary_representation()
         );
         let total = Condition::total(&spanning_set);
-        //println!("{total}");
         assert!(total.is_total());
         assert_eq!(vec![true, true, true, true], total.binary_representation());
 

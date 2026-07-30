@@ -70,7 +70,6 @@ mod tests {
         assert!(input_automaton.equivalent(&output_automaton).unwrap());
 
         let input_automaton = input_automaton.determinize().unwrap();
-        //input_automaton.to_dot();
 
         let output_regex = input_automaton.to_regex().unwrap();
         println!("OUT (deterministic)    : {}", output_regex);

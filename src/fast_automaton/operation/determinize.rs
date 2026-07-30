@@ -46,7 +46,11 @@ impl FastAutomaton {
         worklist.push_back((initial_state.clone(), new_automaton.start_state));
         new_states.insert(initial_state, new_automaton.start_state);
 
-        let mut new_states_to_add = BitSet::new();
+        // Per-base successor subsets, reused across popped subsets. Base `b`
+        // of the spanning set is exactly bit `b` of a condition, so one sweep
+        // over the subset's transitions distributes each target into the
+        // bases its condition covers.
+        let mut base_targets: Vec<BitSet> = vec![BitSet::new(); bases.len()];
         while let Some((states, r)) = worklist.pop_front() {
             execution_profile.assert_not_timed_out()?;
             execution_profile.assert_max_number_of_states(new_states.len())?;
@@ -55,33 +59,35 @@ impl FastAutomaton {
                 new_automaton.accept(r);
             }
 
-            for base in &bases {
-                for from_state in &states {
-                    for (cond, to_state) in self.transitions_from(from_state) {
-                        if cond.has_intersection(base) {
-                            new_states_to_add.insert(*to_state);
-                        }
+            for from_state in &states {
+                for (cond, to_state) in self.transitions_from(from_state) {
+                    for base_index in cond.iter_set_bits() {
+                        base_targets[base_index].insert(*to_state);
                     }
                 }
-                if !new_states_to_add.is_empty() {
-                    match new_states.entry(new_states_to_add.clone()) {
-                        Entry::Occupied(o) => {
-                            let q = *o.get();
+            }
 
-                            new_states_to_add.clear();
+            // Base index order keeps the resulting state numbering
+            // deterministic.
+            for (targets, base) in base_targets.iter_mut().zip(&bases) {
+                if targets.is_empty() {
+                    continue;
+                }
+                // Once the construction converges, the subset usually
+                // already exists: look it up first so the hit path pays
+                // no `BitSet` clone (the entry API would need an owned
+                // key), and only clone-free-insert on a miss.
+                if let Some(&q) = new_states.get(targets) {
+                    targets.clear();
 
-                            new_automaton.add_transition(r, q, base);
-                        }
-                        Entry::Vacant(v) => {
-                            let new_q = new_automaton.new_state();
-                            v.insert(new_q);
+                    new_automaton.add_transition(r, q, base);
+                } else {
+                    let new_q = new_automaton.new_state();
+                    let subset = std::mem::take(targets);
+                    new_states.insert(subset.clone(), new_q);
+                    worklist.push_back((subset, new_q));
 
-                            let new_states = std::mem::take(&mut new_states_to_add);
-                            worklist.push_back((new_states, new_q));
-
-                            new_automaton.add_transition(r, new_q, base);
-                        }
-                    };
+                    new_automaton.add_transition(r, new_q, base);
                 }
             }
         }
@@ -160,7 +166,6 @@ mod tests {
             deterministic_automaton.number_of_states()
         );
         assert!(deterministic_automaton.is_deterministic());
-        //deterministic_automaton.print_dot();
         assert!(
             automaton
                 .difference(&deterministic_automaton)

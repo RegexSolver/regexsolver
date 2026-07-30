@@ -79,10 +79,10 @@ impl Gnfa {
     }
 
     fn new_state(&mut self) -> usize {
-        if let Some(new_state) = self.removed_states.clone().iter().next() {
-            self.removed_states.remove(new_state);
-            self.transitions_in.insert(*new_state, IntSet::new());
-            *new_state
+        if let Some(&new_state) = self.removed_states.iter().next() {
+            self.removed_states.remove(&new_state);
+            self.transitions_in.insert(new_state, IntSet::new());
+            new_state
         } else {
             self.transitions.push(IntMap::default());
             self.transitions_in
@@ -136,7 +136,11 @@ impl Gnfa {
                 "Can not remove the state {state}, it is still used as start state or accept state."
             );
         }
-        self.transitions_in.remove(&state);
+        // Snapshot the exact predecessor and successor sets before the maps
+        // below are cleared; only their entries need updating.
+        let predecessors = self.transitions_in.remove(&state).unwrap_or_default();
+        let successors: Vec<State> = self.transitions[state].keys().copied().collect();
+
         if self.transitions.len() - 1 == state {
             self.transitions.remove(state);
 
@@ -153,11 +157,15 @@ impl Gnfa {
             self.removed_states.insert(state);
         }
 
-        for transitions in self.transitions.iter_mut() {
-            transitions.remove(&state);
+        for &from_state in &predecessors {
+            if let Some(transitions) = self.transitions.get_mut(from_state) {
+                transitions.remove(&state);
+            }
         }
-        for transitions in self.transitions_in.values_mut() {
-            transitions.remove(&state);
+        for to_state in successors {
+            if let Some(transitions_in) = self.transitions_in.get_mut(&to_state) {
+                transitions_in.remove(&state);
+            }
         }
     }
 }
