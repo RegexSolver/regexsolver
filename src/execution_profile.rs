@@ -11,7 +11,7 @@ use crate::error::EngineError;
 ///
 /// ## Limiting the number of states
 /// ```
-/// use regexsolver::{Term, execution_profile::{ExecutionProfile, ExecutionProfileBuilder}, error::EngineError, fast_automaton::GenerationOrder};
+/// use regexsolver::{Term, execution_profile::{ExecutionProfile, ExecutionProfileBuilder}, error::EngineError, fast_automaton::GenerationOptions};
 ///
 /// let term1 = Term::from_pattern(".*abcdef.*").unwrap();
 /// let term2 = Term::from_pattern(".*defabc.*").unwrap();
@@ -27,7 +27,7 @@ use crate::error::EngineError;
 ///
 /// ## Limiting the execution time
 /// ```
-/// use regexsolver::{Term, execution_profile::{ExecutionProfile, ExecutionProfileBuilder}, error::EngineError, fast_automaton::GenerationOrder};
+/// use regexsolver::{Term, execution_profile::{ExecutionProfile, ExecutionProfileBuilder}, error::EngineError, fast_automaton::GenerationOptions};
 ///
 /// let term = Term::from_pattern(".*abc.*cdef.*sqdsqf.*").unwrap();
 ///
@@ -36,7 +36,7 @@ use crate::error::EngineError;
 ///     .build();
 ///
 /// execution_profile.run(|| {
-///     assert_eq!(EngineError::OperationTimeOutError, term.generate_strings(100_000_000, 0, GenerationOrder::Exhaustive).unwrap_err());
+///     assert_eq!(EngineError::OperationTimeOutError, term.generate_strings(100_000_000, 0, GenerationOptions::new()).unwrap_err());
 /// });
 /// ```
 ///
@@ -391,7 +391,7 @@ impl ThreadLocalParams {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Term, fast_automaton::GenerationOrder, regex::RegularExpression};
+    use crate::{Term, fast_automaton::GenerationOptions, regex::RegularExpression};
 
     use super::*;
 
@@ -551,7 +551,7 @@ mod tests {
                 assert!(term.cardinality().is_ok());
                 assert!(term.minimize().is_ok());
                 assert!(
-                    term.generate_strings(5, 0, GenerationOrder::Exhaustive)
+                    term.generate_strings(5, 0, GenerationOptions::new())
                         .is_ok()
                 );
 
@@ -599,7 +599,7 @@ mod tests {
             .run(|| {
                 assert_eq!(
                     EngineError::OperationTimeOutError,
-                    term.generate_strings(100_000_000, 1_000_000, GenerationOrder::Exhaustive)
+                    term.generate_strings(100_000_000, 1_000_000, GenerationOptions::new())
                         .unwrap_err()
                 );
 

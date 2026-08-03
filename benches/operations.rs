@@ -13,7 +13,7 @@
 
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use regex_charclass::char::Char;
-use regexsolver::fast_automaton::{FastAutomaton, GenerationOptions, GenerationOrder};
+use regexsolver::fast_automaton::{CharacterOrder, FastAutomaton, GenerationOptions, PathOrder};
 use regexsolver::regex::RegularExpression;
 use regexsolver::{CharRange, Term};
 use std::hint::black_box;
@@ -217,7 +217,7 @@ fn bench_generate_strings(c: &mut Criterion) {
     group.bench_function("first_2000", |b| {
         b.iter(|| {
             black_box(&automaton)
-                .generate_strings(2000, 0, GenerationOrder::Exhaustive)
+                .generate_strings(2000, 0, PathOrder::Sweep)
                 .unwrap()
         })
     });
@@ -227,24 +227,34 @@ fn bench_generate_strings(c: &mut Criterion) {
     group.bench_function("deep_offset", |b| {
         b.iter(|| {
             black_box(&deep)
-                .generate_strings(100, 1_000_000, GenerationOrder::Exhaustive)
+                .generate_strings(100, 1_000_000, PathOrder::Sweep)
                 .unwrap()
         })
     });
 
-    // Sampling walks the automaton once per pass instead of settling on one
-    // path, so it pays for the paths it spreads over.
-    group.bench_function("sampled_2000", |b| {
+    // Interleaving walks the automaton once per pass instead of settling on
+    // one path, so it pays for the paths it spreads over.
+    group.bench_function("interleave_2000", |b| {
         b.iter(|| {
             black_box(&automaton)
-                .generate_strings(2000, 0, GenerationOrder::Sampled)
+                .generate_strings(2000, 0, PathOrder::Interleave)
+                .unwrap()
+        })
+    });
+
+    // Shuffling adds a Feistel permutation per string and a seeded tie-break
+    // per queued path on top of that.
+    group.bench_function("shuffled_2000", |b| {
+        b.iter(|| {
+            black_box(&automaton)
+                .generate_strings(2000, 0, (PathOrder::Shuffled, CharacterOrder::Shuffled))
                 .unwrap()
         })
     });
 
     // A charset costs one intersection per transition condition, up front.
     let printable = CharRange::new_from_range(Char::new(' ')..=Char::new('~'));
-    let options = GenerationOptions::from(GenerationOrder::Exhaustive).with_charset(printable);
+    let options = GenerationOptions::from(PathOrder::Sweep).with_charset(printable);
     group.bench_function("charset_2000", |b| {
         b.iter(|| {
             black_box(&automaton)

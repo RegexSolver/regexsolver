@@ -4,7 +4,7 @@
 //! cargo run --example relate -- "(abc|de){2}" ".*xy"
 //! ```
 
-use regexsolver::{Term, fast_automaton::GenerationOrder};
+use regexsolver::{Term, fast_automaton::PathOrder};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("a ∩ b = {}", intersection.to_pattern()?);
         println!(
             "        e.g. {:?}",
-            intersection.generate_strings(5, 0, GenerationOrder::Sampled)?
+            intersection.generate_strings(5, 0, PathOrder::Interleave)?
         );
     }
 

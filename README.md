@@ -8,7 +8,7 @@
 The `regex` crate tells you whether a *string* matches a pattern. **RegexSolver treats patterns as the sets of strings they match** — so you can intersect, subtract, compare, complement, and enumerate them, and get the result back as a regex.
 
 ```rust
-use regexsolver::{Term, fast_automaton::GenerationOrder};
+use regexsolver::{Term, fast_automaton::PathOrder};
 
 let a: Term = "(ab|xy){2}".parse()?;
 let b: Term = ".*xy".parse()?;
@@ -21,13 +21,13 @@ assert_eq!(both.to_pattern()?, "(ab|xy)xy");
 assert!(both.matches("abxy")?);
 
 // ...and sample them:
-assert_eq!(both.generate_strings(2, 0, GenerationOrder::Exhaustive)?, ["xyxy", "abxy"]);
+assert_eq!(both.generate_strings(2, 0, PathOrder::Sweep)?, ["xyxy", "abxy"]);
 ```
 
 ## What would you use this for?
 
 - **Safe migrations** - `old_rule.subset(&new_rule)?`: does the new validation pattern accept *everything* the old one did?
-- **Test-data generation** - `term.generate_strings(100, 0, GenerationOrder::Sampled)?`: produce strings matching any pattern, spread over the cases the pattern allows, restricted to the characters you can use, with pagination.
+- **Test-data generation** - `term.generate_strings(100, 0, (PathOrder::Shuffled, CharacterOrder::Shuffled))?`: produce realistic-looking strings matching any pattern, spread over the cases the pattern allows, reproducible by seed, restricted to the characters you can use (`with_charset`) and to a band of lengths (`with_min_length`/`with_max_length`), with pagination.
 - **Rule analysis**: find shadowed or overlapping routes, firewall rules, and validators with `intersection` / `difference`.
 - **Equivalence proofs** - `a.equivalent(&b)?`: show that two differently-written patterns match exactly the same strings.
 - **Pattern simplification**: every operation returns a `Term` you can turn back into a regex pattern with `to_pattern()`.
@@ -91,7 +91,7 @@ RegexSolver is based on the [regex-syntax](https://docs.rs/regex-syntax/0.8.5/re
 | `equivalent(&self, other)` / `subset(&self, other)` | Compare languages. |
 | `is_empty()` / `is_total()` / `length()` / `cardinality()` | Analyze a language: matches nothing? everything? string lengths? how many strings? |
 | `generate_strings(limit, offset, options)` | Enumerate matching strings eagerly (call `determinize()` or `minimize()` once first when paginating). |
-| `iter_strings(options)` | Lazy iterator equivalent; computes the deterministic automaton once and yields strings in batches. |
+| `iter_strings(options)` | Lazy iterator equivalent; computes the deterministic automaton once and yields strings in batches. `options.with_min_length(n)`/`.with_max_length(n)` confine the walk to a band of lengths — with a max, even an infinite language yields a finite iterator. |
 | `to_pattern()` / `to_automaton()` / `to_regex()` | Convert back out. |
 
 All fallible operations return `Result<_, EngineError>`.
@@ -166,17 +166,18 @@ Automaton operations can blow up on adversarial inputs, so the engine is built t
 ### Time-Bounded Execution
 
 ```rust
-use regexsolver::{Term, execution_profile::{ExecutionProfile, ExecutionProfileBuilder}, error::EngineError, fast_automaton::GenerationOrder};
+use regexsolver::{Term, execution_profile::{ExecutionProfile, ExecutionProfileBuilder}, error::EngineError, fast_automaton::GenerationOptions};
 
 let term = Term::from_pattern(".*abc.*cdef.*sqdsqf.*")?;
 
 let execution_profile = ExecutionProfileBuilder::new()
-	.execution_timeout(5) // limit in milliseconds
+	.execution_timeout(50) // limit in milliseconds
 	.build();
 
-// We run the operation with the defined limitation
+// Asking for 100 million strings cannot finish within the budget, so the
+// generation aborts instead of running to completion.
 execution_profile.run(|| {
-	assert_eq!(EngineError::OperationTimeOutError, term.generate_strings(1000, 1_000_000, GenerationOrder::Exhaustive).unwrap_err());
+	assert_eq!(EngineError::OperationTimeOutError, term.generate_strings(100_000_000, 0, GenerationOptions::new()).unwrap_err());
 });
 ```
 

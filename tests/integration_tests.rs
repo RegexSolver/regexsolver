@@ -4,7 +4,7 @@ use std::{
 };
 
 use regex::Regex;
-use regexsolver::{fast_automaton::GenerationOrder, regex::RegularExpression};
+use regexsolver::{fast_automaton::GenerationOptions, regex::RegularExpression};
 
 fn assert_regex(regex: &str) {
     let re = Regex::new(&format!("(?s)^{}$", regex)).unwrap();
@@ -12,7 +12,7 @@ fn assert_regex(regex: &str) {
     let regex = RegularExpression::parse(regex, true).unwrap();
     let automaton = regex.to_automaton().unwrap();
     let strings = automaton
-        .generate_strings(500, 0, GenerationOrder::Exhaustive)
+        .generate_strings(500, 0, GenerationOptions::new())
         .unwrap();
     for string in strings {
         assert!(re.is_match(&string), "'{string}'");
@@ -20,7 +20,7 @@ fn assert_regex(regex: &str) {
 
     let determinized_automaton = automaton.determinize().unwrap();
     let strings = determinized_automaton
-        .generate_strings(500, 0, GenerationOrder::Exhaustive)
+        .generate_strings(500, 0, GenerationOptions::new())
         .unwrap();
     for string in strings {
         assert!(re.is_match(&string), "'{string}'");

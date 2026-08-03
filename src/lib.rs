@@ -133,7 +133,7 @@ pub type CharRange = RangeSet<Char>;
 /// ```rust
 /// use regexsolver::Term;
 /// use regexsolver::error::EngineError;
-/// use regexsolver::fast_automaton::GenerationOrder;
+/// use regexsolver::fast_automaton::PathOrder;
 ///
 /// // Create terms from regex
 /// let t1 = Term::from_pattern("abc.*")?;
@@ -168,7 +168,7 @@ pub type CharRange = RangeSet<Char>;
 ///
 /// // Generate examples
 /// let samples = Term::from_pattern("(x|y){1,3}")?
-///     .generate_strings(5, 0, GenerationOrder::Sampled)?;
+///     .generate_strings(5, 0, PathOrder::Interleave)?;
 /// println!("Some matches: {:?}", samples);
 ///
 /// // Equivalence & subset
@@ -566,14 +566,24 @@ impl Term {
     /// Generates up to `limit` distinct strings matched by the term under the
     /// given [`GenerationOptions`], skipping the first `offset` strings.
     ///
-    /// `options` is a [`GenerationOrder`](fast_automaton::GenerationOrder) on
-    /// its own, or a full [`GenerationOptions`] to also restrict the
-    /// characters used.
-    /// [`Exhaustive`](fast_automaton::GenerationOrder::Exhaustive) sweeps the
-    /// language, one path at a time;
-    /// [`Sampled`](fast_automaton::GenerationOrder::Sampled) spreads the
-    /// strings over the shapes the pattern allows, which is what you want to
-    /// derive test cases from a pattern.
+    /// `options` combines two independent axes — how paths are scheduled and
+    /// how the strings within them are ordered — plus an optional charset
+    /// and length bounds.
+    /// [`PathOrder::Sweep`](fast_automaton::PathOrder::Sweep) walks the
+    /// language one path at a time,
+    /// [`Interleave`](fast_automaton::PathOrder::Interleave) spreads the
+    /// strings over the shapes the pattern allows, and
+    /// [`PathOrder::Shuffled`](fast_automaton::PathOrder::Shuffled)
+    /// additionally draws which same-length shapes come first by a seed
+    /// ([`GenerationOptions::with_seed`]);
+    /// [`CharacterOrder::Ascending`](fast_automaton::CharacterOrder::Ascending)
+    /// yields each path's smallest strings first, while
+    /// [`CharacterOrder::Shuffled`](fast_automaton::CharacterOrder::Shuffled)
+    /// draws them through a seeded permutation. Both axes shuffled is what
+    /// you want to derive test cases from a pattern: coverage of every shape,
+    /// with strings that look like real inputs, reproducible and pageable. An
+    /// axis can be passed on its own wherever options are expected, and so
+    /// can a `(PathOrder, CharacterOrder)` pair.
     ///
     /// Strings are only guaranteed to be distinct **within a single call**:
     /// the offset fast-skips by counting paths, and in a non-deterministic
@@ -583,6 +593,14 @@ impl Term {
     /// offsets are only consistent across calls made on the same term with
     /// the same options.
     ///
+    /// [`GenerationOptions::with_min_length`] and
+    /// [`with_max_length`](GenerationOptions::with_max_length) confine the
+    /// enumeration to a band of string lengths — without a max, a deep
+    /// `offset` into a looping language (`.*`) pages into arbitrarily long
+    /// strings. Generation runs under the active
+    /// [`ExecutionProfile`]: its
+    /// timeout aborts with [`EngineError::OperationTimeOutError`].
+    ///
     /// For pagination without repetition or skipped strings, make the term deterministic once and generate
     /// from it. To check if a term is deterministic use [`is_deterministic`](Self::is_deterministic).
     /// To determinize run [`determinize`](Self::determinize).
@@ -590,32 +608,39 @@ impl Term {
     /// # Examples
     ///
     /// ```
-    /// use regexsolver::{CharRange, Term, fast_automaton::{GenerationOptions, GenerationOrder}};
+    /// use regexsolver::{CharRange, Term, fast_automaton::{CharacterOrder, GenerationOptions, PathOrder}};
     /// use regexsolver::regex_charclass::char::Char;
     ///
     /// // Minimize once, then paginate with consistent offsets.
     /// let term = Term::from_pattern("(abc|de){2}").unwrap().minimize().unwrap();
     ///
-    /// let batch = term.generate_strings(2, 0, GenerationOrder::Exhaustive).unwrap();
+    /// let batch = term.generate_strings(2, 0, PathOrder::Sweep).unwrap();
     /// assert_eq!(2, batch.len()); // ["dede", "deabc"]
     ///
-    /// let batch = term.generate_strings(2, 2, GenerationOrder::Exhaustive).unwrap();
+    /// let batch = term.generate_strings(2, 2, PathOrder::Sweep).unwrap();
     /// assert_eq!(2, batch.len()); // ["abcde", "abcabc"]
     ///
-    /// // The exhaustive order works through one path at a time, so a limit
-    /// // spent on `.*abc.*` never leaves the strings starting with `abc`.
+    /// // The sweep works through one path at a time, so a limit spent on
+    /// // `.*abc.*` never leaves the strings starting with `abc`.
     /// let term = Term::from_pattern(".*abc.*").unwrap().minimize().unwrap();
     ///
-    /// let batch = term.generate_strings(5, 0, GenerationOrder::Exhaustive).unwrap();
+    /// let batch = term.generate_strings(5, 0, PathOrder::Sweep).unwrap();
     /// assert!(batch.iter().all(|s| s.starts_with("abc")));
     ///
-    /// // The sampled order covers the pattern instead.
-    /// let batch = term.generate_strings(5, 0, GenerationOrder::Sampled).unwrap();
+    /// // Interleaving covers the pattern instead.
+    /// let batch = term.generate_strings(5, 0, PathOrder::Interleave).unwrap();
     /// assert!(batch.iter().any(|s| !s.starts_with("abc")));
+    ///
+    /// // Shuffling both axes covers it with arbitrary-looking strings; the
+    /// // fixed seed keeps them reproducible.
+    /// let options = GenerationOptions::from((PathOrder::Shuffled, CharacterOrder::Shuffled))
+    ///     .with_seed(42);
+    /// let batch = term.generate_strings(5, 0, options.clone()).unwrap();
+    /// assert_eq!(batch, term.generate_strings(5, 0, options).unwrap());
     ///
     /// // A charset keeps generation to the characters you can use.
     /// let printable = CharRange::new_from_range(Char::new(' ')..=Char::new('~'));
-    /// let options = GenerationOptions::from(GenerationOrder::Sampled).with_charset(printable);
+    /// let options = GenerationOptions::from(PathOrder::Interleave).with_charset(printable);
     ///
     /// let batch = term.generate_strings(5, 0, options).unwrap();
     /// assert!(batch.iter().all(|s| s.chars().all(|c| c.is_ascii_graphic() || c == ' ')));
@@ -643,17 +668,28 @@ impl Term {
     /// # Examples
     ///
     /// ```
-    /// use regexsolver::{Term, fast_automaton::GenerationOrder};
+    /// use regexsolver::{Term, fast_automaton::GenerationOptions};
     ///
     /// let term = Term::from_pattern("(abc|de){2}").unwrap().minimize().unwrap();
     ///
     /// // Take the first three matches lazily.
     /// let first_three = term
-    ///     .iter_strings(GenerationOrder::Exhaustive)
+    ///     .iter_strings(GenerationOptions::new())
     ///     .take(3)
     ///     .collect::<Result<Vec<_>, _>>()
     ///     .unwrap();
     /// assert_eq!(3, first_three.len());
+    ///
+    /// // Length bounds keep a lazy walk of an infinite language finite:
+    /// // without a max, this iterator never ends.
+    /// let term = Term::from_pattern("(ab)*").unwrap().minimize().unwrap();
+    ///
+    /// let options = GenerationOptions::new().with_min_length(3).with_max_length(8);
+    /// let band = term
+    ///     .iter_strings(options)
+    ///     .collect::<Result<Vec<_>, _>>()
+    ///     .unwrap();
+    /// assert_eq!(vec!["abab", "ababab", "abababab"], band);
     /// ```
     pub fn iter_strings(&self, options: impl Into<GenerationOptions>) -> StringGenerator<'_> {
         let options = options.into();
@@ -1057,7 +1093,7 @@ impl Iterator for StringGenerator<'_> {
 
 #[cfg(test)]
 mod tests {
-    use crate::fast_automaton::GenerationOrder;
+    use crate::fast_automaton::GenerationOptions;
     use crate::regex::RegularExpression;
 
     use super::*;
@@ -1257,10 +1293,10 @@ mod tests {
             .unwrap();
 
         let eager = term
-            .generate_strings(1000, 0, GenerationOrder::Exhaustive)
+            .generate_strings(1000, 0, GenerationOptions::new())
             .unwrap();
         let lazy = term
-            .iter_strings(GenerationOrder::Exhaustive)
+            .iter_strings(GenerationOptions::new())
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 
@@ -1396,7 +1432,7 @@ mod tests {
         // Must not hang on an infinite language: take a finite prefix.
         let term = Term::from_pattern("a+").unwrap();
         let first = term
-            .iter_strings(GenerationOrder::Exhaustive)
+            .iter_strings(GenerationOptions::new())
             .take(5)
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -1415,7 +1451,7 @@ mod tests {
             .build();
 
         profile.run(|| {
-            let mut it = term.iter_strings(GenerationOrder::Exhaustive);
+            let mut it = term.iter_strings(GenerationOptions::new());
             assert!(matches!(
                 it.next(),
                 Some(Err(EngineError::AutomatonHasTooManyStates))

@@ -49,57 +49,78 @@ pub enum RegularExpression {
 }
 
 impl Display for RegularExpression {
+    /// Streams the pattern via an explicit work stack instead of recursion,
+    /// so printing a pathologically deep hand-built tree cannot overflow the
+    /// call stack.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RegularExpression::Character(range) => {
-                if range.is_empty() {
-                    return write!(f, "[]");
-                }
-                write!(f, "{}", range.to_regex())
-            }
-            RegularExpression::Repetition(regular_expression, min, max_opt) => {
-                if RegularExpression::quantifier_needs_parens(regular_expression) {
-                    write!(f, "({regular_expression})")?;
-                } else {
-                    write!(f, "{regular_expression}")?;
-                }
-                if *min == 0 && max_opt.is_none() {
-                    write!(f, "*")
-                } else if *min == 1 && max_opt.is_none() {
-                    write!(f, "+")
-                } else if *min == 0 && *max_opt == Some(1) {
-                    write!(f, "?")
-                } else if let Some(max) = max_opt {
-                    if max == min {
-                        write!(f, "{{{max}}}")
-                    } else {
-                        write!(f, "{{{min},{max}}}")
-                    }
-                } else {
-                    write!(f, "{{{min},}}")
-                }
-            }
-            RegularExpression::Concat(concat) => {
-                for regex in concat.iter() {
-                    write!(f, "{regex}")?;
-                }
-                Ok(())
-            }
-            RegularExpression::Alternation(alternation) => match alternation.as_slice() {
-                [] => write!(f, "[]"),
-                [single] => write!(f, "{single}"),
-                _ => {
-                    write!(f, "(")?;
-                    for (i, regex) in alternation.iter().enumerate() {
-                        if i != 0 {
-                            write!(f, "|")?;
-                        }
-                        write!(f, "{regex}")?;
-                    }
-                    write!(f, ")")
-                }
-            },
+        enum Frame<'a> {
+            Node(&'a RegularExpression),
+            Literal(&'static str),
+            Quantifier(u32, Option<u32>),
         }
+
+        // Frames pop in reverse push order, so children are pushed
+        // right-to-left and trailing literals before them.
+        let mut stack = vec![Frame::Node(self)];
+        while let Some(frame) = stack.pop() {
+            match frame {
+                Frame::Literal(literal) => f.write_str(literal)?,
+                Frame::Quantifier(min, max_opt) => {
+                    if min == 0 && max_opt.is_none() {
+                        write!(f, "*")?;
+                    } else if min == 1 && max_opt.is_none() {
+                        write!(f, "+")?;
+                    } else if min == 0 && max_opt == Some(1) {
+                        write!(f, "?")?;
+                    } else if let Some(max) = max_opt {
+                        if max == min {
+                            write!(f, "{{{max}}}")?;
+                        } else {
+                            write!(f, "{{{min},{max}}}")?;
+                        }
+                    } else {
+                        write!(f, "{{{min},}}")?;
+                    }
+                }
+                Frame::Node(RegularExpression::Character(range)) => {
+                    if range.is_empty() {
+                        write!(f, "[]")?;
+                    } else {
+                        write!(f, "{}", range.to_regex())?;
+                    }
+                }
+                Frame::Node(RegularExpression::Repetition(regular_expression, min, max_opt)) => {
+                    stack.push(Frame::Quantifier(*min, *max_opt));
+                    if RegularExpression::quantifier_needs_parens(regular_expression) {
+                        stack.push(Frame::Literal(")"));
+                        stack.push(Frame::Node(regular_expression));
+                        stack.push(Frame::Literal("("));
+                    } else {
+                        stack.push(Frame::Node(regular_expression));
+                    }
+                }
+                Frame::Node(RegularExpression::Concat(concat)) => {
+                    stack.extend(concat.iter().rev().map(Frame::Node));
+                }
+                Frame::Node(RegularExpression::Alternation(alternation)) => {
+                    match alternation.as_slice() {
+                        [] => write!(f, "[]")?,
+                        [single] => stack.push(Frame::Node(single)),
+                        parts => {
+                            stack.push(Frame::Literal(")"));
+                            for (i, regex) in parts.iter().enumerate().rev() {
+                                stack.push(Frame::Node(regex));
+                                if i != 0 {
+                                    stack.push(Frame::Literal("|"));
+                                }
+                            }
+                            stack.push(Frame::Literal("("));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -107,26 +128,29 @@ impl RegularExpression {
     /// Whether applying a quantifier to the printed form of `r` requires
     /// wrapping it in a group. Singleton `Concat`/`Alternation` wrappers
     /// print transparently, so the decision must look through them instead
-    /// of matching on the direct child's variant.
-    fn quantifier_needs_parens(r: &RegularExpression) -> bool {
-        match r {
-            // Prints as a single char or a [class]: one token.
-            RegularExpression::Character(..) => false,
-            RegularExpression::Repetition(..) => true,
-            RegularExpression::Concat(parts) => match parts.len() {
-                1 => Self::quantifier_needs_parens(&parts[0]),
-                // Covers both the empty concatenation (which prints as ""
-                // and needs the explicit group; `()*` is valid but a bare
-                // `*` is not) and real multi-part concatenations.
-                _ => true,
-            },
-            RegularExpression::Alternation(parts) => match parts.len() {
-                // The empty alternation prints as "[]": one token.
-                0 => false,
-                1 => Self::quantifier_needs_parens(&parts[0]),
-                // Multi-part alternations print self-parenthesized.
-                _ => false,
-            },
+    /// of matching on the direct child's variant — iteratively, since a
+    /// hand-built tree can chain such wrappers arbitrarily deep.
+    fn quantifier_needs_parens(mut r: &RegularExpression) -> bool {
+        loop {
+            match r {
+                // Prints as a single char or a [class]: one token.
+                RegularExpression::Character(..) => return false,
+                RegularExpression::Repetition(..) => return true,
+                RegularExpression::Concat(parts) => match parts.len() {
+                    1 => r = &parts[0],
+                    // Covers both the empty concatenation (which prints as ""
+                    // and needs the explicit group; `()*` is valid but a bare
+                    // `*` is not) and real multi-part concatenations.
+                    _ => return true,
+                },
+                RegularExpression::Alternation(parts) => match parts.len() {
+                    // The empty alternation prints as "[]": one token.
+                    0 => return false,
+                    1 => r = &parts[0],
+                    // Multi-part alternations print self-parenthesized.
+                    _ => return false,
+                },
+            }
         }
     }
 
@@ -369,5 +393,57 @@ mod tests {
         assert!(!automaton.is_empty_string());
         assert!(automaton.is_total());
         Ok(())
+    }
+
+    /// Drops a deep chain-shaped tree level by level. `Box`'s drop glue
+    /// recurses (see [`RegularExpression::MAX_NESTING_DEPTH`]), so the deep
+    /// trees below must not be dropped whole.
+    fn drop_chain_iteratively(mut regex: RegularExpression) {
+        loop {
+            regex = match regex {
+                RegularExpression::Repetition(inner, _, _) => *inner,
+                RegularExpression::Concat(mut parts) if parts.len() == 1 => {
+                    parts.pop_front().expect("len() == 1")
+                }
+                RegularExpression::Alternation(mut parts) if parts.len() == 1 => {
+                    parts.pop().expect("len() == 1")
+                }
+                _ => return,
+            };
+        }
+    }
+
+    // Display streams via an explicit work stack: a hand-built tree far
+    // deeper than any recursive formatter could survive must still print.
+    #[test]
+    fn display_does_not_recurse_on_deep_trees() {
+        const DEPTH: usize = 100_000;
+
+        // `((...(a*)*...)*)*`: every level goes through the parenthesization
+        // decision and the quantifier path.
+        let mut regex = RegularExpression::new("a").unwrap();
+        for _ in 0..DEPTH {
+            regex = RegularExpression::Repetition(Box::new(regex), 0, None);
+        }
+        let printed = regex.to_string();
+        assert_eq!(3 * DEPTH - 1, printed.len());
+        assert!(printed.starts_with("((("));
+        assert!(printed.ends_with(")*)*)*"));
+        drop_chain_iteratively(regex);
+
+        // A deep chain of singleton wrappers prints transparently, and the
+        // quantifier's parenthesization must look through all of them
+        // without recursing.
+        let mut regex = RegularExpression::new("ab").unwrap();
+        for i in 0..DEPTH {
+            regex = if i % 2 == 0 {
+                RegularExpression::Concat(VecDeque::from([regex]))
+            } else {
+                RegularExpression::Alternation(vec![regex])
+            };
+        }
+        let regex = RegularExpression::Repetition(Box::new(regex), 0, None);
+        assert_eq!("(ab)*", regex.to_string());
+        drop_chain_iteratively(regex);
     }
 }

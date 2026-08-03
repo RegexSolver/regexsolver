@@ -1,13 +1,10 @@
 //! Keeps the README's examples honest: these tests are the README snippets,
 //! verbatim. If one fails, update the README.
-//!
-//! The one README block not pinned here is the time-bounded execution example,
-//! whose assertion depends on wall-clock timing and would be flaky in CI.
 
 use regexsolver::Term;
 use regexsolver::error::EngineError;
 use regexsolver::execution_profile::ExecutionProfileBuilder;
-use regexsolver::fast_automaton::GenerationOrder;
+use regexsolver::fast_automaton::{GenerationOptions, PathOrder};
 
 #[test]
 fn readme_automaton_building_example() -> Result<(), EngineError> {
@@ -46,7 +43,7 @@ fn readme_hero_example() -> Result<(), EngineError> {
 
     // ...and sample them:
     assert_eq!(
-        both.generate_strings(2, 0, GenerationOrder::Exhaustive)?,
+        both.generate_strings(2, 0, PathOrder::Sweep)?,
         ["xyxy", "abxy"]
     );
 
@@ -79,6 +76,30 @@ fn readme_regular_expression_example() -> Result<(), EngineError> {
     assert!(has_unbounded_repetition(&RegularExpression::new(
         ".*@example\\.com"
     )?));
+
+    Ok(())
+}
+
+// Timing-dependent in one direction only: the assertion needs the
+// 100-million-string generation to *not* finish within 50ms, which no
+// machine can do, so the test cannot flake.
+#[test]
+fn readme_time_bounded_execution_example() -> Result<(), EngineError> {
+    let term = Term::from_pattern(".*abc.*cdef.*sqdsqf.*")?;
+
+    let execution_profile = ExecutionProfileBuilder::new()
+        .execution_timeout(50) // limit in milliseconds
+        .build();
+
+    // Asking for 100 million strings cannot finish within the budget, so the
+    // generation aborts instead of running to completion.
+    execution_profile.run(|| {
+        assert_eq!(
+            EngineError::OperationTimeOutError,
+            term.generate_strings(100_000_000, 0, GenerationOptions::new())
+                .unwrap_err()
+        );
+    });
 
     Ok(())
 }

@@ -54,20 +54,33 @@ below.
   the public API).
 - `EngineError` implements `Clone`; `StringGenerator` implements `Debug` and
   `FusedIterator`; `ExecutionProfileBuilder` implements `Debug` and `Clone`.
-- `GenerationOrder`, the order `generate_strings`/`iter_strings` walk a
-  language in. `Exhaustive` is the previous behaviour: shortest strings
-  first, one path expanded in full before the next. `Sampled` covers every
-  shape the automaton holds before asking any of them for a second string,
-  so `.*abc.*` yields `abc`, `abc\u{0}`, `\u{0}abc`, ... instead of a
-  million variations of `abc\u{0}`. Within a shape, characters come in the
-  same ascending order `Exhaustive` uses — the order chooses which strings
-  come first, never the characters they are made of. It stays deterministic
-  and pages with `offset` the same way.
+- `PathOrder` and `CharacterOrder`, the two independent axes
+  `generate_strings`/`iter_strings` enumerate a language along.
+  `PathOrder::Sweep` is the previous behaviour: shortest strings first, one
+  path expanded in full before the next. `PathOrder::Interleave` covers
+  every shape the automaton holds before asking any of them for a second
+  string, so `.*abc.*` yields `abc`, `abc\u{0}`, `\u{0}abc`, ... instead of
+  a million variations of `abc\u{0}`. `PathOrder::Shuffled` interleaves and
+  additionally visits same-length shapes in a seed-drawn order, so *which*
+  shapes a small `limit` reaches looks random too.
+  `CharacterOrder::Ascending` (the default) expands each position from the
+  low end of its character range; `CharacterOrder::Shuffled` draws each
+  path's combinations through a seeded permutation instead — `[a-z]{8}`
+  yields something like `sjtwsive` rather than `aaaaaaaa` (the exact
+  shuffled sequence is implementation-defined). Every combination of the axes
+  enumerates the same strings, stays deterministic (the seed defaults to 0),
+  and pages with `offset` the same way; both axes shuffled is the mode to
+  derive realistic test cases from a pattern.
 - `GenerationOptions`, what `generate_strings`/`iter_strings` may generate:
-  the order, plus an optional charset (`with_charset(CharRange)`) that keeps
-  generation to a set of characters. Only strings made entirely of them come
-  out — a path needing a ruled-out character is dropped whole, never
-  shortened — so `.*abc.*` over `[ -~]` yields `abc`, `abc `, `abc!`, ...
+  the two axes, the seed behind the `Shuffled` modes of both
+  (`with_seed(u64)`), an optional charset (`with_charset(CharRange)`) that
+  keeps generation to a set of characters — only strings made entirely of
+  them come out; a path needing a ruled-out character is dropped whole,
+  never shortened, so `.*abc.*` over `[ -~]` yields `abc`, `abc `, `abc!`,
+  ... — plus optional length bounds (`with_min_length`/`with_max_length`)
+  that confine the enumeration to a band of string lengths, `offset` never
+  counting the strings outside it. Without a max, a deep `offset` into a
+  looping language like `.*` pages into arbitrarily long strings.
 
 ### Changed
 - `Term::to_regex`/`to_pattern` and `FastAutomaton::to_regex` are now fallible
@@ -85,9 +98,11 @@ below.
 - `repeat` now takes `impl RangeBounds<u32>` (e.g. `3..6`, `..=2`) instead of
   explicit min/max parameters.
 - `generate_strings` now takes `(limit, offset, options)`: pagination instead
-  of a single `count`, plus the `GenerationOptions` to generate under (an
-  order, and optionally a charset). A `GenerationOrder` converts into options,
-  so it can be passed on its own. `iter_strings` takes the same `options`.
+  of a single `count`, plus the `GenerationOptions` to generate under (the
+  two enumeration axes, a seed, and optionally a charset and length bounds).
+  A `PathOrder`, a `CharacterOrder`, or a `(PathOrder, CharacterOrder)` pair
+  converts into options, so any of them can be passed on its own.
+  `iter_strings` takes the same `options`.
 - `is_empty`, `is_total`, and `is_empty_string` now return
   `Result<bool, EngineError>` instead of `bool`.
 - `are_equivalent`/`is_subset_of` renamed to `equivalent`/`subset`.

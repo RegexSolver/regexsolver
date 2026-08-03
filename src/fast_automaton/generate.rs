@@ -12,37 +12,91 @@ use std::ops::Range;
 /// charset leaves nothing of.
 type RangeIds<'a> = AHashMap<&'a Condition, Option<u32>>;
 
-/// The order in which [`FastAutomaton::generate_strings`] walks a language.
+/// How [`FastAutomaton::generate_strings`] schedules the *paths* of a
+/// language: one at a time, or interleaved so that every shape the pattern
+/// allows is covered early. Orthogonal to [`CharacterOrder`], which chooses
+/// the strings within each path.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum GenerationOrder {
-    /// Shortest strings first, each path expanded from the low end of its
-    /// character ranges before the next path is visited: `.*abc.*` yields
-    /// `abc`, `abc\u{0}`, `abc\u{1}`, ... This sweeps the language in a stable
-    /// order, and is the cheapest way to page through it with `offset`.
+pub enum PathOrder {
+    /// One path at a time, shortest first, expanded in full before the next
+    /// path is visited: `.*abc.*` yields `abc`, `abc\u{0}`, `abc\u{1}`, ...
+    /// The cheapest way to page through a whole language with `offset`.
     #[default]
-    Exhaustive,
-    /// Samples the language instead of sweeping it: a few strings per path
-    /// before moving to the next one, so `.*abc.*` yields `abc` and a string
-    /// for each of the other shapes (`abc\u{0}`, `\u{0}abc`, ...) — the shapes
-    /// the pattern allows, instead of a million variations of one of them,
-    /// which is what makes it usable to derive test cases.
+    Sweep,
+    /// A few strings per path before moving to the next one, so `.*abc.*`
+    /// yields `abc` and a string for each of the other shapes (`abc\u{0}`,
+    /// `\u{0}abc`, ...) — the shapes the pattern allows, instead of a million
+    /// variations of one of them, which is what makes it usable to derive
+    /// test cases.
     ///
     /// Shape comes first: the strings cover every path the automaton holds
     /// before any path is asked for a second one, so a `limit` smaller than
     /// the number of shapes is spent entirely on distinct shapes, and only a
     /// larger one starts varying the characters within them.
     ///
-    /// Within a path, characters come in the same ascending order
-    /// [`Exhaustive`](Self::Exhaustive) uses: the order chooses which strings
-    /// come first, never the characters they are made of. To generate from
-    /// specific characters, restrict generation with
-    /// [`GenerationOptions::with_charset`].
-    ///
-    /// Deterministic, and pages with `offset` like [`Exhaustive`](Self::Exhaustive).
+    /// Deterministic, and pages with `offset` like [`Sweep`](Self::Sweep).
     /// Each pass takes twice as many strings per path as the previous one, so
     /// a finite language is still enumerated in full given a large enough
-    /// `limit`; those repeated passes make it slower than `Exhaustive`.
-    Sampled,
+    /// `limit`; those repeated passes make it slower than `Sweep`.
+    Interleave,
+    /// [`Interleave`](Self::Interleave), with same-length paths visited in an
+    /// order drawn by the seed ([`GenerationOptions::with_seed`], 0 by
+    /// default) instead of a fixed one: which *shapes* a small `limit`
+    /// reaches looks random too. Shorter paths still come first — on an
+    /// infinite language the search has to stay shortest-first to ever emit
+    /// anything — so the seed only draws among paths of equal length.
+    ///
+    /// The draw within a length is a randomized *cascade*, not a uniform
+    /// shuffle: the seed randomizes the pop order of the underlying
+    /// shortest-first search, and a path only becomes available once its
+    /// whole prefix chain has popped. A shape branching off an
+    /// already-visited path is ready immediately, while one that shares
+    /// nothing has to win a tie draw per prefix — on `.*abc.*`, `abc·x`
+    /// (one expansion past `abc` itself) leads more often than `x·abc`. The
+    /// bias fades as the pass proceeds, and coverage is untouched: every
+    /// shape still comes before any shape's second string. A uniform draw
+    /// would need every same-length path materialized before emitting any,
+    /// which an unbounded, incrementally-discovered path set rules out.
+    ///
+    /// Independent of [`CharacterOrder`]: shuffled paths over
+    /// [`Ascending`](CharacterOrder::Ascending) characters yield each drawn
+    /// shape's smallest witness; pair with
+    /// [`CharacterOrder::Shuffled`] for fully random-looking test cases.
+    /// Deterministic for a given seed, and pages with `offset` like the
+    /// other orders; offsets are only consistent between calls sharing the
+    /// seed.
+    Shuffled,
+}
+
+/// Which strings of a path [`FastAutomaton::generate_strings`] reaches for
+/// first: its character combinations in ascending order, or a seeded shuffle
+/// of them. Orthogonal to [`PathOrder`], which schedules the paths
+/// themselves.
+///
+/// Neither changes *what* is generated: on a finite language every
+/// combination of the two axes enumerates exactly the same strings, given the
+/// `limit`. To generate from specific characters, restrict generation with
+/// [`GenerationOptions::with_charset`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum CharacterOrder {
+    /// Each position expanded from the low end of its character range first:
+    /// `[a-z]{8}` yields `aaaaaaaa`, `aaaaaaab`, ... A stable, spec-defined
+    /// order — the smallest witnesses of a path come first.
+    #[default]
+    Ascending,
+    /// A seeded permutation of each path's combinations — `[a-z]{8}` yields
+    /// something like `sjtwsive` rather than `aaaaaaaa`: the strings drawn
+    /// from each shape look like real inputs. To draw the *shapes* by the
+    /// seed too, pair with [`PathOrder::Shuffled`].
+    ///
+    /// Random in look only: the seed ([`GenerationOptions::with_seed`], 0 by
+    /// default) picks one fixed permutation, so generation is reproducible,
+    /// pages with `offset` like [`Ascending`](Self::Ascending), and — the
+    /// permutation being a bijection — never repeats a string across offsets
+    /// any more than it does. Offsets are only consistent between calls
+    /// sharing the seed. Unlike [`Ascending`](Self::Ascending)'s, the exact
+    /// sequence is implementation-defined: it may change between releases.
+    Shuffled,
 }
 
 /// The most strings to reserve room for up front. `limit` is caller-controlled
@@ -52,14 +106,23 @@ pub enum GenerationOrder {
 const STRINGS_CAPACITY_LIMIT: usize = 1 << 12;
 
 /// How much a [`PathCache`] may hold — a finite language can still have far
-/// more paths than fit in memory. Past these, recording gives up and the later
-/// sampled passes search the automaton again: time spent instead of memory.
+/// more paths than fit in memory. Past these, recording gives up and the
+/// later interleave passes search the automaton again: time spent instead of
+/// memory.
 const CACHE_IDS_LIMIT: usize = 1 << 20;
 const CACHE_PATHS_LIMIT: usize = 1 << 17;
+
+/// Salts the seed into [`Generation::shape_key`], so the shape draw and the
+/// [`Permuter`]'s character draw are independent functions of the same seed.
+const SHAPE_KEY_SALT: u64 = 0x517C_C1B7_2722_0A95;
 
 #[derive(Clone, Eq, PartialEq)]
 struct QueueItem {
     score: usize,
+    /// Seeded tie-break between items of equal score, 0 unless paths are
+    /// [`PathOrder::Shuffled`]: what draws the shapes a small `limit` reaches
+    /// (see [`Generation::tie`]).
+    tie: u64,
     depth: usize,
     state: usize,
     /// The path's transitions as indices into [`Generation::range_pool`]
@@ -71,6 +134,7 @@ impl Ord for QueueItem {
         other
             .score
             .cmp(&self.score)
+            .then_with(|| self.tie.cmp(&other.tie))
             .then_with(|| self.depth.cmp(&other.depth))
             .then_with(|| self.state.cmp(&other.state))
             .then_with(|| self.ranges.cmp(&other.ranges))
@@ -83,46 +147,64 @@ impl PartialOrd for QueueItem {
     }
 }
 
-/// What [`FastAutomaton::generate_strings`] is allowed to generate: the order
-/// to walk the language in, and the characters it may use.
+/// What [`FastAutomaton::generate_strings`] is allowed to generate: how paths
+/// are scheduled ([`PathOrder`]), how the strings within them are ordered
+/// ([`CharacterOrder`], with the seed behind the `Shuffled` modes of both
+/// axes), the characters it may use, and the string lengths it is confined
+/// to.
 ///
-/// [`GenerationOrder`] converts into it, so an order can be passed on its own
-/// wherever options are expected.
+/// Either axis converts into it — so one can be passed on its own wherever
+/// options are expected, the other keeping its default — and so does a
+/// `(PathOrder, CharacterOrder)` pair.
 ///
 /// # Examples
 ///
 /// ```
-/// use regexsolver::{CharRange, Term, fast_automaton::{GenerationOptions, GenerationOrder}};
+/// use regexsolver::{CharRange, Term, fast_automaton::{CharacterOrder, GenerationOptions, PathOrder}};
 /// use regexsolver::regex_charclass::char::Char;
 ///
 /// let term = Term::from_pattern(".{2}").unwrap();
 ///
-/// // An order on its own.
-/// let strings = term.generate_strings(3, 0, GenerationOrder::Sampled).unwrap();
+/// // An axis on its own.
+/// let strings = term.generate_strings(3, 0, PathOrder::Interleave).unwrap();
 ///
-/// // Sampled, and restricted to lowercase letters.
+/// // Both axes, restricted to lowercase letters.
 /// let lowercase = CharRange::new_from_range(Char::new('a')..=Char::new('z'));
-/// let options = GenerationOptions::from(GenerationOrder::Sampled).with_charset(lowercase);
+/// let options = GenerationOptions::from((PathOrder::Interleave, CharacterOrder::Shuffled))
+///     .with_charset(lowercase)
+///     .with_seed(42);
 ///
 /// let strings = term.generate_strings(3, 0, options).unwrap();
 /// assert!(strings.iter().all(|s| s.chars().all(|c| c.is_ascii_lowercase())));
 /// ```
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GenerationOptions {
-    order: GenerationOrder,
+    paths: PathOrder,
+    characters: CharacterOrder,
     charset: Option<CharRange>,
+    seed: u64,
+    min_length: usize,
+    max_length: Option<usize>,
 }
 
 impl GenerationOptions {
-    /// Default options: [`GenerationOrder::Exhaustive`], over every character
-    /// the automaton allows.
+    /// Default options: [`PathOrder::Sweep`] over
+    /// [`CharacterOrder::Ascending`] combinations, using every character and
+    /// string length the automaton allows.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Returns a copy of these options walking the language in `order`.
-    pub fn with_order(mut self, order: GenerationOrder) -> Self {
-        self.order = order;
+    /// Returns a copy of these options scheduling paths in `paths` order.
+    pub fn with_paths(mut self, paths: PathOrder) -> Self {
+        self.paths = paths;
+        self
+    }
+
+    /// Returns a copy of these options ordering each path's strings in
+    /// `characters` order.
+    pub fn with_characters(mut self, characters: CharacterOrder) -> Self {
+        self.characters = characters;
         self
     }
 
@@ -152,22 +234,97 @@ impl GenerationOptions {
         self
     }
 
-    /// The order the language is walked in.
-    pub fn order(&self) -> GenerationOrder {
-        self.order
+    /// Returns a copy of these options drawing [`PathOrder::Shuffled`]'s
+    /// path draws and [`CharacterOrder::Shuffled`]'s permutation from `seed`;
+    /// generation using neither ignores it.
+    ///
+    /// The default seed is 0 — a fixed seed, not a random one, so two calls
+    /// with the same options generate the same strings and `offset` pages
+    /// through them consistently. Change the seed to draw a different
+    /// sequence of strings from the same pattern.
+    pub fn with_seed(mut self, seed: u64) -> Self {
+        self.seed = seed;
+        self
+    }
+
+    /// Returns a copy of these options generating only strings at least
+    /// `min_length` characters long: the shorter strings the automaton
+    /// matches are left out of the enumeration, `offset` never counting
+    /// them. 0 — every string — by default.
+    pub fn with_min_length(mut self, min_length: usize) -> Self {
+        self.min_length = min_length;
+        self
+    }
+
+    /// Returns a copy of these options generating only strings at most
+    /// `max_length` characters long: the longer strings the automaton
+    /// matches are left out of the enumeration, `offset` never counting
+    /// them. Unbounded by default — and without a bound, a deep `offset`
+    /// into a looping language (`.*`) pages into arbitrarily long strings,
+    /// so bound it when the offset is not under your control.
+    ///
+    /// A bound below `min_length` leaves nothing to generate.
+    pub fn with_max_length(mut self, max_length: usize) -> Self {
+        self.max_length = Some(max_length);
+        self
+    }
+
+    /// The order paths are scheduled in.
+    pub fn paths(&self) -> PathOrder {
+        self.paths
+    }
+
+    /// The order each path's strings come out in.
+    pub fn characters(&self) -> CharacterOrder {
+        self.characters
     }
 
     /// The characters generation is restricted to, `None` when it is not.
     pub fn charset(&self) -> Option<&CharRange> {
         self.charset.as_ref()
     }
+
+    /// The seed behind [`PathOrder::Shuffled`] and
+    /// [`CharacterOrder::Shuffled`].
+    pub fn seed(&self) -> u64 {
+        self.seed
+    }
+
+    /// The shortest string generation may emit.
+    pub fn min_length(&self) -> usize {
+        self.min_length
+    }
+
+    /// The longest string generation may emit, `None` when unbounded.
+    pub fn max_length(&self) -> Option<usize> {
+        self.max_length
+    }
 }
 
-impl From<GenerationOrder> for GenerationOptions {
-    fn from(order: GenerationOrder) -> Self {
+impl From<PathOrder> for GenerationOptions {
+    fn from(paths: PathOrder) -> Self {
         GenerationOptions {
-            order,
-            charset: None,
+            paths,
+            ..Default::default()
+        }
+    }
+}
+
+impl From<CharacterOrder> for GenerationOptions {
+    fn from(characters: CharacterOrder) -> Self {
+        GenerationOptions {
+            characters,
+            ..Default::default()
+        }
+    }
+}
+
+impl From<(PathOrder, CharacterOrder)> for GenerationOptions {
+    fn from((paths, characters): (PathOrder, CharacterOrder)) -> Self {
+        GenerationOptions {
+            paths,
+            characters,
+            ..Default::default()
         }
     }
 }
@@ -176,8 +333,9 @@ impl FastAutomaton {
     /// Generates up to `limit` distinct strings matched by the automaton under
     /// the given [`GenerationOptions`], skipping the first `offset` strings.
     ///
-    /// `options` is a [`GenerationOrder`] on its own, or a full
-    /// [`GenerationOptions`] to also restrict the characters used.
+    /// `options` is a [`PathOrder`] or [`CharacterOrder`] on its own (or a
+    /// pair of them), or a full [`GenerationOptions`] to also set the seed
+    /// and restrict the characters and string lengths used.
     ///
     /// Strings are only guaranteed to be distinct **within a single call**:
     /// the offset fast-skips by counting paths, and in a non-deterministic
@@ -186,7 +344,14 @@ impl FastAutomaton {
     /// [`determinize`](Self::determinize) (and ideally
     /// [`minimize`](Self::minimize)) first to make pages disjoint. Offsets are
     /// also only consistent between calls made with the same options.
-    #[tracing::instrument(level = "debug", skip(self, options), fields(states = self.number_of_states(), deterministic=self.is_deterministic(), limit=limit, offset=offset, order=tracing::field::Empty, charset=tracing::field::Empty))]
+    ///
+    /// [`GenerationOptions::with_min_length`] and
+    /// [`with_max_length`](GenerationOptions::with_max_length) confine the
+    /// enumeration to a band of string lengths — without a max, a deep
+    /// `offset` into a looping language (`.*`) pages into arbitrarily long
+    /// strings. Generation runs under the active [`ExecutionProfile`]: its
+    /// timeout aborts with [`EngineError::OperationTimeOutError`].
+    #[tracing::instrument(level = "debug", skip(self, options), fields(states = self.number_of_states(), deterministic=self.is_deterministic(), limit=limit, offset=offset, paths=tracing::field::Empty, characters=tracing::field::Empty, charset=tracing::field::Empty, seed=tracing::field::Empty, min_length=tracing::field::Empty, max_length=tracing::field::Empty))]
     pub fn generate_strings(
         &self,
         limit: usize,
@@ -198,11 +363,15 @@ impl FastAutomaton {
         // Serializing the charset is not free: only when the span is recorded.
         let span = tracing::Span::current();
         if !span.is_disabled() {
-            span.record("order", tracing::field::debug(options.order));
+            span.record("paths", tracing::field::debug(options.paths));
+            span.record("characters", tracing::field::debug(options.characters));
             span.record(
                 "charset",
                 tracing::field::debug(options.charset.as_ref().map(|charset| charset.to_regex())),
             );
+            span.record("seed", options.seed);
+            span.record("min_length", options.min_length as u64);
+            span.record("max_length", tracing::field::debug(options.max_length));
         }
 
         self.generate(limit, offset, &options)
@@ -220,13 +389,18 @@ impl FastAutomaton {
             return Ok(vec![]);
         }
 
-        let mut generation = Generation::new(self, limit, offset, options.charset())?;
+        let mut generation = Generation::new(self, limit, offset, options)?;
 
-        match options.order {
-            GenerationOrder::Exhaustive => {
-                generation.walk(self, None, None)?;
+        match options.paths {
+            PathOrder::Sweep => {
+                // The ascending sweep walks each path's combinations with
+                // cursors; the shuffled one has to index them through the
+                // permutation, which a window over everything is.
+                let window =
+                    (options.characters == CharacterOrder::Shuffled).then_some(0..usize::MAX);
+                generation.walk(self, window.as_ref(), None)?;
             }
-            GenerationOrder::Sampled => {
+            PathOrder::Interleave | PathOrder::Shuffled => {
                 // A pass takes at most `window` combinations per path, so no
                 // single path can spend the whole `limit` on itself. The
                 // windows double and pick up where the previous one stopped:
@@ -256,14 +430,20 @@ impl FastAutomaton {
 }
 
 /// The state of a single [`FastAutomaton::generate_strings`] call, shared by
-/// every pass a [`GenerationOrder::Sampled`] generation makes over the
-/// automaton.
+/// every pass an interleaving generation makes over the automaton.
 struct Generation<'a> {
     /// Number of transitions from each state to the nearest accept state;
     /// `usize::MAX` for the states that cannot reach one.
     distances: Vec<usize>,
-    /// Length of the longest string the automaton matches.
+    /// Length of the longest string generation may emit: what the automaton
+    /// matches, capped at the options'
+    /// [`max_length`](GenerationOptions::max_length).
     max_len: usize,
+    /// Length of the shortest string generation may emit
+    /// ([`GenerationOptions::min_length`]); the search still walks the
+    /// shorter accepting paths — they lead to long enough ones — it just
+    /// does not emit them.
+    min_len: usize,
     /// The characters each transition stands for, resolved once: the paths
     /// refer to them by index (see [`QueueItem::ranges`]).
     range_pool: Vec<CharRange>,
@@ -272,6 +452,9 @@ struct Generation<'a> {
     /// condition the charset leaves nothing of holds `None`, which is what
     /// makes its transition impassable.
     range_ids: RangeIds<'a>,
+    /// Seeds [`QueueItem::tie`] under [`PathOrder::Shuffled`]; `None` leaves
+    /// every tie at 0 and the pop order to the deterministic fallback.
+    shape_key: Option<u64>,
     emitter: Emitter,
 }
 
@@ -281,11 +464,14 @@ struct Generation<'a> {
 struct Emitter {
     limit: usize,
     offset: usize,
+    /// Scrambles each path's combination indices for
+    /// [`CharacterOrder::Shuffled`]; `None` walks them in ascending order.
+    permuter: Option<Permuter>,
     strings: IndexSet<String, RandomState>,
     execution_profile: ExecutionProfile,
 }
 
-/// The accepting paths a sampled pass popped, in pop order — flat, path `i`
+/// The accepting paths an interleave pass popped, in pop order — flat, path `i`
 /// being `ids[starts[i]..starts[i + 1]]`. A pass that runs out of paths has
 /// recorded all of them, and the passes after it replay the cache instead of
 /// searching the automaton again.
@@ -413,25 +599,36 @@ impl<'a> Generation<'a> {
         automaton: &'a FastAutomaton,
         limit: usize,
         offset: usize,
-        charset: Option<&CharRange>,
+        options: &GenerationOptions,
     ) -> Result<Self, EngineError> {
-        let (range_pool, range_ids) = resolve_ranges(automaton, charset)?;
+        let (range_pool, range_ids) = resolve_ranges(automaton, options.charset())?;
         let distances = distances_to_accept(automaton, &range_ids);
         let (_, max) = automaton.length();
+        let execution_profile = ExecutionProfile::get();
+
+        // The options' length bounds: without a max, a deep offset into a
+        // looping language would page into arbitrarily long strings.
+        let max_len =
+            (max.unwrap_or(u32::MAX) as usize).min(options.max_length().unwrap_or(usize::MAX));
 
         Ok(Generation {
             distances,
-            max_len: max.unwrap_or(u32::MAX) as usize,
+            max_len,
+            min_len: options.min_length(),
             range_pool,
             range_ids,
+            shape_key: (options.paths == PathOrder::Shuffled)
+                .then(|| mix(options.seed ^ SHAPE_KEY_SALT)),
             emitter: Emitter {
                 limit,
                 offset,
+                permuter: (options.characters == CharacterOrder::Shuffled)
+                    .then(|| Permuter::new(options.seed)),
                 strings: IndexSet::with_capacity_and_hasher(
                     limit.min(STRINGS_CAPACITY_LIMIT),
                     RandomState::default(),
                 ),
-                execution_profile: ExecutionProfile::get(),
+                execution_profile,
             },
         })
     }
@@ -464,6 +661,7 @@ impl<'a> Generation<'a> {
         let mut q = BinaryHeap::new();
         q.push(QueueItem {
             score: self.distances[start_state],
+            tie: 0,
             depth: 0,
             state: start_state,
             ranges: vec![],
@@ -471,6 +669,7 @@ impl<'a> Generation<'a> {
 
         while let Some(QueueItem {
             score: _,
+            tie,
             depth: current_depth,
             state,
             ranges,
@@ -478,14 +677,16 @@ impl<'a> Generation<'a> {
         {
             self.emitter.execution_profile.assert_not_timed_out()?;
 
-            if automaton.is_accepted(state) {
+            // A path shorter than `min_len` is walked — its extensions are
+            // long enough — but never emitted, recorded, or counted.
+            if automaton.is_accepted(state) && current_depth >= self.min_len {
                 if let Some(cache) = cache.as_deref_mut() {
                     cache.record(&ranges);
                 }
 
                 let resolved = resolve(&self.range_pool, &ranges);
                 covered = covered.saturating_add(match window {
-                    Some(window) => self.emitter.emit_sampled(&resolved, window)?,
+                    Some(window) => self.emitter.emit_window(&resolved, &ranges, window)?,
                     None => self.emitter.emit_all(&resolved)?,
                 });
 
@@ -498,7 +699,7 @@ impl<'a> Generation<'a> {
                 continue;
             }
 
-            self.expand(automaton, &mut q, current_depth + 1, state, ranges);
+            self.expand(automaton, &mut q, current_depth + 1, state, tie, ranges);
         }
 
         // An empty queue means every path was popped, so a recording cache
@@ -521,6 +722,7 @@ impl<'a> Generation<'a> {
         q: &mut BinaryHeap<QueueItem>,
         next_depth: usize,
         state: State,
+        tie: u64,
         mut ranges: Vec<u32>,
     ) {
         let mut valid_transitions = Vec::new();
@@ -546,19 +748,34 @@ impl<'a> Generation<'a> {
                 new_ranges.push(range_id);
                 q.push(QueueItem {
                     score: next_depth + self.distances[to_state], // A* Score Formula
+                    tie: self.tie(tie, range_id, to_state),
                     depth: next_depth,
                     state: to_state,
                     ranges: new_ranges,
                 });
             }
 
+            let tie = self.tie(tie, last_id, last_state);
             ranges.push(last_id);
             q.push(QueueItem {
                 score: next_depth + self.distances[last_state], // A* Score Formula
+                tie,
                 depth: next_depth,
                 state: last_state,
                 ranges,
             });
+        }
+    }
+
+    /// The tie of a path extended by `range_id` into `to_state`: the parent's
+    /// tie folded with a seeded hash of the transition, so equal-score paths
+    /// pop in an order the seed draws — the cascade documented on
+    /// [`PathOrder::Shuffled`]. 0 — fall through to the deterministic
+    /// tie-breaks — without a [`shape_key`](Self::shape_key).
+    fn tie(&self, parent: u64, range_id: u32, to_state: State) -> u64 {
+        match self.shape_key {
+            Some(key) => mix(parent ^ mix(key ^ ((range_id as u64) << 32) ^ to_state as u64)),
+            None => 0,
         }
     }
 
@@ -572,7 +789,7 @@ impl<'a> Generation<'a> {
             self.emitter.execution_profile.assert_not_timed_out()?;
 
             let resolved = resolve(&self.range_pool, path);
-            covered = covered.saturating_add(self.emitter.emit_sampled(&resolved, window)?);
+            covered = covered.saturating_add(self.emitter.emit_window(&resolved, path, window)?);
 
             if self.emitter.is_full() {
                 break;
@@ -687,12 +904,15 @@ impl Emitter {
     }
 
     /// Emits the combinations of `ranges` whose index falls inside `window`,
-    /// in the ascending order [`emit_all`](Self::emit_all) walks them in.
+    /// in the ascending order [`emit_all`](Self::emit_all) walks them in — or,
+    /// with a [`permuter`](Self::permuter), the path's own seeded permutation
+    /// of it (`path` holds the transition ids the ranges were resolved from).
     /// Returns how many of them the window covered, the ones `offset` skipped
     /// included.
-    fn emit_sampled(
+    fn emit_window(
         &mut self,
         ranges: &[&CharRange],
+        path: &[u32],
         window: &Range<usize>,
     ) -> Result<usize, EngineError> {
         let range_lengths: Vec<u128> = ranges.iter().map(|r| r.get_cardinality() as u128).collect();
@@ -714,10 +934,22 @@ impl Emitter {
         let first = window.start.min(bound) + self.offset;
         self.offset = 0;
 
+        let tweak = self
+            .permuter
+            .as_ref()
+            .map_or(0, |permuter| permuter.path_tweak(path));
+
         for index in first..window.end.min(bound) {
             self.execution_profile.assert_not_timed_out()?;
 
-            let string = sample_string(ranges, &range_lengths, index as u128)?;
+            // The permutation reorders `[0, bound)` onto itself, so the
+            // window still covers `covered` distinct combinations — just not
+            // the ascending ones.
+            let combination = match &self.permuter {
+                Some(permuter) => permuter.permute(index as u128, bound as u128, tweak),
+                None => index as u128,
+            };
+            let string = sample_string(ranges, &range_lengths, combination)?;
             self.strings.insert(string);
 
             if self.is_full() {
@@ -752,6 +984,90 @@ fn sample_string(
 
     chars.reverse();
     Ok(chars.into_iter().collect())
+}
+
+/// A seeded family of permutations of `[0, bound)` for any `bound`, one per
+/// `tweak`, evaluated point by point: a tweaked Feistel network over the
+/// smallest even-width binary domain holding `bound`, cycle-walked back into
+/// it. Being a bijection (at any fixed tweak) is what keeps
+/// [`CharacterOrder::Shuffled`] strings distinct and `offset` exact, exactly
+/// like the ascending order it stands in for; being a fixed function of the
+/// seed is what lets a page be generated without materializing (or even
+/// visiting) the combinations around it.
+struct Permuter {
+    keys: [u64; 4],
+    tweak_key: u64,
+}
+
+impl Permuter {
+    fn new(seed: u64) -> Self {
+        // SplitMix64: one independent-looking round key per Feistel round,
+        // nearby seeds included.
+        let mut state = seed;
+        let mut keys = [0u64; 4];
+        for key in &mut keys {
+            state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            *key = mix(state);
+        }
+        let tweak_key = mix(state.wrapping_add(0x9E37_79B9_7F4A_7C15));
+        Permuter { keys, tweak_key }
+    }
+
+    /// A path's tweak: its transition ids folded through the seeded hash,
+    /// picking the path's own permutation out of the family. Without it,
+    /// same-shape alternation branches (`[a-z]{4}|[A-Z]{4}`) would emit the
+    /// same combination indices and mirror each other's strings.
+    fn path_tweak(&self, path: &[u32]) -> u64 {
+        path.iter()
+            .fold(self.tweak_key, |acc, &id| mix(acc ^ id as u64))
+    }
+
+    /// Where the `tweak`'s permutation of `[0, bound)` sends `index`; `index`
+    /// must be below `bound`.
+    fn permute(&self, index: u128, bound: u128, tweak: u64) -> u128 {
+        debug_assert!(index < bound);
+        if bound <= 1 {
+            return index;
+        }
+
+        let bits = 128 - (bound - 1).leading_zeros();
+        let half = bits.div_ceil(2);
+        let mask = (1u128 << half) - 1;
+
+        // CYCLE-WALKING: encrypt until the value falls back under `bound`.
+        // The walk follows the cycle `index` itself sits on, so it terminates
+        // (on `index`, at worst), and distinct indices — on distinct cycles
+        // or ahead of one another on the same cycle — never land on the same
+        // value. The domain is under `4 * bound`, so it takes a few steps.
+        let mut value = index;
+        loop {
+            value = self.encrypt(value, half, mask, tweak);
+            if value < bound {
+                return value;
+            }
+        }
+    }
+
+    /// One pass of the 4-round Feistel network: a bijection over
+    /// `[0, 2^(2 * half))` for any fixed `tweak`, `half` at most 64.
+    fn encrypt(&self, value: u128, half: u32, mask: u128, tweak: u64) -> u128 {
+        let mut left = value >> half;
+        let mut right = value & mask;
+        for &key in &self.keys {
+            let round = (mix(right as u64 ^ key ^ tweak) as u128) & mask;
+            (left, right) = (right, left ^ round);
+        }
+        (left << half) | right
+    }
+}
+
+/// SplitMix64's finalizer: the avalanche behind the [`Permuter`]'s round keys
+/// and round function.
+fn mix(value: u64) -> u64 {
+    let mut z = value;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
 }
 
 /// A cursor over the characters a [`CharRange`] holds, in order, opened at an
@@ -819,25 +1135,32 @@ fn char_at(range: &CharRange, ordinal: u32) -> Option<Char> {
 
 #[cfg(test)]
 mod tests {
-    use super::{GenerationOptions, GenerationOrder, RangeCursor, char_at};
+    use super::{CharacterOrder, GenerationOptions, PathOrder, Permuter, RangeCursor, char_at};
     use crate::CharRange;
     use crate::cardinality::Cardinality;
     use crate::{fast_automaton::FastAutomaton, regex::RegularExpression};
     use regex::Regex;
     use regex_charclass::{CharacterClass, char::Char, irange::range::AnyRange};
 
-    const ORDERS: [GenerationOrder; 2] = [GenerationOrder::Exhaustive, GenerationOrder::Sampled];
+    const AXES: [(PathOrder, CharacterOrder); 6] = [
+        (PathOrder::Sweep, CharacterOrder::Ascending),
+        (PathOrder::Sweep, CharacterOrder::Shuffled),
+        (PathOrder::Interleave, CharacterOrder::Ascending),
+        (PathOrder::Interleave, CharacterOrder::Shuffled),
+        (PathOrder::Shuffled, CharacterOrder::Ascending),
+        (PathOrder::Shuffled, CharacterOrder::Shuffled),
+    ];
 
-    /// Every set of options the generation tests run through: both orders,
-    /// each of them once unrestricted and once over printable ASCII, which is
-    /// narrow enough to close off transitions in most of the patterns.
+    /// Every set of options the generation tests run through: all four axis
+    /// combinations, each of them once unrestricted and once over printable
+    /// ASCII, which is narrow enough to close off transitions in most of the
+    /// patterns.
     fn all_options() -> Vec<GenerationOptions> {
-        ORDERS
-            .into_iter()
-            .flat_map(|order| {
+        AXES.into_iter()
+            .flat_map(|axes| {
                 [
-                    GenerationOptions::from(order),
-                    GenerationOptions::from(order).with_charset(printable_ascii()),
+                    GenerationOptions::from(axes),
+                    GenerationOptions::from(axes).with_charset(printable_ascii()),
                 ]
             })
             .collect()
@@ -855,8 +1178,8 @@ mod tests {
             .unwrap();
 
         let automaton = automaton.determinize().unwrap();
-        for order in ORDERS {
-            println!("{:?}", automaton.generate_strings(30, 0, order).unwrap());
+        for axes in AXES {
+            println!("{:?}", automaton.generate_strings(30, 0, axes).unwrap());
         }
 
         Ok(())
@@ -870,11 +1193,11 @@ mod tests {
             .unwrap();
 
         let automaton = automaton.determinize().unwrap();
-        for order in ORDERS {
-            let strings = automaton.generate_strings(2, 0, order).unwrap();
+        for axes in AXES {
+            let strings = automaton.generate_strings(2, 0, axes).unwrap();
             assert_eq!(2, strings.len());
 
-            let strings = automaton.generate_strings(2, 2, order).unwrap();
+            let strings = automaton.generate_strings(2, 2, axes).unwrap();
             assert_eq!(2, strings.len());
         }
 
@@ -938,75 +1261,72 @@ mod tests {
         Ok(())
     }
 
-    /// The sampled order exists so that a pattern's *shapes* get covered: what
-    /// the exhaustive order spends a million strings on (one path, every
-    /// character of its last range) has to fit in a handful of them.
+    /// The interleave order exists so that a pattern's *shapes* get covered:
+    /// what the sweep spends a million strings on (one path, every character
+    /// of its last range) has to fit in a handful of them.
     #[test]
-    fn test_generate_strings_sampled_covers_the_whole_pattern() {
+    fn test_generate_strings_interleave_covers_the_whole_pattern() {
         let automaton = automaton_of(".*abc.*").determinize().unwrap().into_owned();
 
-        let exhaustive = automaton
-            .generate_strings(20, 0, GenerationOrder::Exhaustive)
-            .unwrap();
+        let swept = automaton.generate_strings(20, 0, PathOrder::Sweep).unwrap();
         assert!(
-            exhaustive.iter().all(|s| s.starts_with("abc")),
-            "the exhaustive order stays on the first path it finds: {exhaustive:?}"
+            swept.iter().all(|s| s.starts_with("abc")),
+            "the sweep stays on the first path it finds: {swept:?}"
         );
 
-        let sampled = automaton
-            .generate_strings(20, 0, GenerationOrder::Sampled)
+        let interleaved = automaton
+            .generate_strings(20, 0, PathOrder::Interleave)
             .unwrap();
         assert!(
-            sampled.iter().any(|s| !s.starts_with("abc")),
-            "the sampled order has to reach the strings with a prefix before `abc`: {sampled:?}"
+            interleaved.iter().any(|s| !s.starts_with("abc")),
+            "the interleave order has to reach the strings with a prefix before `abc`: {interleaved:?}"
         );
         assert!(
-            sampled.iter().any(|s| !s.ends_with("abc")),
-            "the sampled order has to reach the strings with a suffix after `abc`: {sampled:?}"
+            interleaved.iter().any(|s| !s.ends_with("abc")),
+            "the interleave order has to reach the strings with a suffix after `abc`: {interleaved:?}"
         );
         assert!(
-            sampled.iter().any(|s| s.len() > 5),
-            "the sampled order has to reach longer strings too: {sampled:?}"
+            interleaved.iter().any(|s| s.len() > 5),
+            "the interleave order has to reach longer strings too: {interleaved:?}"
         );
     }
 
-    /// Sampling still enumerates a finite language in full, given the room:
-    /// the passes dig deeper into every path until nothing is left to cover.
+    /// Interleaving still enumerates a finite language in full, given the
+    /// room: the passes dig deeper into every path until nothing is left to
+    /// cover.
     #[test]
-    fn test_generate_strings_sampled_is_exhaustive_in_the_limit() {
+    fn test_generate_strings_interleave_is_exhaustive_in_the_limit() {
         let automaton = automaton_of("[a-z][0-9]");
 
-        let mut sampled = automaton
-            .generate_strings(1000, 0, GenerationOrder::Sampled)
+        let mut interleaved = automaton
+            .generate_strings(1000, 0, PathOrder::Interleave)
             .unwrap();
-        sampled.sort();
+        interleaved.sort();
 
         let mut expected: Vec<String> = ('a'..='z')
             .flat_map(|letter| ('0'..='9').map(move |digit| format!("{letter}{digit}")))
             .collect();
         expected.sort();
 
-        assert_eq!(expected, sampled);
+        assert_eq!(expected, interleaved);
     }
 
-    /// The order chooses which strings come first, never the characters they
-    /// are made of: a sampled string reaches for the same low end of each
-    /// range the exhaustive order starts from, and a charset is how specific
+    /// The path order chooses which strings come first, never the characters
+    /// they are made of: an interleaved string reaches for the same low end
+    /// of each range the sweep starts from, and a charset is how specific
     /// characters are asked for.
     #[test]
-    fn test_generate_strings_sampled_uses_the_same_characters_as_exhaustive() {
+    fn test_generate_strings_interleave_uses_the_same_characters_as_sweep() {
         let automaton = automaton_of(".{3}");
 
-        let sampled = automaton
-            .generate_strings(1, 0, GenerationOrder::Sampled)
+        let interleaved = automaton
+            .generate_strings(1, 0, PathOrder::Interleave)
             .unwrap();
-        let exhaustive = automaton
-            .generate_strings(1, 0, GenerationOrder::Exhaustive)
-            .unwrap();
-        assert_eq!(exhaustive, sampled);
+        let swept = automaton.generate_strings(1, 0, PathOrder::Sweep).unwrap();
+        assert_eq!(swept, interleaved);
 
         let lowercase = CharRange::new_from_range_char('a'..='z');
-        let options = GenerationOptions::from(GenerationOrder::Sampled).with_charset(lowercase);
+        let options = GenerationOptions::from(PathOrder::Interleave).with_charset(lowercase);
         assert_eq!(
             vec!["aaa".to_string()],
             automaton.generate_strings(1, 0, options).unwrap()
@@ -1014,29 +1334,27 @@ mod tests {
     }
 
     /// A single-path language has only one shape, so there is nothing for the
-    /// sampled order to spread over: within a path the characters come in the
-    /// lexicographic order the exhaustive order walks.
+    /// interleave order to spread over: within a path the characters come in
+    /// the lexicographic order the sweep walks.
     #[test]
-    fn test_generate_strings_sampled_matches_exhaustive_on_a_single_path() {
+    fn test_generate_strings_interleave_matches_sweep_on_a_single_path() {
         let automaton = automaton_of("[a-z]{2}");
 
-        let exhaustive = automaton
-            .generate_strings(10, 0, GenerationOrder::Exhaustive)
-            .unwrap();
-        let sampled = automaton
-            .generate_strings(10, 0, GenerationOrder::Sampled)
+        let swept = automaton.generate_strings(10, 0, PathOrder::Sweep).unwrap();
+        let interleaved = automaton
+            .generate_strings(10, 0, PathOrder::Interleave)
             .unwrap();
 
-        assert_eq!(exhaustive, sampled);
+        assert_eq!(swept, interleaved);
     }
 
-    /// The strongest form of "the order chooses which strings come first,
-    /// never the characters": on a finite language, sampled and exhaustive
-    /// enumerate exactly the same set — including through nondeterministic
-    /// automata, multi-interval charsets, and ranges straddling the surrogate
-    /// hole.
+    /// The strongest form of "the axes choose which strings come first, never
+    /// what is generated": on a finite language, every axis combination — at
+    /// any seed — enumerates exactly the same set, including through
+    /// nondeterministic automata, multi-interval charsets, and ranges
+    /// straddling the surrogate hole.
     #[test]
-    fn test_generate_strings_sampled_and_exhaustive_agree_as_sets() {
+    fn test_generate_strings_all_axes_agree_as_sets() {
         let multi_interval = CharRange::new_from_ranges(&[
             AnyRange::from(Char::new('x')..=Char::new('z')),
             AnyRange::from(Char::new('0')..=Char::new('1')),
@@ -1060,73 +1378,93 @@ mod tests {
                     automaton_of(pattern)
                 };
 
-                let options = |order| match &charset {
-                    Some(charset) => GenerationOptions::from(order).with_charset(charset.clone()),
-                    None => GenerationOptions::from(order),
+                let options = |axes, seed| {
+                    let options = GenerationOptions::from(axes).with_seed(seed);
+                    match &charset {
+                        Some(charset) => options.with_charset(charset.clone()),
+                        None => options,
+                    }
                 };
 
-                let mut exhaustive = automaton
-                    .generate_strings(100_000, 0, options(GenerationOrder::Exhaustive))
+                let mut baseline = automaton
+                    .generate_strings(100_000, 0, options(AXES[0], 0))
                     .unwrap();
-                let mut sampled = automaton
-                    .generate_strings(100_000, 0, options(GenerationOrder::Sampled))
-                    .unwrap();
+                baseline.sort();
 
-                exhaustive.sort();
-                sampled.sort();
-                assert_eq!(
-                    exhaustive, sampled,
-                    "{pattern:?} (determinized: {determinize})"
-                );
+                for axes in &AXES[1..] {
+                    for seed in [0, 1, 42] {
+                        let mut strings = automaton
+                            .generate_strings(100_000, 0, options(*axes, seed))
+                            .unwrap();
+                        strings.sort();
+
+                        assert_eq!(
+                            baseline, strings,
+                            "{pattern:?} {axes:?} seed {seed} (determinized: {determinize})"
+                        );
+                    }
+                }
             }
         }
     }
 
-    /// Sampled pages stay consistent at every chunk size, not only at the
-    /// window boundaries: an offset landing mid-window or mid-path continues
-    /// exactly where the previous page stopped.
+    /// Pages stay consistent at every chunk size under every axis
+    /// combination, not only at the window boundaries: an offset landing
+    /// mid-window or mid-path continues exactly where the previous page
+    /// stopped, never repeating a string.
     #[test]
-    fn test_generate_strings_sampled_pages_at_any_boundary() {
+    fn test_generate_strings_pages_at_any_boundary() {
         for pattern in ["(a|bc){0,3}", "[a-c]{1,3}", "(x|yy)(0|11)?"] {
             // Deterministic and minimal, so pages are exactly disjoint.
             let mut automaton = automaton_of(pattern).determinize().unwrap().into_owned();
             automaton.minimize().unwrap();
 
-            let bulk = automaton
-                .generate_strings(60, 0, GenerationOrder::Sampled)
-                .unwrap();
-
-            for chunk in 1..=7usize {
-                let mut paged = vec![];
-                loop {
-                    let page = automaton
-                        .generate_strings(chunk, paged.len(), GenerationOrder::Sampled)
-                        .unwrap();
-                    if page.is_empty() {
-                        break;
-                    }
-                    paged.extend(page);
-                    if paged.len() >= bulk.len() {
-                        break;
-                    }
-                }
-                paged.truncate(bulk.len());
-
-                assert_eq!(bulk, paged, "{pattern:?} at chunk size {chunk}");
+            for axes in AXES {
+                let options = GenerationOptions::from(axes).with_seed(7);
+                assert_pages_match_bulk(&automaton, &options, 1..=7);
             }
         }
     }
 
-    /// A path holding more combinations than `u128` fits still samples the
+    /// Rebuilds a 60-string bulk page chunk by chunk at each of the given
+    /// chunk sizes, and asserts every rebuild matches the bulk exactly.
+    fn assert_pages_match_bulk(
+        automaton: &FastAutomaton,
+        options: &GenerationOptions,
+        chunks: impl IntoIterator<Item = usize>,
+    ) {
+        let bulk = automaton.generate_strings(60, 0, options.clone()).unwrap();
+
+        for chunk in chunks {
+            let mut paged = vec![];
+            loop {
+                let page = automaton
+                    .generate_strings(chunk, paged.len(), options.clone())
+                    .unwrap();
+                if page.is_empty() {
+                    break;
+                }
+                paged.extend(page);
+                if paged.len() >= bulk.len() {
+                    break;
+                }
+            }
+            paged.truncate(bulk.len());
+
+            assert_eq!(bulk, paged, "{options:?} at chunk size {chunk}");
+        }
+    }
+
+    /// A path holding more combinations than `u128` fits still emits the
     /// ascending sequence: the decode consumes the index from the last
     /// position, so the positions it never reaches keep their range's first
     /// character.
     #[test]
-    fn test_generate_strings_sampled_orders_huge_paths() {
+    fn test_generate_strings_interleave_orders_huge_paths() {
         let automaton = automaton_of(".{40}");
 
-        let sampled = automaton
-            .generate_strings(3, 0, GenerationOrder::Sampled)
+        let interleaved = automaton
+            .generate_strings(3, 0, PathOrder::Interleave)
             .unwrap();
 
         assert_eq!(
@@ -1135,8 +1473,270 @@ mod tests {
                 format!("{}\u{1}", "\u{0}".repeat(39)),
                 format!("{}\u{2}", "\u{0}".repeat(39)),
             ],
-            sampled
+            interleaved
         );
+    }
+
+    /// Shuffling keeps the interleave order's shape-first coverage, and
+    /// actually looks random: the strings of a wide range are spread over it,
+    /// not clustered at its low end the way ascending generation starts.
+    #[test]
+    fn test_generate_strings_shuffled_covers_shapes_and_spreads_characters() {
+        let automaton = automaton_of(".*abc.*").determinize().unwrap().into_owned();
+
+        let strings = automaton
+            .generate_strings(20, 0, (PathOrder::Shuffled, CharacterOrder::Shuffled))
+            .unwrap();
+        assert!(
+            strings.iter().any(|s| !s.starts_with("abc"))
+                && strings.iter().any(|s| !s.ends_with("abc")),
+            "shuffled paths still have to cover every shape of the pattern: {strings:?}"
+        );
+
+        let strings = automaton_of("[a-z]{20}")
+            .generate_strings(5, 0, CharacterOrder::Shuffled)
+            .unwrap();
+        assert!(
+            strings
+                .iter()
+                .any(|s| s.chars().filter(|&ch| ch > 'm').count() > 5),
+            "the strings have to reach past the low end of the range: {strings:?}"
+        );
+    }
+
+    /// The seed is fixed, so shuffled generation is reproducible; a different
+    /// seed draws a different sequence of strings from the same pattern.
+    #[test]
+    fn test_generate_strings_shuffled_is_seeded() {
+        let automaton = automaton_of("[a-z]{8}");
+        let options = |seed| GenerationOptions::from(CharacterOrder::Shuffled).with_seed(seed);
+
+        let strings = automaton.generate_strings(10, 0, options(42)).unwrap();
+        assert_eq!(
+            strings,
+            automaton.generate_strings(10, 0, options(42)).unwrap()
+        );
+        assert_ne!(
+            strings,
+            automaton.generate_strings(10, 0, options(43)).unwrap()
+        );
+    }
+
+    /// Shuffled paths draw the *shapes* by seed, independently of the
+    /// characters: over ascending characters, which same-length paths a small
+    /// `limit` reaches depends on the seed instead of always being the same
+    /// ones — and the whole language still comes out, whatever the seed.
+    #[test]
+    fn test_generate_strings_shuffled_paths_draw_shapes_by_seed() {
+        let automaton = automaton_of("(aa|bb|cc|dd|ee|ff|gg|hh)");
+        let options = |seed| GenerationOptions::from(PathOrder::Shuffled).with_seed(seed);
+
+        let first = automaton.generate_strings(3, 0, options(1)).unwrap();
+        assert_eq!(first, automaton.generate_strings(3, 0, options(1)).unwrap());
+        assert!(
+            (2..20).any(|seed| automaton.generate_strings(3, 0, options(seed)).unwrap() != first),
+            "no seed reordered the shapes: {first:?}"
+        );
+
+        let mut all = automaton.generate_strings(100, 0, options(1)).unwrap();
+        all.sort();
+        assert_eq!(vec!["aa", "bb", "cc", "dd", "ee", "ff", "gg", "hh"], all);
+    }
+
+    /// The axes stay independent the other way around too: shuffling the
+    /// characters leaves the shape order alone. On single-combination paths
+    /// there is nothing for the character permutation to reorder, so
+    /// interleaved generation comes out identical with and without it.
+    #[test]
+    fn test_generate_strings_shuffled_characters_leave_the_shape_order_alone() {
+        let automaton = automaton_of("(aa|bb|cc|dd|ee|ff|gg|hh)");
+
+        let ascending = automaton
+            .generate_strings(8, 0, PathOrder::Interleave)
+            .unwrap();
+        let shuffled = automaton
+            .generate_strings(8, 0, (PathOrder::Interleave, CharacterOrder::Shuffled))
+            .unwrap();
+
+        assert_eq!(ascending, shuffled);
+    }
+
+    /// Shuffled paths over ascending characters: a seed-drawn order of
+    /// shapes, each shown as its smallest witness.
+    #[test]
+    fn test_generate_strings_shuffled_paths_keep_ascending_witnesses() {
+        let automaton = automaton_of("(aa|bb|cc)[0-9]");
+
+        for seed in [0, 1, 42] {
+            let options = GenerationOptions::from(PathOrder::Shuffled).with_seed(seed);
+            let mut strings = automaton.generate_strings(3, 0, options).unwrap();
+
+            // Whatever order the seed drew the three shapes in, the first
+            // string of each is the low end of its ranges.
+            strings.sort();
+            assert_eq!(vec!["aa0", "bb0", "cc0"], strings, "seed {seed}");
+        }
+    }
+
+    /// `with_max_length` bounds the generated string length: a deep offset
+    /// into `.*` pages within the bound instead of into arbitrarily long
+    /// strings — and comes back quickly, whatever the axes.
+    #[test]
+    fn test_generate_strings_max_length_bounds_deep_offsets() {
+        let automaton = automaton_of(".*");
+
+        for axes in AXES {
+            let options = GenerationOptions::from(axes).with_max_length(5);
+            let strings = automaton
+                .generate_strings(5, 1_000_000_000, options)
+                .unwrap();
+
+            assert!(!strings.is_empty(), "{axes:?}");
+            for string in &strings {
+                assert!(string.chars().count() <= 5, "{axes:?}: {string:?}");
+            }
+        }
+    }
+
+    /// The bounded language is a well-defined finite set: `(ab)*` under a
+    /// max of 5 stops at `abab`, and the page past it is empty, not endless.
+    #[test]
+    fn test_generate_strings_max_length_truncates_the_language() {
+        let automaton = automaton_of("(ab)*");
+
+        for axes in AXES {
+            let options = GenerationOptions::from(axes).with_max_length(5);
+            let mut strings = automaton.generate_strings(100, 0, options.clone()).unwrap();
+            strings.sort();
+            assert_eq!(vec!["", "ab", "abab"], strings, "{axes:?}");
+
+            let past_the_end = automaton.generate_strings(10, 3, options).unwrap();
+            assert!(past_the_end.is_empty(), "{axes:?}: {past_the_end:?}");
+        }
+    }
+
+    /// The bound is exactly what it says — a length: a finite language keeps
+    /// every string within it and loses every string past it.
+    #[test]
+    fn test_generate_strings_max_length_applies_to_finite_languages_too() {
+        let automaton = automaton_of("(ab){1,2}");
+
+        for axes in AXES {
+            let mut strings = automaton
+                .generate_strings(10, 0, GenerationOptions::from(axes).with_max_length(4))
+                .unwrap();
+            strings.sort();
+            assert_eq!(vec!["ab", "abab"], strings, "{axes:?}");
+
+            assert_eq!(
+                vec!["ab".to_string()],
+                automaton
+                    .generate_strings(10, 0, GenerationOptions::from(axes).with_max_length(3))
+                    .unwrap(),
+                "{axes:?}"
+            );
+        }
+    }
+
+    /// `with_min_length` leaves the short strings out: the enumeration
+    /// starts at the bound, and an empty band generates nothing.
+    #[test]
+    fn test_generate_strings_min_length_skips_short_strings() {
+        let automaton = automaton_of("(ab)*");
+
+        for axes in AXES {
+            let options = GenerationOptions::from(axes)
+                .with_min_length(3)
+                .with_max_length(8);
+            let mut strings = automaton.generate_strings(100, 0, options).unwrap();
+            strings.sort();
+            assert_eq!(vec!["abab", "ababab", "abababab"], strings, "{axes:?}");
+
+            let empty_band = GenerationOptions::from(axes)
+                .with_min_length(5)
+                .with_max_length(3);
+            assert!(
+                automaton
+                    .generate_strings(10, 0, empty_band)
+                    .unwrap()
+                    .is_empty(),
+                "{axes:?}"
+            );
+        }
+    }
+
+    /// Length bounds compose with paging: `offset` never counts the strings
+    /// outside the band, so pages of the bounded language stay consistent at
+    /// any chunk size.
+    #[test]
+    fn test_generate_strings_length_bounds_page_consistently() {
+        // Deterministic and minimal, so pages are exactly disjoint.
+        let mut automaton = automaton_of("(a|bc){0,3}")
+            .determinize()
+            .unwrap()
+            .into_owned();
+        automaton.minimize().unwrap();
+
+        for axes in AXES {
+            let options = GenerationOptions::from(axes)
+                .with_seed(7)
+                .with_min_length(2)
+                .with_max_length(4);
+
+            let bulk = automaton.generate_strings(60, 0, options.clone()).unwrap();
+            assert!(
+                bulk.iter().all(|s| (2..=4).contains(&s.chars().count())),
+                "{axes:?}: {bulk:?}"
+            );
+
+            assert_pages_match_bulk(&automaton, &options, [1, 3]);
+        }
+    }
+
+    /// The permuter maps `[0, bound)` onto itself one-to-one for any bound
+    /// and tweak — what "distinct strings across offsets" rests on.
+    #[test]
+    fn test_permuter_is_a_bijection() {
+        for seed in [0, 1, 42] {
+            let permuter = Permuter::new(seed);
+            for bound in [1u128, 2, 3, 7, 26, 100, 4096, 100_003] {
+                for tweak in [0, permuter.path_tweak(&[3, 1, 4])] {
+                    let mut images: Vec<u128> = (0..bound)
+                        .map(|index| permuter.permute(index, bound, tweak))
+                        .collect();
+                    images.sort_unstable();
+
+                    assert!(
+                        images.iter().enumerate().all(|(i, &v)| i as u128 == v),
+                        "seed {seed}, bound {bound}, tweak {tweak}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Every path draws its own permutation: alternation branches of the same
+    /// shape emit unrelated strings instead of mirroring each other's
+    /// combination indices ("knyn" next to "KNYN").
+    #[test]
+    fn test_generate_strings_shuffled_decorrelates_same_shape_branches() {
+        let automaton = automaton_of("([a-z]{6}|[A-Z]{6})");
+
+        for seed in [0, 1, 42] {
+            let options = GenerationOptions::from(CharacterOrder::Shuffled)
+                .with_paths(PathOrder::Interleave)
+                .with_seed(seed);
+            let strings = automaton.generate_strings(2, 0, options).unwrap();
+
+            let [first, second] = strings.as_slice() else {
+                panic!("expected one string per branch: {strings:?}");
+            };
+            assert_ne!(
+                first.to_lowercase(),
+                second.to_lowercase(),
+                "seed {seed}: the branches drew the same combination"
+            );
+        }
     }
 
     /// A charset rules out whole paths, not single characters: a path that
@@ -1147,13 +1747,13 @@ mod tests {
         let automaton = automaton_of("(a[0-9]b|xyz)");
         let letters = CharRange::new_from_range_char('a'..='z');
 
-        for order in ORDERS {
-            let options = GenerationOptions::from(order).with_charset(letters.clone());
+        for axes in AXES {
+            let options = GenerationOptions::from(axes).with_charset(letters.clone());
 
             assert_eq!(
                 vec!["xyz".to_string()],
                 automaton.generate_strings(10, 0, options).unwrap(),
-                "{order:?}"
+                "{axes:?}"
             );
         }
     }
@@ -1165,15 +1765,15 @@ mod tests {
         let automaton = automaton_of("[0-9]+");
         let letters = CharRange::new_from_range_char('a'..='z');
 
-        for order in ORDERS {
-            let options = GenerationOptions::from(order).with_charset(letters.clone());
+        for axes in AXES {
+            let options = GenerationOptions::from(axes).with_charset(letters.clone());
 
             assert!(
                 automaton
                     .generate_strings(10, 0, options)
                     .unwrap()
                     .is_empty(),
-                "{order:?}"
+                "{axes:?}"
             );
         }
     }
@@ -1188,13 +1788,13 @@ mod tests {
             AnyRange::from(Char::new('e')..=Char::new('e')),
         ]);
 
-        for order in ORDERS {
-            let options = GenerationOptions::from(order).with_charset(vowels.clone());
+        for axes in AXES {
+            let options = GenerationOptions::from(axes).with_charset(vowels.clone());
 
             let mut strings = automaton.generate_strings(10, 0, options).unwrap();
             strings.sort();
 
-            assert_eq!(vec!["aa", "ae", "ea", "ee"], strings, "{order:?}");
+            assert_eq!(vec!["aa", "ae", "ea", "ee"], strings, "{axes:?}");
         }
     }
 
@@ -1206,7 +1806,7 @@ mod tests {
         let total = 26usize.pow(5);
 
         let strings = automaton
-            .generate_strings(2, total - 2, GenerationOrder::Exhaustive)
+            .generate_strings(2, total - 2, PathOrder::Sweep)
             .unwrap();
 
         assert_eq!(vec!["zzzzy".to_string(), "zzzzz".to_string()], strings);
@@ -1244,11 +1844,11 @@ mod tests {
     fn test_generate_strings_limit_does_not_preallocate() {
         let automaton = automaton_of("[ab]{2}");
 
-        for order in ORDERS {
-            let mut strings = automaton.generate_strings(usize::MAX, 0, order).unwrap();
+        for axes in AXES {
+            let mut strings = automaton.generate_strings(usize::MAX, 0, axes).unwrap();
             strings.sort();
 
-            assert_eq!(vec!["aa", "ab", "ba", "bb"], strings, "{order:?}");
+            assert_eq!(vec!["aa", "ab", "ba", "bb"], strings, "{axes:?}");
         }
     }
 
@@ -1258,11 +1858,11 @@ mod tests {
     fn test_generate_strings_very_long_string() {
         let automaton = automaton_of("[ab]{20000}");
 
-        for order in ORDERS {
-            let strings = automaton.generate_strings(2, 0, order).unwrap();
-            assert_eq!(2, strings.len(), "{order:?}");
+        for axes in AXES {
+            let strings = automaton.generate_strings(2, 0, axes).unwrap();
+            assert_eq!(2, strings.len(), "{axes:?}");
             for string in &strings {
-                assert_eq!(20_000, string.len(), "{order:?}");
+                assert_eq!(20_000, string.len(), "{axes:?}");
             }
         }
     }
