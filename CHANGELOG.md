@@ -5,7 +5,7 @@ All notable changes to this crate are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] - upcoming 1.0.0
+## [1.0.0] - 2026-08-08
 
 This is a major redesign of the public API around the `Term` enum (wrapping
 either a `RegularExpression` or a `FastAutomaton`), which dispatches each
@@ -156,4 +156,5 @@ Releases prior to 1.0.0 (`v0.1.0` through `v0.3.1`) predate this changelog;
 see the [GitHub tags](https://github.com/RegexSolver/regexsolver/tags) and
 commit history for details.
 
-[Unreleased]: https://github.com/RegexSolver/regexsolver/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/RegexSolver/regexsolver/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/RegexSolver/regexsolver/compare/v0.3.1...v1.0.0
