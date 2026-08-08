@@ -7,8 +7,8 @@ pub struct FastBitVec {
 impl std::fmt::Display for FastBitVec {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         for i in 0..self.n {
-            let bit = if self.get(i).unwrap() { 1 } else { 0 };
-            write!(f, "{}", bit)?;
+            let bit = if self.get(i) { 1 } else { 0 };
+            write!(f, "{bit}")?;
         }
         Ok(())
     }
@@ -17,7 +17,11 @@ impl std::fmt::Display for FastBitVec {
 impl FastBitVec {
     #[inline]
     pub fn from_elem(n: usize, bit: bool) -> Self {
-        let nblocks = if n % 64 == 0 { n / 64 } else { n / 64 + 1 };
+        let nblocks = if n.is_multiple_of(64) {
+            n / 64
+        } else {
+            n / 64 + 1
+        };
         let bits = vec![if bit { !0_u64 } else { 0_u64 }; nblocks];
         let mut bit_vec = FastBitVec { bits, n };
         bit_vec.fix_last_block();
@@ -48,17 +52,16 @@ impl FastBitVec {
     }
 
     #[inline]
-    pub fn get(&self, i: usize) -> Option<bool> {
-        if i >= self.n {
-            return None;
-        }
+    pub fn get(&self, i: usize) -> bool {
+        assert!(i < self.n, "The provided bit index is out of bound.");
         let w = i / 64;
         let b = i % 64;
-        self.bits.get(w).map(|&block| (block & (1 << b)) != 0)
+        (self.bits[w] & (1 << b)) != 0
     }
 
     #[inline]
     pub fn set(&mut self, i: usize, x: bool) {
+        assert!(i < self.n, "The provided bit index is out of bound.");
         let w = i / 64;
         let b = i % 64;
         let flag = 1 << b;
@@ -78,8 +81,22 @@ impl FastBitVec {
         self.fix_last_block();
     }
 
+    /// The binary operations combine blocks pairwise with `zip`, which would
+    /// silently truncate to the shorter operand if two bitvectors built over
+    /// different spanning sets were ever combined, producing a wrong
+    /// language instead of a loud failure. Catch that in debug builds (and
+    /// therefore in every test run).
+    #[inline]
+    fn assert_same_len(&self, other: &Self) {
+        debug_assert_eq!(
+            self.n, other.n,
+            "conditions built over different spanning sets cannot be combined"
+        );
+    }
+
     #[inline]
     pub fn union(&mut self, other: &Self) {
+        self.assert_same_len(other);
         for (a, b) in self.bits.iter_mut().zip(&other.bits) {
             let w = *a | b;
             *a = w;
@@ -88,6 +105,7 @@ impl FastBitVec {
 
     #[inline]
     pub fn intersection(&mut self, other: &Self) {
+        self.assert_same_len(other);
         for (a, b) in self.bits.iter_mut().zip(&other.bits) {
             let w = *a & b;
             *a = w;
@@ -95,7 +113,16 @@ impl FastBitVec {
     }
 
     #[inline]
+    pub fn difference(&mut self, other: &Self) {
+        self.assert_same_len(other);
+        for (a, b) in self.bits.iter_mut().zip(&other.bits) {
+            *a &= !b;
+        }
+    }
+
+    #[inline]
     pub fn has_intersection(&self, other: &Self) -> bool {
+        self.assert_same_len(other);
         for (a, b) in self.bits.iter().zip(&other.bits) {
             if *a & b != 0 {
                 return true;
@@ -123,11 +150,32 @@ impl FastBitVec {
         (!0) >> ((64 - bits % 64) % 64)
     }
 
-    pub fn get_bits(&self) -> Vec<bool> {
-        let mut hot_bits = Vec::with_capacity(self.n);
+    pub fn bits(&self) -> Vec<bool> {
+        let mut bits = Vec::with_capacity(self.n);
         for i in 0..self.n {
-            hot_bits.push(self.get(i).unwrap());
+            bits.push(self.get(i));
         }
-        hot_bits
+        bits
+    }
+
+    /// Iterates the indices of the set bits in ascending order, word-wise
+    /// (no allocation).
+    #[inline]
+    pub fn iter_set_bits(&self) -> impl Iterator<Item = usize> + '_ {
+        self.bits
+            .iter()
+            .enumerate()
+            .flat_map(|(word_index, &word)| {
+                let mut remaining = word;
+                std::iter::from_fn(move || {
+                    if remaining == 0 {
+                        None
+                    } else {
+                        let bit = remaining.trailing_zeros() as usize;
+                        remaining &= remaining - 1;
+                        Some(word_index * 64 + bit)
+                    }
+                })
+            })
     }
 }

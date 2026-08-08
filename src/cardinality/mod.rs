@@ -1,10 +1,5 @@
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
-
-/// Represent a number.
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+/// Represents a cardinality: either a specific integer, a number too large to represent exactly, or infinite.
 #[derive(PartialEq, Eq, Debug, Clone)]
-#[cfg_attr(feature = "serde", serde(tag = "type", content = "value"))]
 pub enum Cardinality<U> {
     /// An infinite number.
     Infinite,

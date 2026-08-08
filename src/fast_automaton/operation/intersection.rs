@@ -1,32 +1,113 @@
+use std::borrow::Cow;
+
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
 use condition::converter::ConditionConverter;
 
-use crate::{error::EngineError, execution_profile::ThreadLocalParams};
+use crate::{error::EngineError, execution_profile::ExecutionProfile};
 
 use super::*;
 
 impl FastAutomaton {
-    pub fn intersection(&self, other: &FastAutomaton) -> Result<FastAutomaton, EngineError> {
-        if self.is_empty() || other.is_empty() {
-            return Ok(Self::new_empty());
-        } else if self.is_total() {
-            return Ok(other.clone());
-        } else if other.is_total() {
-            return Ok(self.clone());
+    /// Computes the intersection between `self` and `other`.
+    pub fn intersection(&self, other: &FastAutomaton) -> Result<Self, EngineError> {
+        FastAutomaton::intersection_all([self, other])
+    }
+
+    /// Computes the intersection of all automata in the given iterator.
+    #[tracing::instrument(level = "debug", skip_all)]
+    pub fn intersection_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(
+        automata: I,
+    ) -> Result<Self, EngineError> {
+        let mut result: Cow<'a, FastAutomaton> = Cow::Owned(FastAutomaton::new_total());
+
+        for automaton in automata {
+            result = result.intersection_internal(automaton)?;
+
+            if result.is_empty() {
+                break;
+            }
         }
-        let execution_profile = ThreadLocalParams::get_execution_profile();
 
-        let new_spanning_set = self.spanning_set.merge(&other.spanning_set);
+        Ok(result.into_owned())
+    }
 
-        let condition_converter_self_to_new =
-            ConditionConverter::new(&self.spanning_set, &new_spanning_set)?;
-        let condition_converter_other_to_new =
-            ConditionConverter::new(&other.spanning_set, &new_spanning_set)?;
+    /// Computes in parallel the intersection of all automata in the given iterator.
+    ///
+    /// Only available with the `parallel` feature (enabled by default).
+    #[cfg(feature = "parallel")]
+    #[tracing::instrument(level = "debug", skip_all)]
+    pub fn intersection_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(
+        automata: I,
+    ) -> Result<Self, EngineError> {
+        let execution_profile = ExecutionProfile::get();
+
+        let total = FastAutomaton::new_total();
+
+        automata
+            .into_par_iter()
+            .try_fold(
+                || total.clone(),
+                |acc, next| {
+                    execution_profile.apply(|| Ok(acc.intersection_internal(next)?.into_owned()))
+                },
+            )
+            .try_reduce(
+                || total.clone(),
+                |acc, next| {
+                    execution_profile.apply(|| Ok(acc.intersection_internal(&next)?.into_owned()))
+                },
+            )
+    }
+
+    fn intersection_internal<'a>(
+        &self,
+        other: &'a FastAutomaton,
+    ) -> Result<Cow<'a, FastAutomaton>, EngineError> {
+        if self.is_empty() || other.is_empty() {
+            return Ok(Cow::Owned(Self::new_empty()));
+        } else if self.is_total() {
+            return Ok(Cow::Borrowed(other));
+        } else if other.is_total() {
+            return Ok(Cow::Owned(self.clone()));
+        }
+        let execution_profile = ExecutionProfile::get();
+
+        // Equal spanning sets (the dominant case in operation chains) need no
+        // merge and no condition projection at all.
+        let same_spanning_set = self.spanning_set == other.spanning_set;
+        let new_spanning_set = if same_spanning_set {
+            self.spanning_set.clone()
+        } else {
+            self.spanning_set.merge(&other.spanning_set)
+        };
+
+        let condition_converter_self_to_new = if same_spanning_set {
+            None
+        } else {
+            Some(ConditionConverter::new(
+                &self.spanning_set,
+                &new_spanning_set,
+            )?)
+        };
+        let condition_converter_other_to_new = if same_spanning_set {
+            None
+        } else {
+            Some(ConditionConverter::new(
+                &other.spanning_set,
+                &new_spanning_set,
+            )?)
+        };
+
+        let mut projected_self: IntMap<State, Vec<(Condition, State)>> = IntMap::default();
+        let mut projected_other: IntMap<State, Vec<(Condition, State)>> = IntMap::default();
 
         let mut new_automaton = FastAutomaton::new_empty();
         let mut worklist =
-            VecDeque::with_capacity(self.get_number_of_states() + other.get_number_of_states());
+            VecDeque::with_capacity(self.number_of_states() + other.number_of_states());
         let mut new_states: AHashMap<(usize, usize), (usize, usize, usize), _> =
-            AHashMap::with_capacity(self.get_number_of_states() + other.get_number_of_states());
+            AHashMap::with_capacity(self.number_of_states() + other.number_of_states());
 
         let initial_pair = (
             new_automaton.start_state,
@@ -39,60 +120,89 @@ impl FastAutomaton {
 
         while let Some(p) = worklist.pop_front() {
             execution_profile.assert_not_timed_out()?;
+            execution_profile.assert_max_number_of_states(new_states.len())?;
             if self.accept_states.contains(&p.1) && other.accept_states.contains(&p.2) {
                 new_automaton.accept(p.0);
             }
 
-            let transitions_1 =
-                self.get_projected_transitions(p.1, &condition_converter_self_to_new)?;
-            let transitions_2 =
-                other.get_projected_transitions(p.2, &condition_converter_other_to_new)?;
+            let transitions_1 = self.projected_transitions(
+                &mut projected_self,
+                p.1,
+                condition_converter_self_to_new.as_ref(),
+            )?;
+            let transitions_2 = other.projected_transitions(
+                &mut projected_other,
+                p.2,
+                condition_converter_other_to_new.as_ref(),
+            )?;
 
-            for (n1, condition_1) in transitions_1 {
-                for (n2, condition_2) in &transitions_2 {
+            for (condition_1, n1) in transitions_1 {
+                for (condition_2, n2) in transitions_2 {
                     let intersection = condition_1.intersection(condition_2);
                     if intersection.is_empty() {
                         continue;
                     }
-                    let k = (n1, *n2);
+                    let k = (*n1, *n2);
                     let r = match new_states.get(&k) {
                         Some(new_r) => *new_r,
                         None => {
-                            let new_r = (new_automaton.new_state(), n1, *n2);
+                            let new_r = (new_automaton.new_state(), *n1, *n2);
                             worklist.push_back(new_r);
                             new_states.insert(k, new_r);
                             new_r
                         }
                     };
-                    new_automaton.add_transition_to(p.0, r.0, &intersection);
+                    new_automaton.add_transition(p.0, r.0, &intersection);
                 }
             }
         }
         new_automaton.spanning_set = new_spanning_set;
-        new_automaton.remove_dead_transitions();
-        Ok(new_automaton)
+        new_automaton.remove_dead_states();
+        Ok(Cow::Owned(new_automaton))
     }
 
+    /// Returns `true` if the two automata have a non-empty intersection.
+    #[tracing::instrument(level = "debug", skip_all, fields(self_states = self.number_of_states(), other_states = other.number_of_states()))]
     pub fn has_intersection(&self, other: &FastAutomaton) -> Result<bool, EngineError> {
         if self.is_empty() || other.is_empty() {
             return Ok(false);
         } else if self.is_total() || other.is_total() {
             return Ok(true);
         }
-        let execution_profile = ThreadLocalParams::get_execution_profile();
+        let execution_profile = ExecutionProfile::get();
 
-        let new_spanning_set = self.spanning_set.merge(&other.spanning_set);
+        let same_spanning_set = self.spanning_set == other.spanning_set;
+        let new_spanning_set = if same_spanning_set {
+            self.spanning_set.clone()
+        } else {
+            self.spanning_set.merge(&other.spanning_set)
+        };
 
-        let condition_converter_self_to_new =
-            ConditionConverter::new(&self.spanning_set, &new_spanning_set)?;
-        let condition_converter_other_to_new =
-            ConditionConverter::new(&other.spanning_set, &new_spanning_set)?;
+        let condition_converter_self_to_new = if same_spanning_set {
+            None
+        } else {
+            Some(ConditionConverter::new(
+                &self.spanning_set,
+                &new_spanning_set,
+            )?)
+        };
+        let condition_converter_other_to_new = if same_spanning_set {
+            None
+        } else {
+            Some(ConditionConverter::new(
+                &other.spanning_set,
+                &new_spanning_set,
+            )?)
+        };
+
+        let mut projected_self: IntMap<State, Vec<(Condition, State)>> = IntMap::default();
+        let mut projected_other: IntMap<State, Vec<(Condition, State)>> = IntMap::default();
 
         let mut new_automaton = FastAutomaton::new_empty();
         let mut worklist =
-            VecDeque::with_capacity(self.get_number_of_states() + other.get_number_of_states());
+            VecDeque::with_capacity(self.number_of_states() + other.number_of_states());
         let mut new_states: AHashMap<(usize, usize), (usize, usize, usize), _> =
-            AHashMap::with_capacity(self.get_number_of_states() + other.get_number_of_states());
+            AHashMap::with_capacity(self.number_of_states() + other.number_of_states());
 
         let initial_pair = (
             new_automaton.start_state,
@@ -105,52 +215,69 @@ impl FastAutomaton {
 
         while let Some(p) = worklist.pop_front() {
             execution_profile.assert_not_timed_out()?;
+            execution_profile.assert_max_number_of_states(new_states.len())?;
             if self.accept_states.contains(&p.1) && other.accept_states.contains(&p.2) {
                 return Ok(true);
             }
 
-            let transitions_1 =
-                self.get_projected_transitions(p.1, &condition_converter_self_to_new)?;
-            let transitions_2 =
-                other.get_projected_transitions(p.2, &condition_converter_other_to_new)?;
+            let transitions_1 = self.projected_transitions(
+                &mut projected_self,
+                p.1,
+                condition_converter_self_to_new.as_ref(),
+            )?;
+            let transitions_2 = other.projected_transitions(
+                &mut projected_other,
+                p.2,
+                condition_converter_other_to_new.as_ref(),
+            )?;
 
-            for (n1, condition_1) in transitions_1 {
-                for (n2, condition_2) in &transitions_2 {
+            for (condition_1, n1) in transitions_1 {
+                for (condition_2, n2) in transitions_2 {
                     let intersection = condition_1.intersection(condition_2);
                     if intersection.is_empty() {
                         continue;
                     }
-                    let k = (n1, *n2);
+                    let k = (*n1, *n2);
                     let r = match new_states.get(&k) {
                         Some(new_r) => *new_r,
                         None => {
-                            let new_r = (new_automaton.new_state(), n1, *n2);
+                            let new_r = (new_automaton.new_state(), *n1, *n2);
                             worklist.push_back(new_r);
                             new_states.insert(k, new_r);
                             new_r
                         }
                     };
-                    new_automaton.add_transition_to(p.0, r.0, &intersection);
+                    new_automaton.add_transition(p.0, r.0, &intersection);
                 }
             }
         }
         Ok(false)
     }
 
-    fn get_projected_transitions(
+    /// Returns `state`'s outgoing transitions projected on the operation's
+    /// spanning set (`condition_converter` is `None` when both inputs already
+    /// share it), memoized in `cache`: a component state participates in up
+    /// to |other| product pairs, and projecting it once instead of once per
+    /// pair keeps the product construction's inner loop allocation-free.
+    fn projected_transitions<'m>(
         &self,
+        cache: &'m mut IntMap<State, Vec<(Condition, State)>>,
         state: State,
-        condition_converter: &ConditionConverter,
-    ) -> Result<Vec<(State, Condition)>, EngineError> {
-        let transitions_1: Result<Vec<_>, EngineError> = self
-            .transitions_from_state_enumerate_iter(&state)
-            .map(|(&s, c)| match condition_converter.convert(c) {
-                Ok(condition) => Ok((s, condition)),
-                Err(err) => Err(err),
-            })
-            .collect();
-
-        transitions_1
+        condition_converter: Option<&ConditionConverter>,
+    ) -> Result<&'m Vec<(Condition, State)>, EngineError> {
+        match cache.entry(state) {
+            Entry::Occupied(o) => Ok(o.into_mut()),
+            Entry::Vacant(v) => {
+                let transitions: Result<Vec<_>, EngineError> = self
+                    .transitions_from(state)
+                    .map(|(c, &s)| match condition_converter {
+                        Some(converter) => converter.convert(c).map(|c| (c, s)),
+                        None => Ok((c.clone(), s)),
+                    })
+                    .collect();
+                Ok(v.insert(transitions?))
+            }
+        }
     }
 }
 
@@ -158,102 +285,143 @@ impl FastAutomaton {
 mod tests {
     use crate::regex::RegularExpression;
 
+    // `has_intersection` must enforce the state budget like `intersection`,
+    // so the product pair map cannot grow unchecked.
     #[test]
-    fn test_simple_intersection_regex_1() -> Result<(), String> {
-        let automaton1 = RegularExpression::new("(abc|ac|aaa)")
+    fn has_intersection_respects_state_budget() {
+        use crate::error::EngineError;
+        use crate::execution_profile::ExecutionProfileBuilder;
+
+        let a = RegularExpression::parse("abcd", false)
             .unwrap()
             .to_automaton()
             .unwrap();
-        let automaton2 = RegularExpression::new("(abcd|ac|aba)")
+        let b = RegularExpression::parse("abcd", false)
+            .unwrap()
+            .to_automaton()
+            .unwrap();
+
+        let result = ExecutionProfileBuilder::new()
+            .max_number_of_states(2)
+            .build()
+            .run(|| a.has_intersection(&b));
+        assert!(matches!(
+            result,
+            Err(EngineError::AutomatonHasTooManyStates)
+        ));
+    }
+
+    // a* ∩ a* = a*: the intersection keeps the (infinite) looping language.
+    #[test]
+    fn intersection_keeps_infinite_language() {
+        let a_star = RegularExpression::parse("a*", false)
+            .unwrap()
+            .to_automaton()
+            .unwrap();
+
+        let inter = a_star.intersection(&a_star).unwrap();
+        assert!(inter.is_match(""));
+        assert!(inter.is_match("aaaaaaaa"));
+        assert!(!inter.is_match("b"));
+        assert!(inter.equivalent(&a_star).unwrap());
+    }
+
+    #[test]
+    fn test_simple_intersection_regex_1() -> Result<(), String> {
+        let automaton1 = RegularExpression::parse("(abc|ac|aaa)", false)
+            .unwrap()
+            .to_automaton()
+            .unwrap();
+        let automaton2 = RegularExpression::parse("(abcd|ac|aba)", false)
             .unwrap()
             .to_automaton()
             .unwrap();
         let intersection = automaton1.intersection(&automaton2).unwrap();
 
-        assert!(intersection.match_string("ac"));
-        assert!(!intersection.match_string("abc"));
-        assert!(!intersection.match_string("aaa"));
-        assert!(!intersection.match_string("abcd"));
-        assert!(!intersection.match_string("aba"));
+        assert!(intersection.is_match("ac"));
+        assert!(!intersection.is_match("abc"));
+        assert!(!intersection.is_match("aaa"));
+        assert!(!intersection.is_match("abcd"));
+        assert!(!intersection.is_match("aba"));
         Ok(())
     }
 
     #[test]
     fn test_simple_intersection_regex_2() -> Result<(), String> {
-        let automaton1 = RegularExpression::new("a*")
+        let automaton1 = RegularExpression::parse("a*", false)
             .unwrap()
             .to_automaton()
             .unwrap();
-        let automaton2 = RegularExpression::new("b*")
+        let automaton2 = RegularExpression::parse("b*", false)
             .unwrap()
             .to_automaton()
             .unwrap();
         let intersection = automaton1.intersection(&automaton2).unwrap();
 
-        assert!(intersection.match_string(""));
-        assert!(!intersection.match_string("a"));
-        assert!(!intersection.match_string("b"));
+        assert!(intersection.is_match(""));
+        assert!(!intersection.is_match("a"));
+        assert!(!intersection.is_match("b"));
         Ok(())
     }
 
     #[test]
     fn test_simple_intersection_regex_3() -> Result<(), String> {
-        let automaton1 = RegularExpression::new("x*")
+        let automaton1 = RegularExpression::parse("x*", false)
             .unwrap()
             .to_automaton()
             .unwrap();
-        let automaton2 = RegularExpression::new("(xxx)*")
+        let automaton2 = RegularExpression::parse("(xxx)*", false)
             .unwrap()
             .to_automaton()
             .unwrap();
         let intersection = automaton1.intersection(&automaton2).unwrap();
 
-        assert!(intersection.match_string(""));
-        assert!(intersection.match_string("xxx"));
-        assert!(intersection.match_string("xxxxxx"));
-        assert!(!intersection.match_string("xx"));
-        assert!(!intersection.match_string("xxxx"));
+        assert!(intersection.is_match(""));
+        assert!(intersection.is_match("xxx"));
+        assert!(intersection.is_match("xxxxxx"));
+        assert!(!intersection.is_match("xx"));
+        assert!(!intersection.is_match("xxxx"));
         Ok(())
     }
 
     #[test]
     fn test_complex_intersection_regex_1() -> Result<(), String> {
-        let automaton1 = RegularExpression::new(".*(abc|ac|aaa)")
+        let automaton1 = RegularExpression::parse(".*(abc|ac|aaa)", false)
             .unwrap()
             .to_automaton()
             .unwrap();
-        let automaton2 = RegularExpression::new("(abcd|ac|aba)")
+        let automaton2 = RegularExpression::parse("(abcd|ac|aba)", false)
             .unwrap()
             .to_automaton()
             .unwrap();
         let intersection = automaton1.intersection(&automaton2).unwrap();
 
-        assert!(intersection.match_string("ac"));
-        assert!(!intersection.match_string("aaac"));
-        assert!(!intersection.match_string("abc"));
-        assert!(!intersection.match_string("aaa"));
-        assert!(!intersection.match_string("abcd"));
-        assert!(!intersection.match_string("aba"));
+        assert!(intersection.is_match("ac"));
+        assert!(!intersection.is_match("aaac"));
+        assert!(!intersection.is_match("abc"));
+        assert!(!intersection.is_match("aaa"));
+        assert!(!intersection.is_match("abcd"));
+        assert!(!intersection.is_match("aba"));
         Ok(())
     }
 
     #[test]
     fn test_complex_intersection_regex_2() -> Result<(), String> {
-        let automaton1 = RegularExpression::new("(?:[a-z0-9]+(?:\\.[a-z0-9]+)*|\"(?:[\\x01-\\x08\\x0b\\x0c\\x0e-\\x1f\\x21\\x23-\\x5b\\x5d-\\x7f]|\\\\[\\x01-\\x09\\x0b\\x0c\\x0e-\\x7f])*\")@(?:(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?|\\[(?:(?:(2(5[0-5]|[0-4][0-9])|1[0-9][0-9]|[1-9]?[0-9]))\\.){3}(?:(2(5[0-5]|[0-4][0-9])|1[0-9][0-9]|[1-9]?[0-9])|[a-z0-9-]*[a-z0-9]:(?:[\\x01-\\x08\\x0b\\x0c\\x0e-\\x1f\\x21-\\x5a\\x53-\\x7f]|\\\\[\\x01-\\x09\\x0b\\x0c\\x0e-\\x7f])+)\\])")
+        let automaton1 = RegularExpression::parse("(?:[a-z0-9]+(?:\\.[a-z0-9]+)*|\"(?:[\\x01-\\x08\\x0b\\x0c\\x0e-\\x1f\\x21\\x23-\\x5b\\x5d-\\x7f]|\\\\[\\x01-\\x09\\x0b\\x0c\\x0e-\\x7f])*\")@(?:(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?|\\[(?:(?:(2(5[0-5]|[0-4][0-9])|1[0-9][0-9]|[1-9]?[0-9]))\\.){3}(?:(2(5[0-5]|[0-4][0-9])|1[0-9][0-9]|[1-9]?[0-9])|[a-z0-9-]*[a-z0-9]:(?:[\\x01-\\x08\\x0b\\x0c\\x0e-\\x1f\\x21-\\x5a\\x53-\\x7f]|\\\\[\\x01-\\x09\\x0b\\x0c\\x0e-\\x7f])+)\\])", false)
             .unwrap()
             .to_automaton().unwrap();
-        let automaton2 = RegularExpression::new("avb@.*")
+        let automaton2 = RegularExpression::parse("avb@.*", false)
             .unwrap()
             .to_automaton()
             .unwrap();
 
-        automaton1.to_dot();
-        automaton2.to_dot();
+        automaton1.print_dot();
+        automaton2.print_dot();
         let intersection = automaton1.intersection(&automaton2).unwrap();
 
         assert!(!intersection.is_empty());
 
-        assert!(intersection.match_string("avb@gmail.com"));
+        assert!(intersection.is_match("avb@gmail.com"));
         Ok(())
     }
 }

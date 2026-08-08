@@ -1,62 +1,73 @@
 use std::fmt::{self};
 
-use crate::tokenizer::token::TokenError;
-
 /// An error thrown by the engine.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EngineError {
     /// Invalid character used in regex.
     InvalidCharacterInRegex,
     /// The operation took too much time.
     OperationTimeOutError,
-    /// The given automaton should be deterministic.
-    AutomatonShouldBeDeterministic,
     /// The automaton has too many states.
     AutomatonHasTooManyStates,
-    /// The regular expression can not be parsed.
+    /// The regular expression cannot be parsed.
     RegexSyntaxError(String),
-    /// Too many terms are used in the operation.
-    TooMuchTerms(usize, usize),
-    /// The provided range can not be built from the spanning set.
+    /// The provided range cannot be built from the spanning set.
     ConditionInvalidRange,
-    /// The provided index is out of bound of the condition.
-    ConditionIndexOutOfBound,
-    /// There is an error with one of the token.
-    TokenError(TokenError),
+    /// The repetition bounds are invalid: the maximum is below the minimum.
+    InvalidRepetitionBounds(u32, u32),
+    /// The condition does not match the spanning set it is evaluated against.
+    IncompatibleSpanningSet,
+    /// The operation requires a deterministic automaton, and implicit
+    /// determinization is disabled by the execution profile.
+    DeterministicAutomatonRequired,
+    /// The pattern uses a regex feature the engine cannot represent (an
+    /// unsupported anchor/boundary position, or inline flags). The string
+    /// describes the specific feature.
+    UnsupportedRegexFeature(String),
+    /// A directly-constructed [`RegularExpression`](crate::regex::RegularExpression)
+    /// tree nests deeper than the engine converts safely (the payload is the
+    /// limit). Parsed patterns never hit this; it only guards against
+    /// stack-overflowing on pathologically deep hand-built trees.
+    RegexTooDeeplyNested(usize),
 }
 
 impl fmt::Display for EngineError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            EngineError::InvalidCharacterInRegex => write!(f, "Invalid character used in regex."),
-            EngineError::OperationTimeOutError => write!(f, "The operation took too much time."),
-            EngineError::AutomatonShouldBeDeterministic => write!(f, "The given automaton should be deterministic."),
-            EngineError::AutomatonHasTooManyStates => write!(f, "The automaton has too many states."),
-            EngineError::RegexSyntaxError(err) => write!(f, "{err}."),
-            EngineError::TooMuchTerms(max, got) => write!(f, "Too many terms are used in this operation, the maximum allowed for your plan is {max} and you used {got}."),
-            EngineError::TokenError(err) =>  write!(f, "{err}."),
-            EngineError::ConditionInvalidRange => write!(f, "The provided range can not be built from the spanning set."),
-            EngineError::ConditionIndexOutOfBound => write!(f, "The provided index is out of bound of the condition."),
+            EngineError::InvalidCharacterInRegex => {
+                write!(f, "invalid character used in regex")
+            }
+            EngineError::OperationTimeOutError => write!(f, "the operation timed out"),
+            EngineError::AutomatonHasTooManyStates => {
+                write!(f, "the automaton has too many states")
+            }
+            EngineError::RegexSyntaxError(err) => write!(f, "invalid regex syntax: {err}"),
+            EngineError::ConditionInvalidRange => write!(
+                f,
+                "the provided range cannot be built from the spanning set"
+            ),
+            EngineError::InvalidRepetitionBounds(min, max) => write!(
+                f,
+                "the repetition maximum ({max}) is below its minimum ({min})"
+            ),
+            EngineError::IncompatibleSpanningSet => write!(
+                f,
+                "the condition does not match the spanning set it is evaluated against"
+            ),
+            EngineError::DeterministicAutomatonRequired => write!(
+                f,
+                "the operation requires a deterministic automaton, and implicit determinization is disabled by the execution profile"
+            ),
+            EngineError::UnsupportedRegexFeature(feature) => {
+                write!(f, "unsupported regex feature: {feature}")
+            }
+            EngineError::RegexTooDeeplyNested(limit) => write!(
+                f,
+                "the regular expression is nested more than {limit} levels deep"
+            ),
         }
     }
 }
 
 impl std::error::Error for EngineError {}
-
-impl EngineError {
-    /// Determine if the error is a server error.
-    /// A server error should not be shown to the end user.
-    pub fn is_server_error(&self) -> bool {
-        match self {
-            EngineError::InvalidCharacterInRegex => false,
-            EngineError::OperationTimeOutError => false,
-            EngineError::AutomatonShouldBeDeterministic => true,
-            EngineError::AutomatonHasTooManyStates => false,
-            EngineError::RegexSyntaxError(_) => false,
-            EngineError::TooMuchTerms(_, _) => false,
-            EngineError::TokenError(_) => false,
-            EngineError::ConditionInvalidRange => true,
-            EngineError::ConditionIndexOutOfBound => true,
-        }
-    }
-}

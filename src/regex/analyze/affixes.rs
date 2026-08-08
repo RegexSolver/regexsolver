@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use super::*;
 
 impl RegularExpression {
-    pub fn get_common_affixes(
+    pub(crate) fn get_common_affixes(
         &self,
         other: &RegularExpression,
     ) -> (
@@ -21,7 +21,7 @@ impl RegularExpression {
         (common_prefix, (self_regex, other_regex), common_suffix)
     }
 
-    pub fn get_common_affix(
+    pub(crate) fn get_common_affix(
         &self,
         other: &RegularExpression,
         is_prefix: bool,
@@ -46,27 +46,27 @@ impl RegularExpression {
         let other_regex;
 
         match (self, other) {
-            (RegularExpression::Concat(_), _) => {
+            (RegularExpression::Concat(..), _) => {
                 (common_affix, (self_regex, other_regex)) =
                     Self::opaffix_concat_and_other(self, other, is_prefix);
             }
-            (_, RegularExpression::Concat(_)) => {
+            (_, RegularExpression::Concat(..)) => {
                 (common_affix, (other_regex, self_regex)) =
                     Self::opaffix_concat_and_other(other, self, is_prefix);
             }
-            (RegularExpression::Character(_), RegularExpression::Repetition(_, _, _)) => {
+            (RegularExpression::Character(..), RegularExpression::Repetition(..)) => {
                 (common_affix, (self_regex, other_regex)) =
                     Self::opaffix_character_and_repetition(self, other);
             }
-            (RegularExpression::Repetition(_, _, _), RegularExpression::Character(_)) => {
+            (RegularExpression::Repetition(..), RegularExpression::Character(..)) => {
                 (common_affix, (other_regex, self_regex)) =
                     Self::opaffix_character_and_repetition(other, self);
             }
-            (RegularExpression::Repetition(_, _, _), RegularExpression::Repetition(_, _, _)) => {
+            (RegularExpression::Repetition(..), RegularExpression::Repetition(..)) => {
                 (common_affix, (self_regex, other_regex)) =
                     Self::opaffix_repetition_and_repetition(self, other);
             }
-            (RegularExpression::Alternation(_), RegularExpression::Alternation(_)) => {
+            (RegularExpression::Alternation(..), RegularExpression::Alternation(..)) => {
                 (common_affix, (self_regex, other_regex)) =
                     Self::opaffix_alternation_and_alternation(self, other);
             }
@@ -86,11 +86,17 @@ impl RegularExpression {
         (RegularExpression, RegularExpression),
     ) {
         if let (
-            RegularExpression::Character(_),
+            RegularExpression::Character(..),
             RegularExpression::Repetition(that_regex, that_min, that_max_opt),
         ) = (this_character, that_repetition)
         {
-            if this_character == &**that_regex && *that_min == 1 {
+            // The `max != 0` guard keeps a directly-constructed invalid
+            // repetition (`r{1,0}`) from underflowing; such trees are
+            // rejected by `to_automaton`, the simplifier just must not panic.
+            if this_character == &**that_regex
+                && *that_min == 1
+                && that_max_opt.is_none_or(|that_max| that_max >= 1)
+            {
                 let new_max = that_max_opt.as_ref().map(|that_max| that_max - 1);
                 (
                     Some(this_character.clone()),
@@ -119,7 +125,14 @@ impl RegularExpression {
             RegularExpression::Repetition(that_regex, that_min, that_max_opt),
         ) = (this_repetition, that_repetition)
         {
-            if this_regex == that_regex {
+            // As in `opaffix_character_and_repetition`: directly-constructed
+            // degenerate bounds (`r{5,2}`) must not reach the affix
+            // arithmetic below, whose `max - prefix_max` subtractions rely on
+            // `max >= min` on both sides. Such trees are rejected by
+            // `to_automaton`; the simplifier just must not panic.
+            let degenerate_bounds = this_max_opt.is_some_and(|this_max| this_max < *this_min)
+                || that_max_opt.is_some_and(|that_max| that_max < *that_min);
+            if this_regex == that_regex && !degenerate_bounds {
                 let prefix_min = *cmp::min(this_min, that_min);
                 let prefix_max_opt;
                 if this_min == that_min {
@@ -285,6 +298,7 @@ mod tests {
         assert_regex_affix(true, "(ab|cd)x", "(ab|cd)y", "(ab|cd)", "x", "y");
 
         assert_regex_affix(true, "a+", "a+b", "a+", "", "b");
+        assert_regex_affix(true, "(ab|cd)", "(ab|cd)", "(ab|cd)", "", "");
 
         Ok(())
     }

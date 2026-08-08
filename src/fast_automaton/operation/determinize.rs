@@ -1,98 +1,141 @@
-use ahash::HashMapExt;
+use bit_set::BitSet;
 
-use crate::{execution_profile::ThreadLocalParams, EngineError};
+use crate::{EngineError, execution_profile::ExecutionProfile};
 
 use super::*;
 
 impl FastAutomaton {
-    pub fn determinize(&self) -> Result<Self, EngineError> {
-        if self.deterministic {
-            return Ok(self.clone());
+    /// [`determinize`](Self::determinize) on behalf of an operation that
+    /// requires a deterministic automaton: when the execution profile
+    /// disables implicit determinization, a non-deterministic input is
+    /// rejected with [`EngineError::DeterministicAutomatonRequired`] instead
+    /// of being converted. Already-deterministic automata always pass.
+    pub(crate) fn determinize_implicit(&self) -> Result<Cow<'_, Self>, EngineError> {
+        if !self.deterministic {
+            ExecutionProfile::get().assert_implicit_determinization_allowed()?;
         }
-        let execution_profile = ThreadLocalParams::get_execution_profile();
+        self.determinize()
+    }
 
-        let ranges = self.get_ranges()?;
+    /// Determinizes the automaton and returns the result.
+    #[tracing::instrument(level = "debug", skip_all, fields(states = self.number_of_states(), deterministic = self.is_deterministic()))]
+    pub fn determinize(&self) -> Result<Cow<'_, Self>, EngineError> {
+        if self.deterministic {
+            return Ok(Cow::Borrowed(self));
+        }
+        let execution_profile = ExecutionProfile::get();
 
-        let initial_vec = VecDeque::from(vec![self.start_state]);
+        let bases = self.spanning_bases()?;
 
-        let mut worklist = VecDeque::with_capacity(self.get_number_of_states());
+        let mut worklist = VecDeque::with_capacity(self.number_of_states());
 
-        let map_capacity = (self.get_number_of_states() as f64 / 0.75).ceil() as usize;
-        let mut new_states = IntMap::with_capacity(map_capacity);
+        let map_capacity = (self.number_of_states() as f64 / 0.75).ceil() as usize;
+        let mut new_states = AHashMap::with_capacity(map_capacity);
+
+        let mut accept_states = BitSet::new();
+        for &state in &self.accept_states {
+            accept_states.insert(state);
+        }
 
         let mut new_automaton = FastAutomaton::new_empty();
         new_automaton.spanning_set = self.spanning_set.clone();
 
-        worklist.push_back((vec![self.start_state], new_automaton.start_state));
-        new_states.insert(Self::simple_hash(&initial_vec), new_automaton.start_state);
+        let mut initial_state = BitSet::new();
+        initial_state.insert(self.start_state);
 
-        let mut new_states_to_add = VecDeque::with_capacity(self.get_number_of_states());
+        worklist.push_back((initial_state.clone(), new_automaton.start_state));
+        new_states.insert(initial_state, new_automaton.start_state);
+
+        // Per-base successor subsets, reused across popped subsets. Base `b`
+        // of the spanning set is exactly bit `b` of a condition, so one sweep
+        // over the subset's transitions distributes each target into the
+        // bases its condition covers.
+        let mut base_targets: Vec<BitSet> = vec![BitSet::new(); bases.len()];
         while let Some((states, r)) = worklist.pop_front() {
             execution_profile.assert_not_timed_out()?;
+            execution_profile.assert_max_number_of_states(new_states.len())?;
 
-            for state in &states {
-                if self.accept_states.contains(state) {
-                    new_automaton.accept_states.insert(r);
-                    break;
-                }
+            if !states.is_disjoint(&accept_states) {
+                new_automaton.accept(r);
             }
 
-            for base in &ranges {
-                for from_state in &states {
-                    for (to_state, cond) in self.transitions_from_state_enumerate_iter(from_state) {
-                        if cond.has_intersection(base) {
-                            match new_states_to_add.binary_search(to_state) {
-                                Ok(_) => {} // element already in vector @ `pos`
-                                Err(pos) => new_states_to_add.insert(pos, *to_state),
-                            };
-                        }
+            for from_state in &states {
+                for (cond, to_state) in self.transitions_from(from_state) {
+                    for base_index in cond.iter_set_bits() {
+                        base_targets[base_index].insert(*to_state);
                     }
                 }
-                if !new_states_to_add.is_empty() {
-                    let q = match new_states.entry(Self::simple_hash(&new_states_to_add)) {
-                        Entry::Occupied(o) => *o.get(),
-                        Entry::Vacant(v) => {
-                            let new_q = new_automaton.new_state();
-                            worklist
-                                .push_back((new_states_to_add.iter().cloned().collect(), new_q));
-                            v.insert(new_q);
-                            new_q
-                        }
-                    };
+            }
 
-                    new_automaton.add_transition_to(r, q, base);
+            // Base index order keeps the resulting state numbering
+            // deterministic.
+            for (targets, base) in base_targets.iter_mut().zip(&bases) {
+                if targets.is_empty() {
+                    continue;
                 }
-                new_states_to_add.clear();
+                // Once the construction converges, the subset usually
+                // already exists: look it up first so the hit path pays
+                // no `BitSet` clone (the entry API would need an owned
+                // key), and only clone-free-insert on a miss.
+                if let Some(&q) = new_states.get(targets) {
+                    targets.clear();
+
+                    new_automaton.add_transition(r, q, base);
+                } else {
+                    let new_q = new_automaton.new_state();
+                    let subset = std::mem::take(targets);
+                    new_states.insert(subset.clone(), new_q);
+                    worklist.push_back((subset, new_q));
+
+                    new_automaton.add_transition(r, new_q, base);
+                }
             }
         }
-        Ok(new_automaton)
-    }
 
-    fn simple_hash(list: &VecDeque<usize>) -> u64 {
-        let mut hasher = AHasher::default();
-        for &item in list {
-            hasher.write_usize(item);
-        }
-        hasher.finish()
+        Ok(Cow::Owned(new_automaton))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::CharRange;
+    use crate::fast_automaton::FastAutomaton;
+    use crate::fast_automaton::condition::Condition;
+    use crate::fast_automaton::spanning_set::SpanningSet;
     use crate::regex::RegularExpression;
+    use regex_charclass::char::Char;
 
+    // Subset construction iterates `spanning_bases`, which must include the
+    // spanning set's "rest" range: otherwise a transition whose condition
+    // lies in the rest range would be dropped, giving a DFA with a smaller
+    // language than the input NFA.
     #[test]
-    fn test_determinize_1() -> Result<(), String> {
-        let automaton = RegularExpression::new(".*ab")
-            .unwrap()
-            .to_automaton()
-            .unwrap();
+    fn determinize_keeps_rest_range_transitions() {
+        let rng = |c: char| {
+            let c = Char::new(c);
+            CharRange::new_from_range(c..=c)
+        };
+        let ss = SpanningSet::compute_spanning_set(&[rng('a'), rng('b')]);
+        let rest = ss.rest().clone();
 
-        let deterministic_automaton = automaton.determinize().unwrap();
+        let mut a = FastAutomaton::new_empty();
+        a.apply_new_spanning_set(&ss).unwrap();
+        a.new_state();
+        a.add_transition(0, 1, &Condition::from_range(&rest, &ss).unwrap()); // 0 -[^ab]-> 1
+        a.add_transition(1, 0, &Condition::from_range(&rng('a'), &ss).unwrap());
+        a.add_transition(1, 1, &Condition::from_range(&rng('a'), &ss).unwrap()); // nondeterministic
+        a.accept(1);
 
-        assert!(deterministic_automaton.is_determinitic());
+        assert!(!a.is_deterministic());
+        assert!(a.is_match("\u{0}"), "a should accept a [^ab] character");
 
-        Ok(())
+        let d = a.determinize().unwrap();
+        assert!(d.is_deterministic());
+        assert!(
+            d.is_match("\u{0}"),
+            "determinize dropped the [^ab] transition"
+        );
+        assert!(a.equivalent(&d).unwrap());
     }
 
     #[test]
@@ -112,22 +155,22 @@ mod tests {
 
     fn assert_determinization(regex: &str) {
         println!(":{}", regex);
-        let automaton = RegularExpression::new(regex)
+        let automaton = RegularExpression::parse(regex, false)
             .unwrap()
             .to_automaton()
             .unwrap();
-        //automaton.compute_determinization_cost();
-        //println!("Determinization Cost: {:?}", automaton.determinisation_cost);
-        println!("States Before: {}", automaton.get_number_of_states());
+        println!("States Before: {}", automaton.number_of_states());
         let deterministic_automaton = automaton.determinize().unwrap();
         println!(
             "States After: {}",
-            deterministic_automaton.get_number_of_states()
+            deterministic_automaton.number_of_states()
         );
-        assert!(deterministic_automaton.is_determinitic());
-        assert!(automaton
-            .subtraction(&deterministic_automaton)
-            .unwrap()
-            .is_empty());
+        assert!(deterministic_automaton.is_deterministic());
+        assert!(
+            automaton
+                .difference(&deterministic_automaton)
+                .unwrap()
+                .is_empty()
+        );
     }
 }

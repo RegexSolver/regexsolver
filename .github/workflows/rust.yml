@@ -2,23 +2,68 @@ name: Rust
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main", "v1"]
   pull_request:
-    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
+  RUSTDOCFLAGS: -D warnings
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --all-features --verbose
-    - name: Test & Lint
-      run: |
-        cargo test --all-features
-        cargo clippy --all-features
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Build
+        run: cargo build --locked --verbose
+      - name: Test & Lint
+        run: |
+          cargo test --locked
+          cargo clippy --locked --all-targets -- -D warnings
+      - name: Test & Lint (no default features)
+        run: |
+          cargo test --locked --no-default-features
+          cargo clippy --locked --no-default-features --all-targets -- -D warnings
+      - name: Docs
+        run: cargo doc --locked --no-deps
+
+  # Keep the declared `rust-version` (MSRV) honest, for both feature configs.
+  msrv:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      # Single source of truth: the MSRV comes from Cargo.toml.
+      - name: Read MSRV from Cargo.toml
+        id: msrv
+        run: echo "msrv=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: ${{ steps.msrv.outputs.msrv }}
+      - name: Check on MSRV
+        run: |
+          cargo check --locked --all-features
+          cargo check --locked --no-default-features
+
+  audit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write # audit-check files an issue when a vulnerability is found
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
