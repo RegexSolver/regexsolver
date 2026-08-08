@@ -34,7 +34,7 @@ assert_eq!(both.generate_strings(2, 0, PathOrder::Sweep)?, ["xyxy", "abxy"]);
 
 Under the hood, every pattern compiles to a finite automaton:
 
-<p align="center"><img src="https://raw.githubusercontent.com/RegexSolver/regexsolver/refs/heads/v1/assets/automaton.svg" alt="the minimal automaton for text containing abc then def"/></p>
+<p align="center"><img src="https://github.com/RegexSolver/regexsolver/blob/main/assets/automaton.svg" alt="the minimal automaton for text containing abc then def"/></p>
 <p align="center"><sub>The minimal automaton for <code>.*abc.*def.*</code> (text containing <code>abc</code> then <code>def</code>), rendered from this library's <code>to_dot()</code>.</sub></p>
 
 ## Try it
