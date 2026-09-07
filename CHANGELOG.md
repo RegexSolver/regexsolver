@@ -10,6 +10,7 @@ A maintenance release covering dependencies and packaging. The public API is unc
 
 ### Changed
 - Updated `regex-charclass` to 1.2 and `regex-syntax` to 0.8.11. The `regex-charclass` `ucd-16` feature is now named explicitly, so its Unicode tables match the ones `regex-syntax` parses with. If the two disagree, a character class such as `\p{Greek}` is printed back as a raw list of ranges instead of its name.
+- Updated `bit-set` to 0.11.
 - The crate is now `#![forbid(unsafe_code)]`. It already contained no `unsafe`.
 - The README is an overview rather than a reference. The full semantics list, the Unicode version in force, the hand-built-automaton and AST walkthroughs, and two of the three `ExecutionProfile` examples now live in the crate documentation, which already carried most of them.
 - `Cargo.toml` publishes from an `include` allowlist rather than an `exclude` denylist, and declares the docs.rs metadata that builds the documentation with all features enabled.
