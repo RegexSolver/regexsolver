@@ -25,9 +25,7 @@ pub enum PathOrder {
     Sweep,
     /// A few strings per path before moving to the next one, so `.*abc.*`
     /// yields `abc` and a string for each of the other shapes (`abc\u{0}`,
-    /// `\u{0}abc`, ...) — the shapes the pattern allows, instead of a million
-    /// variations of one of them, which is what makes it usable to derive
-    /// test cases.
+    /// `\u{0}abc`, ...) instead of a million variations of one of them.
     ///
     /// Shape comes first: the strings cover every path the automaton holds
     /// before any path is asked for a second one, so a `limit` smaller than
@@ -41,30 +39,23 @@ pub enum PathOrder {
     Interleave,
     /// [`Interleave`](Self::Interleave), with same-length paths visited in an
     /// order drawn by the seed ([`GenerationOptions::with_seed`], 0 by
-    /// default) instead of a fixed one: which *shapes* a small `limit`
-    /// reaches looks random too. Shorter paths still come first — on an
-    /// infinite language the search has to stay shortest-first to ever emit
-    /// anything — so the seed only draws among paths of equal length.
+    /// default) instead of a fixed one. Shorter paths still come first, since
+    /// the search has to stay shortest-first to emit anything at all on an
+    /// infinite language, so the seed only draws among paths of equal length.
     ///
-    /// The draw within a length is a randomized *cascade*, not a uniform
+    /// The draw within a length is a randomized cascade rather than a uniform
     /// shuffle: the seed randomizes the pop order of the underlying
-    /// shortest-first search, and a path only becomes available once its
-    /// whole prefix chain has popped. A shape branching off an
-    /// already-visited path is ready immediately, while one that shares
-    /// nothing has to win a tie draw per prefix — on `.*abc.*`, `abc·x`
-    /// (one expansion past `abc` itself) leads more often than `x·abc`. The
-    /// bias fades as the pass proceeds, and coverage is untouched: every
-    /// shape still comes before any shape's second string. A uniform draw
-    /// would need every same-length path materialized before emitting any,
-    /// which an unbounded, incrementally-discovered path set rules out.
+    /// shortest-first search, and a path only becomes available once its whole
+    /// prefix chain has popped, so a shape branching off an already-visited
+    /// path leads more often than one sharing nothing with it. Coverage is
+    /// untouched, every shape still coming before any shape's second string.
     ///
     /// Independent of [`CharacterOrder`]: shuffled paths over
     /// [`Ascending`](CharacterOrder::Ascending) characters yield each drawn
-    /// shape's smallest witness; pair with
-    /// [`CharacterOrder::Shuffled`] for fully random-looking test cases.
-    /// Deterministic for a given seed, and pages with `offset` like the
-    /// other orders; offsets are only consistent between calls sharing the
-    /// seed.
+    /// shape's smallest witness; pair with [`CharacterOrder::Shuffled`] for
+    /// fully random-looking test cases. Deterministic for a given seed, and
+    /// pages with `offset` like the other orders; offsets are only consistent
+    /// between calls sharing the seed.
     Shuffled,
 }
 
@@ -80,22 +71,21 @@ pub enum PathOrder {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum CharacterOrder {
     /// Each position expanded from the low end of its character range first:
-    /// `[a-z]{8}` yields `aaaaaaaa`, `aaaaaaab`, ... A stable, spec-defined
-    /// order — the smallest witnesses of a path come first.
+    /// `[a-z]{8}` yields `aaaaaaaa`, `aaaaaaab`, ... A stable, documented
+    /// order: the smallest witnesses of a path come first.
     #[default]
     Ascending,
-    /// A seeded permutation of each path's combinations — `[a-z]{8}` yields
-    /// something like `sjtwsive` rather than `aaaaaaaa`: the strings drawn
-    /// from each shape look like real inputs. To draw the *shapes* by the
-    /// seed too, pair with [`PathOrder::Shuffled`].
+    /// A seeded permutation of each path's combinations, so `[a-z]{8}` yields
+    /// something like `sjtwsive` rather than `aaaaaaaa`. To draw the *shapes*
+    /// by the seed too, pair with [`PathOrder::Shuffled`].
     ///
     /// Random in look only: the seed ([`GenerationOptions::with_seed`], 0 by
-    /// default) picks one fixed permutation, so generation is reproducible,
-    /// pages with `offset` like [`Ascending`](Self::Ascending), and — the
-    /// permutation being a bijection — never repeats a string across offsets
-    /// any more than it does. Offsets are only consistent between calls
-    /// sharing the seed. Unlike [`Ascending`](Self::Ascending)'s, the exact
-    /// sequence is implementation-defined: it may change between releases.
+    /// default) picks one fixed permutation, so generation is reproducible and
+    /// pages with `offset` like [`Ascending`](Self::Ascending). The
+    /// permutation is a bijection, so it repeats no more strings across
+    /// offsets than `Ascending` does. Offsets are only consistent between
+    /// calls sharing the seed, and unlike `Ascending`'s the exact sequence is
+    /// implementation-defined: it may change between releases.
     Shuffled,
 }
 
@@ -105,9 +95,9 @@ pub enum CharacterOrder {
 /// set grows as it fills.
 const STRINGS_CAPACITY_LIMIT: usize = 1 << 12;
 
-/// How much a [`PathCache`] may hold — a finite language can still have far
-/// more paths than fit in memory. Past these, recording gives up and the
-/// later interleave passes search the automaton again: time spent instead of
+/// How much a [`PathCache`] may hold: a finite language can still have far
+/// more paths than fit in memory. Past these, recording gives up and the later
+/// interleave passes search the automaton again, spending time instead of
 /// memory.
 const CACHE_IDS_LIMIT: usize = 1 << 20;
 const CACHE_PATHS_LIMIT: usize = 1 << 17;
@@ -153,8 +143,8 @@ impl PartialOrd for QueueItem {
 /// axes), the characters it may use, and the string lengths it is confined
 /// to.
 ///
-/// Either axis converts into it — so one can be passed on its own wherever
-/// options are expected, the other keeping its default — and so does a
+/// Either axis converts into it, so one can be passed on its own wherever
+/// options are expected and the other keeps its default; so does a
 /// `(PathOrder, CharacterOrder)` pair.
 ///
 /// # Examples
@@ -238,9 +228,9 @@ impl GenerationOptions {
     /// path draws and [`CharacterOrder::Shuffled`]'s permutation from `seed`;
     /// generation using neither ignores it.
     ///
-    /// The default seed is 0 — a fixed seed, not a random one, so two calls
-    /// with the same options generate the same strings and `offset` pages
-    /// through them consistently. Change the seed to draw a different
+    /// The default seed is 0, a fixed seed rather than a random one, so two
+    /// calls with the same options generate the same strings and `offset`
+    /// pages through them consistently. Change the seed to draw a different
     /// sequence of strings from the same pattern.
     pub fn with_seed(mut self, seed: u64) -> Self {
         self.seed = seed;
@@ -250,7 +240,7 @@ impl GenerationOptions {
     /// Returns a copy of these options generating only strings at least
     /// `min_length` characters long: the shorter strings the automaton
     /// matches are left out of the enumeration, `offset` never counting
-    /// them. 0 — every string — by default.
+    /// them. 0 by default, which keeps every string.
     pub fn with_min_length(mut self, min_length: usize) -> Self {
         self.min_length = min_length;
         self
@@ -259,9 +249,9 @@ impl GenerationOptions {
     /// Returns a copy of these options generating only strings at most
     /// `max_length` characters long: the longer strings the automaton
     /// matches are left out of the enumeration, `offset` never counting
-    /// them. Unbounded by default — and without a bound, a deep `offset`
-    /// into a looping language (`.*`) pages into arbitrarily long strings,
-    /// so bound it when the offset is not under your control.
+    /// them. Unbounded by default; without a bound, a deep `offset` into a
+    /// looping language (`.*`) pages into arbitrarily long strings, so set one
+    /// when the offset is not under your control.
     ///
     /// A bound below `min_length` leaves nothing to generate.
     pub fn with_max_length(mut self, max_length: usize) -> Self {
@@ -347,7 +337,7 @@ impl FastAutomaton {
     ///
     /// [`GenerationOptions::with_min_length`] and
     /// [`with_max_length`](GenerationOptions::with_max_length) confine the
-    /// enumeration to a band of string lengths — without a max, a deep
+    /// enumeration to a band of string lengths. Without a max, a deep
     /// `offset` into a looping language (`.*`) pages into arbitrarily long
     /// strings. Generation runs under the active [`ExecutionProfile`]: its
     /// timeout aborts with [`EngineError::OperationTimeOutError`].
@@ -441,7 +431,7 @@ struct Generation<'a> {
     max_len: usize,
     /// Length of the shortest string generation may emit
     /// ([`GenerationOptions::min_length`]); the search still walks the
-    /// shorter accepting paths — they lead to long enough ones — it just
+    /// shorter accepting paths, since they lead to long enough ones, it just
     /// does not emit them.
     min_len: usize,
     /// The characters each transition stands for, resolved once: the paths
@@ -471,8 +461,8 @@ struct Emitter {
     execution_profile: ExecutionProfile,
 }
 
-/// The accepting paths an interleave pass popped, in pop order — flat, path `i`
-/// being `ids[starts[i]..starts[i + 1]]`. A pass that runs out of paths has
+/// The accepting paths an interleave pass popped, in pop order, flattened so
+/// that path `i` is `ids[starts[i]..starts[i + 1]]`. A pass that runs out of paths has
 /// recorded all of them, and the passes after it replay the cache instead of
 /// searching the automaton again.
 struct PathCache {
@@ -522,7 +512,7 @@ impl PathCache {
 /// What every transition condition leaves once the charset is taken out.
 /// Resolved up front rather than as the walk reaches them, so that the search
 /// already knows which transitions are impassable: a pool of the non-empty
-/// ranges, and each condition's index into it — `None` for the conditions the
+/// ranges, and each condition's index into it, `None` for the conditions the
 /// charset leaves nothing of.
 fn resolve_ranges<'a>(
     automaton: &'a FastAutomaton,
@@ -677,8 +667,8 @@ impl<'a> Generation<'a> {
         {
             self.emitter.execution_profile.assert_not_timed_out()?;
 
-            // A path shorter than `min_len` is walked — its extensions are
-            // long enough — but never emitted, recorded, or counted.
+            // A path shorter than `min_len` is walked, since its extensions
+            // are long enough, but never emitted, recorded, or counted.
             if automaton.is_accepted(state) && current_depth >= self.min_len {
                 if let Some(cache) = cache.as_deref_mut() {
                     cache.record(&ranges);
@@ -769,9 +759,9 @@ impl<'a> Generation<'a> {
 
     /// The tie of a path extended by `range_id` into `to_state`: the parent's
     /// tie folded with a seeded hash of the transition, so equal-score paths
-    /// pop in an order the seed draws — the cascade documented on
-    /// [`PathOrder::Shuffled`]. 0 — fall through to the deterministic
-    /// tie-breaks — without a [`shape_key`](Self::shape_key).
+    /// pop in an order the seed draws, the cascade documented on
+    /// [`PathOrder::Shuffled`]. Without a [`shape_key`](Self::shape_key) it is
+    /// 0, falling through to the deterministic tie-breaks.
     fn tie(&self, parent: u64, range_id: u32, to_state: State) -> u64 {
         match self.shape_key {
             Some(key) => mix(parent ^ mix(key ^ ((range_id as u64) << 32) ^ to_state as u64)),
@@ -904,7 +894,7 @@ impl Emitter {
     }
 
     /// Emits the combinations of `ranges` whose index falls inside `window`,
-    /// in the ascending order [`emit_all`](Self::emit_all) walks them in — or,
+    /// in the ascending order [`emit_all`](Self::emit_all) walks them in, or,
     /// with a [`permuter`](Self::permuter), the path's own seeded permutation
     /// of it (`path` holds the transition ids the ranges were resolved from).
     /// Returns how many of them the window covered, the ones `offset` skipped
@@ -943,7 +933,7 @@ impl Emitter {
             self.execution_profile.assert_not_timed_out()?;
 
             // The permutation reorders `[0, bound)` onto itself, so the
-            // window still covers `covered` distinct combinations — just not
+            // window still covers `covered` distinct combinations, just not
             // the ascending ones.
             let combination = match &self.permuter {
                 Some(permuter) => permuter.permute(index as u128, bound as u128, tweak),
@@ -1036,9 +1026,9 @@ impl Permuter {
 
         // CYCLE-WALKING: encrypt until the value falls back under `bound`.
         // The walk follows the cycle `index` itself sits on, so it terminates
-        // (on `index`, at worst), and distinct indices — on distinct cycles
-        // or ahead of one another on the same cycle — never land on the same
-        // value. The domain is under `4 * bound`, so it takes a few steps.
+        // (on `index`, at worst), and distinct indices never land on the same
+        // value, whether they sit on distinct cycles or ahead of one another
+        // on the same one. The domain is under `4 * bound`, so it takes a few steps.
         let mut value = index;
         loop {
             value = self.encrypt(value, half, mask, tweak);
@@ -1349,8 +1339,8 @@ mod tests {
     }
 
     /// The strongest form of "the axes choose which strings come first, never
-    /// what is generated": on a finite language, every axis combination — at
-    /// any seed — enumerates exactly the same set, including through
+    /// what is generated": on a finite language, every axis combination, at
+    /// any seed, enumerates exactly the same set, including through
     /// nondeterministic automata, multi-interval charsets, and ranges
     /// straddling the surrogate hole.
     #[test]
@@ -1525,7 +1515,7 @@ mod tests {
     /// Shuffled paths draw the *shapes* by seed, independently of the
     /// characters: over ascending characters, which same-length paths a small
     /// `limit` reaches depends on the seed instead of always being the same
-    /// ones — and the whole language still comes out, whatever the seed.
+    /// ones, and the whole language still comes out, whatever the seed.
     #[test]
     fn test_generate_strings_shuffled_paths_draw_shapes_by_seed() {
         let automaton = automaton_of("(aa|bb|cc|dd|ee|ff|gg|hh)");
@@ -1580,7 +1570,7 @@ mod tests {
 
     /// `with_max_length` bounds the generated string length: a deep offset
     /// into `.*` pages within the bound instead of into arbitrarily long
-    /// strings — and comes back quickly, whatever the axes.
+    /// strings, and comes back quickly, whatever the axes.
     #[test]
     fn test_generate_strings_max_length_bounds_deep_offsets() {
         let automaton = automaton_of(".*");
@@ -1615,7 +1605,7 @@ mod tests {
         }
     }
 
-    /// The bound is exactly what it says — a length: a finite language keeps
+    /// The bound is exactly what it says, a length: a finite language keeps
     /// every string within it and loses every string past it.
     #[test]
     fn test_generate_strings_max_length_applies_to_finite_languages_too() {
@@ -1694,7 +1684,7 @@ mod tests {
     }
 
     /// The permuter maps `[0, bound)` onto itself one-to-one for any bound
-    /// and tweak — what "distinct strings across offsets" rests on.
+    /// and tweak, which is what "distinct strings across offsets" rests on.
     #[test]
     fn test_permuter_is_a_bijection() {
         for seed in [0, 1, 42] {

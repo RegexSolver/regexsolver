@@ -11,10 +11,33 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTDOCFLAGS: -D warnings
 
 jobs:
-  build:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+
+      # `--all-targets` also builds the examples and the benchmark, which are
+      # otherwise only compiled by clippy.
+      - name: Test with default features
+        run: cargo test --locked --all-targets
+      - name: Test with no default features
+        run: cargo test --locked --no-default-features --all-targets
+
+      # `--all-targets` skips doctests, and the public API is documented with
+      # them.
+      - name: Doctests
+        run: cargo test --locked --doc
+
+  lint:
+    name: Format and Clippy
     runs-on: ubuntu-latest
 
     steps:
@@ -23,40 +46,73 @@ jobs:
         with:
           toolchain: stable
           components: rustfmt, clippy
-      - name: Format
-        run: cargo fmt --all -- --check
-      - name: Build
-        run: cargo build --locked --verbose
-      - name: Test & Lint
-        run: |
-          cargo test --locked
-          cargo clippy --locked --all-targets -- -D warnings
-      - name: Test & Lint (no default features)
-        run: |
-          cargo test --locked --no-default-features
-          cargo clippy --locked --no-default-features --all-targets -- -D warnings
-      - name: Docs
-        run: cargo doc --locked --no-deps
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
 
-  # Keep the declared `rust-version` (MSRV) honest, for both feature configs.
-  msrv:
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Clippy (no default features)
+        run: cargo clippy --locked --no-default-features --all-targets -- -D warnings
+
+  docs:
+    name: Documentation
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      # Single source of truth: the MSRV comes from Cargo.toml.
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+
+      # Nightly with `--cfg docsrs`, to match how docs.rs builds the crate.
+      - name: Build documentation
+        run: cargo doc --locked --all-features --no-deps
+        env:
+          RUSTDOCFLAGS: --cfg docsrs -D warnings
+
+  # Keep the declared `rust-version` (MSRV) honest, for both feature configs.
+  msrv:
+    name: Minimum supported Rust version
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      # Single source of truth: the MSRV comes from Cargo.toml. It is passed as
+      # an input rather than as the action ref, because a numeric ref such as
+      # `dtolnay/rust-toolchain@1.88` looks like an action version to Dependabot.
       - name: Read MSRV from Cargo.toml
         id: msrv
         run: echo "msrv=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: ${{ steps.msrv.outputs.msrv }}
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+
       - name: Check on MSRV
         run: |
           cargo check --locked --all-features
           cargo check --locked --no-default-features
 
+  package:
+    name: Package
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+
+      # Catches an `include` in Cargo.toml that leaves a file the crate needs
+      # out of the published tarball.
+      - name: Dry-run publish
+        run: cargo publish --locked --dry-run
+
   audit:
+    name: Audit
     runs-on: ubuntu-latest
     permissions:
       contents: read

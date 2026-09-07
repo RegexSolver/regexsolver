@@ -22,7 +22,7 @@ impl RegularExpression {
                         return (None, None);
                     }
                     if *max == 0 {
-                        // r⁰ = {""} regardless of the inner expression —
+                        // r⁰ = {""} regardless of the inner expression,
                         // including an unbounded one, which the general path
                         // below would report as having no maximum length.
                         return (Some(0), Some(0));

@@ -381,7 +381,7 @@ mod tests {
 
         // Operands whose start has incoming edges AND whose accept states have
         // outgoing edges: the `min == 0` construction allocates a fresh start
-        // with no incoming edges, and the metadata must say so — keeping the
+        // with no incoming edges, and the metadata must say so; keeping the
         // flag set overcounted the following concatenation by one state.
         assert_number_of_states_in_nfa("(a*ba*){2,}");
         assert_number_of_states_in_nfa("(a*ba*){5,}");
@@ -489,9 +489,9 @@ mod tests {
     }
 
     // Directly-constructed (unsimplified) repetitions over {""}
-    // sub-expressions — shapes the string parser simplifies away, but any
-    // user of the public enum can build — must not drive the abstract state
-    // count to zero, which would underflow the merge discounts.
+    // sub-expressions, shapes the string parser simplifies away but any user
+    // of the public enum can build, must not drive the abstract state count to
+    // zero, which would underflow the merge discounts.
     #[test]
     fn degenerate_repetitions_do_not_underflow() {
         use std::collections::VecDeque;
@@ -547,8 +547,8 @@ mod tests {
             CharRange::new_from_range(c..=c)
         }
 
-        /// Regular-expression trees built directly over the enum — covering
-        /// shapes the string parser simplifies away — with occasional huge
+        /// Regular-expression trees built directly over the enum, covering
+        /// shapes the string parser simplifies away, with occasional huge
         /// repetition bounds to exercise the saturating arithmetic.
         fn arb_regex_tree() -> impl Strategy<Value = RegularExpression> {
             let leaf = prop_oneof![
@@ -589,8 +589,8 @@ mod tests {
             /// The estimate must never *under*-estimate: the state budget
             /// rejects a pattern when the estimate exceeds it, so an
             /// under-estimate would let an oversized construction through
-            /// (the denial-of-service direction). It must also never panic —
-            /// huge (but parseable) bounds have to saturate, not overflow.
+            /// (the denial-of-service direction). It must also never panic:
+            /// huge but parseable bounds have to saturate, not overflow.
             ///
             /// Exactness (`==`) intentionally is not asserted here: the
             /// estimate is exact for the deterministic corpus above but only

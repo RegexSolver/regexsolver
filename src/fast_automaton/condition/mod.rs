@@ -380,14 +380,14 @@ mod tests {
         let spanning_set = spanning_set();
 
         for range in get_test_cases_range() {
-            assert_range_convertion_to_range(&range, &spanning_set);
-            assert_range_convertion_to_range(&range.complement(), &spanning_set);
+            assert_range_conversion_to_range(&range, &spanning_set);
+            assert_range_conversion_to_range(&range.complement(), &spanning_set);
         }
 
         Ok(())
     }
 
-    fn assert_range_convertion_to_range(range: &CharRange, spanning_set: &SpanningSet) {
+    fn assert_range_conversion_to_range(range: &CharRange, spanning_set: &SpanningSet) {
         let condition = Condition::from_range(range, spanning_set).unwrap();
         let range_from_condition = condition.to_range(spanning_set).unwrap();
         assert_eq!(range, &range_from_condition);

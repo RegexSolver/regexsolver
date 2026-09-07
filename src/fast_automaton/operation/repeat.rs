@@ -197,9 +197,8 @@ impl FastAutomaton {
         let mut current_states = v_original;
         let in_deg_start = self.in_degree(self.start_state) > 0;
 
-        // --- REUSE CONCAT HEURISTIC HERE ---
-        // Calculate the state delta for a single concatenation. The concat
-        // heuristic short-circuits to a *smaller* value than `v_original`
+        // The state delta for a single concatenation, reusing the concat
+        // heuristic. It short-circuits to a *smaller* value than `v_original`
         // for degenerate languages (∅ → 1, {""} → the operand size), so the
         // delta must saturate: `repeat_mut` early-returns for those inputs
         // right after this estimate anyway.

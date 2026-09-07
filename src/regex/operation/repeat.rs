@@ -42,7 +42,7 @@ impl RegularExpression {
                         (Some(o_max), Some(i_max)) => o_max.checked_mul(*i_max).map(Some),
                         // 0·∞ = 0: an inner maximum of 0 pins the product at
                         // zero no matter how many copies the unbounded outer
-                        // count allows — `(a{0,0})*` is `{""}`, not `a*`.
+                        // count allows: `(a{0,0})*` is `{""}`, not `a*`.
                         (None, Some(0)) => Some(Some(0)),
                         _ => Some(None),
                     };

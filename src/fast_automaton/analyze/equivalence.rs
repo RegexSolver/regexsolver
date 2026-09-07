@@ -12,9 +12,9 @@ impl FastAutomaton {
     pub fn equivalent(&self, other: &FastAutomaton) -> Result<bool, EngineError> {
         // `is_empty` is exact, so a mismatch proves the languages differ.
         // (`is_total` must NOT be part of this fast path: it is conservative
-        // on non-deterministic automata — it can return `false` for an
-        // automaton that actually accepts every string — so an `is_total`
-        // mismatch alone proves nothing.)
+        // on non-deterministic automata, returning `false` for an automaton
+        // that actually accepts every string, so an `is_total` mismatch alone
+        // proves nothing.)
         if self.is_empty() != other.is_empty() {
             return Ok(false);
         } else if self == other {

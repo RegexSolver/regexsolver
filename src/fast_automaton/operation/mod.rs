@@ -29,7 +29,7 @@ impl FastAutomaton {
     /// (`concat_mut_nondegenerate`, `union_mut_nondegenerate`): a cheap
     /// necessary condition for the caller-guaranteed invariant (the full
     /// degenerate checks are exactly what the cores exist to avoid re-running),
-    /// the timeout check, and — only when a state limit is configured — the
+    /// the timeout check, and, only when a state limit is configured, the
     /// predicted-size check.
     fn assert_nondegenerate_operation_fits(
         &self,

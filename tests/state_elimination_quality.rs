@@ -1,5 +1,5 @@
 //! Measures the quality of automaton→regex conversion (state elimination)
-//! over the shared corpus. Not a pass/fail test of absolute numbers — it
+//! over the shared corpus. Not a pass/fail test of absolute numbers: it
 //! prints aggregate metrics so a heuristic change can be compared before/after
 //! (`cargo test --test state_elimination_quality -- --ignored --nocapture`),
 //! while still asserting that every conversion round-trips (correctness).

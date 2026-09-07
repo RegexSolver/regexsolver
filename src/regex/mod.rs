@@ -128,8 +128,8 @@ impl RegularExpression {
     /// Whether applying a quantifier to the printed form of `r` requires
     /// wrapping it in a group. Singleton `Concat`/`Alternation` wrappers
     /// print transparently, so the decision must look through them instead
-    /// of matching on the direct child's variant — iteratively, since a
-    /// hand-built tree can chain such wrappers arbitrarily deep.
+    /// of matching on the direct child's variant, and do so iteratively,
+    /// since a hand-built tree can chain such wrappers arbitrarily deep.
     fn quantifier_needs_parens(mut r: &RegularExpression) -> bool {
         loop {
             match r {

@@ -11,7 +11,7 @@ use crate::error::EngineError;
 ///
 /// ## Limiting the number of states
 /// ```
-/// use regexsolver::{Term, execution_profile::{ExecutionProfile, ExecutionProfileBuilder}, error::EngineError, fast_automaton::GenerationOptions};
+/// use regexsolver::{Term, execution_profile::ExecutionProfileBuilder, error::EngineError};
 ///
 /// let term1 = Term::from_pattern(".*abcdef.*").unwrap();
 /// let term2 = Term::from_pattern(".*defabc.*").unwrap();
@@ -27,7 +27,7 @@ use crate::error::EngineError;
 ///
 /// ## Limiting the execution time
 /// ```
-/// use regexsolver::{Term, execution_profile::{ExecutionProfile, ExecutionProfileBuilder}, error::EngineError, fast_automaton::GenerationOptions};
+/// use regexsolver::{Term, execution_profile::ExecutionProfileBuilder, error::EngineError, fast_automaton::GenerationOptions};
 ///
 /// let term = Term::from_pattern(".*abc.*cdef.*sqdsqf.*").unwrap();
 ///
@@ -84,11 +84,14 @@ use crate::error::EngineError;
 /// ```
 #[derive(Clone, Debug)]
 pub struct ExecutionProfile {
-    /// The maximum number of states that a non-determinitic finite automaton can hold, this is checked during the convertion of regular expression to automaton.
+    /// The maximum number of states a non-deterministic finite automaton may
+    /// hold, checked while converting a regular expression to an automaton.
     max_number_of_states: Option<usize>,
-    /// The longest time in milliseconds that an operation execution can last, there are no guaranties that the exact time will be respected.
+    /// The longest an operation may run, in milliseconds. It is checked
+    /// between steps, so the exact time is not guaranteed.
     execution_timeout: Option<u64>,
-    /// The time after when a [`EngineError::OperationTimeOutError`] should be thrown.
+    /// The instant past which [`EngineError::OperationTimeOutError`] is
+    /// returned.
     execution_deadline: Option<Instant>,
     /// Whether [`FastAutomaton`](crate::fast_automaton::FastAutomaton)
     /// operations that require a deterministic automaton may determinize a
@@ -266,9 +269,11 @@ impl Drop for ProfileRestoreGuard {
 /// limits you want, and [`build`](Self::build) the immutable profile.
 #[derive(Clone, Debug)]
 pub struct ExecutionProfileBuilder {
-    /// The maximum number of states that a non-determinitic finite automaton can hold, this is checked during the convertion of regular expression to automaton.
+    /// The maximum number of states a non-deterministic finite automaton may
+    /// hold, checked while converting a regular expression to an automaton.
     max_number_of_states: Option<usize>,
-    /// The longest time in milliseconds that an operation execution can last, there are no guaranties that the exact time will be respected.
+    /// The longest an operation may run, in milliseconds. It is checked
+    /// between steps, so the exact time is not guaranteed.
     execution_timeout: Option<u64>,
     /// Whether operations requiring a deterministic automaton may determinize
     /// a non-deterministic input on their own. Defaults to `true`.
@@ -422,7 +427,7 @@ mod tests {
     }
 
     // `run`/`apply` must restore the previous thread profile even when the
-    // closure panics — a leaked temporary profile would permanently poison
+    // closure panics: a leaked temporary profile would permanently poison
     // pooled (e.g. rayon) threads.
     #[test]
     fn run_restores_previous_profile_on_panic() {

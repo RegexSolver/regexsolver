@@ -159,7 +159,7 @@ impl FastAutomaton {
         // Reverse BFS over the maintained `transitions_in` adjacency.
         // `transitions_in` doesn't filter empty-condition edges
         // (constructible via the public `add_transition`), so each edge's
-        // condition is checked on traversal — the lookup on `transitions`
+        // condition is checked on traversal. The lookup on `transitions`
         // also makes tombstoned predecessors fall out naturally.
         let mut worklist = VecDeque::from_iter(self.accept_states.iter().cloned());
         let mut live = self.accept_states.clone();
@@ -236,7 +236,7 @@ mod tests {
     // An empty-condition transition (constructible via the public
     // `add_transition`) can't be taken, so a state whose only path to an
     // accept state goes through one is dead. `live_states` walks
-    // `transitions_in`, which records such edges — it must check the
+    // `transitions_in`, which records such edges, so it must check the
     // condition instead of trusting the adjacency.
     #[test]
     fn live_states_ignores_empty_condition_edges() {

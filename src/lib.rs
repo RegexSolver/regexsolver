@@ -1,6 +1,6 @@
 //! RegexSolver treats regular expressions as the **sets of strings they
-//! match**, so you can intersect, subtract, compare, complement, repeat, and
-//! enumerate them — and convert the result back into a regex pattern.
+//! match**, so you can intersect, subtract, compare, complement, repeat and
+//! enumerate them, then convert the result back into a regex pattern.
 //!
 //! # Quick start
 //!
@@ -28,17 +28,43 @@
 //! RegexSolver implements **pure regular languages**, which differs from a
 //! typical regex engine in two ways: matching is always **anchored** (a pattern
 //! describes whole strings, so `abc` matches only `"abc"`), and `.` matches any
-//! character including line feed. Constructs that a regular language can't
-//! represent — backreferences, look-around, inline flags, and anchors/word
-//! boundaries in non-redundant positions — return an [`EngineError`] rather
-//! than being applied incorrectly. See the crate README for the full list.
+//! character including line feed.
+//!
+//! The rest follows from regular-language theory. Patterns are parsed with
+//! [`regex-syntax`](https://docs.rs/regex-syntax/latest/regex_syntax/), and a
+//! construct that would change matching in a way the engine cannot represent
+//! returns an [`EngineError`] rather than being applied incorrectly:
+//!
+//! * **Backreferences** (`\1`, `\2`, ...) go beyond regular languages, as do
+//!   **look-around** assertions (`(?=...)`, `(?<=...)`).
+//! * **Anchors and word boundaries**: since matching is already full-string, a
+//!   leading `^`/`\A` and a trailing `$`/`\z` are accepted as redundant
+//!   no-ops. Anchors anywhere else, and word boundaries (`\b`, `\B`), would
+//!   constrain matching in ways a regular language cannot express, so they
+//!   return [`EngineError::UnsupportedRegexFeature`].
+//! * **Inline flags** (`(?i)`, `(?m)`, `(?s)`, `(?x)`) return
+//!   [`EngineError::UnsupportedRegexFeature`]: the engine matches character
+//!   ranges uniformly and cannot honor them, and dropping them silently would
+//!   diverge from standard regex semantics (`(?i)abc` would stop matching
+//!   `ABC`).
+//! * **All quantifiers are greedy**: as *sets of strings*, `a*` and `a*?` are
+//!   the same language, so ungreedy markers (`*?`, `+?`, `??`) are accepted and
+//!   ignored.
+//! * **The empty language** (matching no string at all) is written `[]`, an
+//!   empty character class. It is distinct from the empty string `""`.
+//!
+//! Character classes are resolved against a compiled-in copy of the Unicode
+//! character database, currently Unicode 16.0.0
+//! ([`regex_charclass::UCD_VERSION`]). A class is printed back in canonical
+//! form, so `\p{Lu}` comes back as `\p{Uppercase_Letter}` and
+//! `\p{Decimal_Number}` as `\d`.
 //!
 //! # Bounding execution
 //!
 //! Automaton operations can blow up on adversarial input, so a thread-local
-//! [`ExecutionProfile`] can cap runtime and
-//! state count and control implicit determinization; hitting a limit returns a
-//! specific [`EngineError`] instead of hanging.
+//! [`ExecutionProfile`] can cap runtime and state count and control implicit
+//! determinization. Hitting a limit returns a specific [`EngineError`] instead
+//! of hanging.
 //!
 //! # Modules
 //!
@@ -47,6 +73,13 @@
 //! [`execution_profile`] (resource limits), [`cardinality`], and [`error`].
 
 #![warn(missing_docs)]
+#![forbid(unsafe_code)]
+
+/// Compiles the `rust` blocks in `README.md` as doctests, so the README cannot
+/// drift from the API. Only exists while rustdoc collects doctests.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct Readme;
 
 use std::{
     borrow::{Borrow, Cow},
@@ -127,51 +160,35 @@ pub type IntSet<Key> = HashSet<Key, BuildHasherDefault<NoHashHasher<Key>>>;
 /// from [`regex-charclass`](https://docs.rs/regex-charclass).
 pub type CharRange = RangeSet<Char>;
 
-/// Represents a term that can be either a regular expression or a finite automaton. This term can be manipulated with a wide range of operations.
+/// A regular language, held either as a parsed [`RegularExpression`] or as a
+/// [`FastAutomaton`]. Every operation runs on whichever representation is
+/// cheaper for it and converts only when it has to.
 ///
 /// # Examples
+///
 /// ```rust
 /// use regexsolver::Term;
 /// use regexsolver::error::EngineError;
-/// use regexsolver::fast_automaton::PathOrder;
 ///
-/// // Create terms from regex
 /// let t1 = Term::from_pattern("abc.*")?;
 /// let t2 = Term::from_pattern(".*xyz")?;
 ///
-/// // Concatenate
-/// let concat = t1.concat(&[t2])?;
-/// assert_eq!(concat.to_pattern()?, "abc.*xyz");
+/// assert_eq!(t1.concat(&[t2])?.to_pattern()?, "abc.*xyz");
+/// assert_eq!(
+///     t1.union(&[Term::from_pattern("fgh")?])?.to_pattern()?,
+///     "(abc.*|fgh)"
+/// );
+/// assert_eq!(
+///     Term::from_pattern("(ab|xy){2}")?
+///         .intersection(&[Term::from_pattern(".*xy")?])?
+///         .to_pattern()?,
+///     "(ab|xy)xy"
+/// );
 ///
-/// // Union
-/// let union = t1.union(&[Term::from_pattern("fgh")?])?;
-/// assert_eq!(union.to_pattern()?, "(abc.*|fgh)");
-///
-/// // Intersection
-/// let inter = Term::from_pattern("(ab|xy){2}")?
-///     .intersection(&[Term::from_pattern(".*xy")?])?;
-/// assert_eq!(inter.to_pattern()?, "(ab|xy)xy");
-///
-/// // Difference
-/// let diff = Term::from_pattern("a*")?
-///     .difference(&Term::from_pattern("")?)?;
-/// assert_eq!(diff.to_pattern()?, "a+");
-///
-/// // Repetition
-/// let rep = Term::from_pattern("abc")?
-///     .repeat(2..=4)?;
+/// let rep = Term::from_pattern("abc")?.repeat(2..=4)?;
 /// assert_eq!(rep.to_pattern()?, "(abc){2,4}");
-///
-/// // Analyze
 /// assert_eq!(rep.length(), (Some(6), Some(12)));
-/// assert!(!rep.is_empty()?);
 ///
-/// // Generate examples
-/// let samples = Term::from_pattern("(x|y){1,3}")?
-///     .generate_strings(5, 0, PathOrder::Interleave)?;
-/// println!("Some matches: {:?}", samples);
-///
-/// // Equivalence & subset
 /// let a = Term::from_pattern("a+")?;
 /// let b = Term::from_pattern("a*")?;
 /// assert!(!a.equivalent(&b)?);
@@ -179,7 +196,7 @@ pub type CharRange = RangeSet<Char>;
 /// # Ok::<(), EngineError>(())
 /// ```
 ///
-/// To put constraint and limitation on the execution of operations please refer to [`ExecutionProfile`].
+/// To bound how long an operation may run, see [`ExecutionProfile`].
 ///
 /// # Tracing
 ///
@@ -566,9 +583,9 @@ impl Term {
     /// Generates up to `limit` distinct strings matched by the term under the
     /// given [`GenerationOptions`], skipping the first `offset` strings.
     ///
-    /// `options` combines two independent axes — how paths are scheduled and
-    /// how the strings within them are ordered — plus an optional charset
-    /// and length bounds.
+    /// `options` combines two independent axes, how paths are scheduled and
+    /// how the strings within them are ordered, plus an optional charset and
+    /// length bounds.
     /// [`PathOrder::Sweep`](fast_automaton::PathOrder::Sweep) walks the
     /// language one path at a time,
     /// [`Interleave`](fast_automaton::PathOrder::Interleave) spreads the
@@ -579,11 +596,11 @@ impl Term {
     /// [`CharacterOrder::Ascending`](fast_automaton::CharacterOrder::Ascending)
     /// yields each path's smallest strings first, while
     /// [`CharacterOrder::Shuffled`](fast_automaton::CharacterOrder::Shuffled)
-    /// draws them through a seeded permutation. Both axes shuffled is what
-    /// you want to derive test cases from a pattern: coverage of every shape,
-    /// with strings that look like real inputs, reproducible and pageable. An
-    /// axis can be passed on its own wherever options are expected, and so
-    /// can a `(PathOrder, CharacterOrder)` pair.
+    /// draws them through a seeded permutation. Shuffling both axes is the
+    /// combination for deriving test cases from a pattern: it covers every
+    /// shape with arbitrary-looking strings and stays reproducible and
+    /// pageable. An axis can be passed on its own wherever options are
+    /// expected, and so can a `(PathOrder, CharacterOrder)` pair.
     ///
     /// Strings are only guaranteed to be distinct **within a single call**:
     /// the offset fast-skips by counting paths, and in a non-deterministic
@@ -595,15 +612,16 @@ impl Term {
     ///
     /// [`GenerationOptions::with_min_length`] and
     /// [`with_max_length`](GenerationOptions::with_max_length) confine the
-    /// enumeration to a band of string lengths — without a max, a deep
+    /// enumeration to a band of string lengths. Without a max, a deep
     /// `offset` into a looping language (`.*`) pages into arbitrarily long
     /// strings. Generation runs under the active
     /// [`ExecutionProfile`]: its
     /// timeout aborts with [`EngineError::OperationTimeOutError`].
     ///
-    /// For pagination without repetition or skipped strings, make the term deterministic once and generate
-    /// from it. To check if a term is deterministic use [`is_deterministic`](Self::is_deterministic).
-    /// To determinize run [`determinize`](Self::determinize).
+    /// For pagination without repetition or skipped strings,
+    /// [`determinize`](Self::determinize) the term once and generate from the
+    /// result; [`is_deterministic`](Self::is_deterministic) tells you whether
+    /// it already is.
     ///
     /// # Examples
     ///
@@ -660,10 +678,11 @@ impl Term {
     /// given [`GenerationOptions`], fetched in batches behind the scenes so you
     /// can stop early without choosing a limit up front.
     ///
-    /// The underlying deterministic automaton is computed once at construction time, not on
-    /// every batch. Each item is a `Result`: a construction or generation error
-    /// (e.g. a timeout from the active [`ExecutionProfile`]) surfaces as an
-    /// `Err`, after which the iterator ends.
+    /// The underlying deterministic automaton is computed once at construction
+    /// time, not on every batch. Each item is a `Result`: a construction or
+    /// generation error, such as a timeout from the active
+    /// [`ExecutionProfile`], surfaces as an `Err`, after which the iterator
+    /// ends.
     ///
     /// # Examples
     ///
@@ -1098,9 +1117,6 @@ mod tests {
 
     use super::*;
 
-    // A range containing no count at all (`0..0`, `3..3`, `5..2`) is the
-    // empty language, while a range containing exactly the count 0 (`0..=0`,
-    // `0..1`) is the empty-string language.
     #[test]
     #[allow(clippy::reversed_empty_ranges)] // deliberately empty ranges are the point
     fn repeat_empty_ranges_yield_the_empty_language() {
@@ -1172,19 +1188,7 @@ mod tests {
                 .unwrap()
         );
 
-        println!("term: {}", term.to_automaton().unwrap().to_dot());
-
-        if let Term::Automaton(complement) = &complement {
-            println!("complement: {}", complement.to_dot());
-        }
-
         let union = term.union(&[complement]).unwrap();
-        if let Term::Automaton(union) = &union {
-            println!("{}", union.to_dot());
-            let union = union.determinize().unwrap();
-            println!("{}", union.to_dot());
-        }
-
         assert!(union.is_total().unwrap());
 
         Ok(())
@@ -1369,7 +1373,6 @@ mod tests {
         let regex_term = Term::from_pattern("(abc|de){2}").unwrap();
         assert!(!regex_term.is_deterministic());
 
-        // `determinize` produces a deterministic, language-equivalent term.
         let dfa = regex_term.determinize().unwrap();
         assert!(dfa.is_deterministic());
         assert!(regex_term.equivalent(&dfa).unwrap());
@@ -1387,7 +1390,6 @@ mod tests {
         let regex_term = Term::from_pattern("(abc|de){2}").unwrap();
         assert!(!regex_term.is_minimal());
 
-        // `minimize` produces a minimal, language-equivalent term.
         let minimal = regex_term.minimize().unwrap();
         assert!(minimal.is_minimal());
         assert!(minimal.is_deterministic()); // minimal implies deterministic
@@ -1409,7 +1411,6 @@ mod tests {
     fn test_repeat_range_edges() {
         let term = Term::from_pattern("abc").unwrap();
 
-        // Unbounded / unset bounds.
         assert_eq!("(abc)*", term.repeat(..).unwrap().to_pattern().unwrap());
         assert_eq!("(abc){2,}", term.repeat(2..).unwrap().to_pattern().unwrap());
         assert_eq!(
@@ -1417,12 +1418,11 @@ mod tests {
             term.repeat(..3).unwrap().to_pattern().unwrap()
         );
 
-        // Zero repetitions is the empty string.
         assert!(term.repeat(0..=0).unwrap().is_empty_string().unwrap());
 
-        // A range whose normalized max < min denotes no valid repetition count,
-        // so the simplifier reduces it to the empty language (matches nothing).
-        // (Bounds from variables: a literal reversed range trips a lint.)
+        // A range whose normalized max is below its min denotes no valid
+        // count, so it reduces to the empty language. The bounds go through
+        // variables because a literal reversed range trips a lint.
         let (min, max) = (5u32, 3u32);
         assert!(term.repeat(min..max).unwrap().is_empty().unwrap());
     }

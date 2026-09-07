@@ -15,7 +15,7 @@ impl Gnfa {
         //
         // A state's score depends only on its own in/out edges, and
         // eliminating `k` only touches edges incident to k's predecessors
-        // and successors — so exactly those need re-scoring each round.
+        // and successors, so exactly those need re-scoring each round.
         let mut scores: Vec<Option<u128>> = vec![None; self.transitions.len()];
         for state in self.all_states_iter() {
             if state != self.start_state && state != self.accept_state {
@@ -152,8 +152,8 @@ impl Gnfa {
     /// [`convert`](Self::convert) with the score cache disabled: every
     /// candidate is re-scored from scratch each round, with the serial fold
     /// (last minimal state wins on ties) the cached version replaced. The
-    /// oracle proving the cache never yields a stale score — i.e. the
-    /// produced pattern is identical to the pre-cache implementation's.
+    /// oracle proving the cache never yields a stale score: the produced
+    /// pattern is identical to the pre-cache implementation's.
     pub(super) fn convert_reference(&mut self) -> Result<RegularExpression, EngineError> {
         if self.empty {
             return Ok(RegularExpression::new_empty());

@@ -306,7 +306,7 @@ mod tests {
     }
 
     /// A random `CharRange` in canonical representation (built by unioning
-    /// single intervals, which merges overlaps and adjacency) — the form
+    /// single intervals, which merges overlaps and adjacency), the form
     /// every real caller passes in.
     fn arb_char_range() -> impl Strategy<Value = CharRange> {
         proptest::collection::vec((0u32..=0x10F7FF, 0u32..=0x10F7FF), 1..4).prop_map(|pairs| {

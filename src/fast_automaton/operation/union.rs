@@ -310,7 +310,7 @@ impl FastAutomaton {
 
         let mut total_delta: i32 = 0;
 
-        // --- 1. Start States Math ---
+        // 1. Start states.
         if self_in == 0 && other_in == 0 {
             total_delta -= 1;
         } else if self_in != 0 && other_in != 0 {
@@ -328,7 +328,7 @@ impl FastAutomaton {
             }
         }
 
-        // --- 2. Accept States Math ---
+        // 2. Accept states.
         // Gather self's accept states. If other.start_state is accepted,
         // it virtually triggers self.accept(self.start_state) early.
         let mut self_accepts: IntSet<usize> = self.accept_states.iter().cloned().collect();
@@ -443,7 +443,7 @@ mod tests {
 
     // When a language whose start state has a self-loop is unioned with the
     // empty string, the empty-string acceptance must land on the union's
-    // entry state, not on the looping start — otherwise `a*b | ""` would
+    // entry state, not on the looping start, otherwise `a*b | ""` would
     // wrongly match "a", "aa", ...
     #[test]
     fn union_with_empty_string_does_not_over_accept() {

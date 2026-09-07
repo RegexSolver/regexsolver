@@ -7,16 +7,16 @@
 //! and a maximum number of states ([`MAX_STATES`]). Within those bounds every
 //! structure has a strictly positive probability of being generated:
 //!
-//! * [`arb_dfa`] — every deterministic automaton over the alphabet with
+//! * [`arb_dfa`]: every deterministic automaton over the alphabet with
 //!   `1..=MAX_STATES` states (start state fixed to `0`, any accepting subset,
 //!   any total transition function) can be produced. A transition function maps
 //!   each `(state, letter)` to at most one target, which is exactly the
 //!   definition of a DFA, so the whole DFA space is covered.
-//! * [`arb_nfa`] — every nondeterministic automaton is reachable: each ordered
+//! * [`arb_nfa`]: every nondeterministic automaton is reachable, each ordered
 //!   `(from, to)` pair may carry any subset of the alphabet letters as its
 //!   label, plus optional epsilon transitions. Since labels may overlap, this
 //!   spans all NFAs (and, as a subset, all DFAs).
-//! * [`arb_regex`] — every regular expression built from the four
+//! * [`arb_regex`]: every regular expression built from the four
 //!   [`RegularExpression`] variants up to the configured recursion depth and
 //!   bound sizes is reachable, including the empty language (`[]`) and `.`.
 //!
@@ -24,12 +24,13 @@
 //! determinization / set operations under test stay cheap.
 //!
 //! While *coverage* is uniform-in-support, the *distribution* is deliberately
-//! shaped — the `inspect::stats` test measures the result and asserts floors:
+//! shaped, and the `inspect::stats` test measures the result and asserts
+//! floors:
 //!
 //! * Per-automaton edge/epsilon/accept densities are sampled, with the accept
 //!   density centered on ½ (where accepting/rejecting states are hardest to
-//!   merge, keeping minimal DFAs — and therefore the work done by minimize /
-//!   equivalence / state elimination — large).
+//!   merge, keeping minimal DFAs large, and with them the work done by
+//!   minimize / equivalence / state elimination).
 //! * An optional "anchor" state is forced accepting so the empty language is
 //!   an occasional edge case instead of a fifth of the sample.
 //! * A per-automaton acyclic mode (≈⅓ of cases) generates DAGs, whose finite
@@ -166,7 +167,8 @@ pub fn arb_dfa() -> impl Strategy<Value = FastAutomaton> {
             // An "anchor" state forced accepting most of the time: without it
             // the whole accept vector samples all-false often enough that the
             // empty language eats a fifth of the sample. Non-start states are
-            // preferred — anchoring the start only inflates the {""} corner.
+            // preferred, since anchoring the start only inflates the {""}
+            // corner.
             // The `None` branch keeps every accept subset (incl. all-false)
             // reachable.
             let anchor = prop::option::weighted(0.85, 1usize.min(n - 1)..n);
@@ -233,8 +235,8 @@ pub fn arb_nfa() -> impl Strategy<Value = FastAutomaton> {
 }
 
 /// [`arb_nfa`] generalized to an arbitrary alphabet, so two operands of a
-/// binary operation can be generated over *different* alphabets — the only
-/// way to exercise `SpanningSet::merge` and the `ConditionConverter`
+/// binary operation can be generated over *different* alphabets, the only way
+/// to exercise `SpanningSet::merge` and the `ConditionConverter`
 /// re-projection (same-alphabet operands share an identical spanning set and
 /// the conversion is the identity).
 pub fn arb_nfa_over(alphabet: &'static [char]) -> impl Strategy<Value = FastAutomaton> {
@@ -569,7 +571,7 @@ proptest! {
     /// Set operations across operands built over *disjoint* alphabets
     /// ({a,b} vs {c,d}): the merged spanning set shares no base with either
     /// source, the most extreme re-projection. The intersection collapses to
-    /// at most {""} — itself a worthwhile edge case.
+    /// at most {""}, itself a worthwhile edge case.
     #[test]
     fn set_ops_membership_disjoint_alphabets(
         a in arb_nfa_over(&['a', 'b']),
@@ -650,7 +652,7 @@ proptest! {
     }
 
     /// `FastAutomaton::repeat` agrees with a decomposition oracle computed by
-    /// dynamic programming over (position, piece-count) — independent of the
+    /// dynamic programming over (position, piece-count), independent of the
     /// engine's own repeat construction (which the regex route would reuse).
     #[test]
     fn automaton_repeat_matches_decomposition_oracle(
@@ -712,9 +714,9 @@ proptest! {
     }
 
     /// `RegularExpression::union_all` (the alternation accumulator) agrees
-    /// with a left fold of pairwise `union` — a different composition: the
+    /// with a left fold of pairwise `union`, a different composition (the
     /// fold runs a fresh two-operand accumulator per step, `union_all` one
-    /// accumulator over all operands — and with the boolean OR of the
+    /// accumulator over all operands), and with the boolean OR of the
     /// operands on every probe string. The `Term`-level test above never
     /// reaches this path: it uses automaton-backed operands, and `Term::union`
     /// routes through the regex accumulator only when *every* operand is
@@ -904,7 +906,7 @@ mod inspect {
     /// Canonical fingerprint of a language: the minimal DFA, renumbered in
     /// BFS order with the outgoing transitions of each state sorted by label.
     /// Minimal DFAs are unique up to isomorphism, so two automata share a key
-    /// iff they accept the same language — this is what lets the stats count
+    /// iff they accept the same language, which is what lets the stats count
     /// *distinct* languages instead of distinct syntax trees.
     fn language_key(m: &FastAutomaton) -> String {
         use std::fmt::Write;
@@ -1000,7 +1002,7 @@ mod inspect {
         distinct_pct: f64,
         /// Average minimal-DFA size: the number of Myhill-Nerode classes is
         /// what minimize / equivalence / state elimination actually scale
-        /// with, so this — not the raw state count — is language complexity.
+        /// with, so this, not the raw state count, is language complexity.
         avg_minimal_states: f64,
         /// Share of languages needing a minimal DFA of ≥ 3 states.
         rich_pct: f64,
@@ -1120,7 +1122,7 @@ mod inspect {
 
     /// Quantitative quality summary over a larger sample, with floors the
     /// strategies must keep. The sample runner is deterministic, so the
-    /// numbers — and therefore the assertions — are reproducible.
+    /// numbers, and therefore the assertions, are reproducible.
     #[test]
     fn stats() {
         const N: usize = 300;

@@ -37,15 +37,16 @@ jobs:
           fi
 
       - name: Format
-        run: cargo fmt --all -- --check
+        run: cargo fmt --all --check
       - name: Lint
         run: |
           cargo clippy --locked --all-targets -- -D warnings
           cargo clippy --locked --no-default-features --all-targets -- -D warnings
       - name: Test
         run: |
-          cargo test --locked
-          cargo test --locked --no-default-features
+          cargo test --locked --all-targets
+          cargo test --locked --no-default-features --all-targets
+          cargo test --locked --doc
       - name: Docs
         run: cargo doc --locked --no-deps
 
@@ -60,6 +61,11 @@ jobs:
         run: |
           cargo +${{ steps.msrv.outputs.msrv }} check --locked --all-features
           cargo +${{ steps.msrv.outputs.msrv }} check --locked --no-default-features
+
+      # Checks the tarball is complete and builds on its own, before an upload
+      # that cannot be undone.
+      - name: Dry-run publish
+        run: cargo +stable publish --locked --dry-run
 
       - name: Publish
         env:

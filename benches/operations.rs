@@ -2,8 +2,8 @@
 //!
 //! Inputs come in named sizes so numbers stay comparable across versions:
 //!
-//! * `small` / `medium` / `large` — realistic patterns of increasing size.
-//! * `blowup_N` — the classic `(a|b)*a(a|b){N}` family whose minimal DFA has
+//! * `small` / `medium` / `large`: realistic patterns of increasing size.
+//! * `blowup_N`: the classic `(a|b)*a(a|b){N}` family whose minimal DFA has
 //!   2^N states: the worst case of subset construction.
 //!
 //! Mutating operations (`minimize`, `complement`) are measured with

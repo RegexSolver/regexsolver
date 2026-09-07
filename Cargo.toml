@@ -1,6 +1,6 @@
 [package]
 name = "regexsolver"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Alexandre van Beurden"]
@@ -12,13 +12,28 @@ keywords = ["automaton", "intersection", "union", "difference", "regex"]
 categories = ["text-processing", "mathematics", "algorithms"]
 description = "High-performance Rust library for building, combining, and analyzing regular expressions and finite automata"
 readme = "README.md"
-exclude = ["/assets"]
+# An allowlist rather than a denylist, so a new directory is not published by
+# accident. `/assets` is left out: the README links its image by URL.
+include = [
+    "/src/**/*.rs",
+    "/benches/**/*.rs",
+    "/examples/**/*.rs",
+    "/tests/**/*.rs",
+    "/tests/data/*.txt",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/LICENSE",
+]
 
 [dependencies]
 tracing = "0.1"
 ahash = "0.8.11"
-regex-syntax = "0.8.5"
-regex-charclass = { version = "1.0.3" }
+regex-syntax = "0.8.11"
+# `ucd-16` has to match the Unicode database `regex-syntax` carries: a pattern is
+# parsed into ranges by `regex-syntax` and named back into a class by
+# `regex-charclass`, so a mismatch turns `\p{Greek}` into a raw range list on the
+# way out. Checked by `tests/public_api.rs`.
+regex-charclass = { version = "1.2.0", features = ["ucd-16"] }
 rayon = { version = "1.10.0", optional = true }
 bit-set = "0.8.0"
 indexmap = "2.13.0"
@@ -30,7 +45,14 @@ parallel = ["dep:rayon"]
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
 proptest = "1"
-regex = "1.10.3"
+regex = "1.13.1"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[profile.bench]
+codegen-units = 1
 
 [[bench]]
 name = "operations"
