@@ -78,7 +78,7 @@ impl FastAutomaton {
                 // no `BitSet` clone (the entry API would need an owned
                 // key), and only clone-free-insert on a miss.
                 if let Some(&q) = new_states.get(targets) {
-                    targets.clear();
+                    targets.make_empty();
 
                     new_automaton.add_transition(r, q, base);
                 } else {
