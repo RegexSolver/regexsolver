@@ -1,8 +1,5 @@
 use std::borrow::Cow;
 
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
-
 use condition::converter::ConditionConverter;
 
 use crate::{error::EngineError, execution_profile::ExecutionProfile};

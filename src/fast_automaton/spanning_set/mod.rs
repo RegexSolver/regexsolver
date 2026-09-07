@@ -122,7 +122,7 @@ impl SpanningSet {
         let interval_count: usize = inputs.iter().map(|input| input.0.len() / 2).sum();
         let mut events: Vec<Event> = Vec::with_capacity(interval_count * 2);
         for (input_index, input) in inputs.iter().enumerate() {
-            for pair in input.0.chunks_exact(2) {
+            for pair in input.0.as_chunks::<2>().0 {
                 events.push(Event {
                     position: scalar(pair[0]),
                     input_index: input_index as u32,

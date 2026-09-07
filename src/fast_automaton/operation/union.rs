@@ -1,8 +1,6 @@
 use std::hash::BuildHasherDefault;
 
 use condition::converter::ConditionConverter;
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 
 use crate::{error::EngineError, execution_profile::ExecutionProfile};
 
