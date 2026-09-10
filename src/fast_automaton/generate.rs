@@ -1,6 +1,10 @@
 use crate::{EngineError, execution_profile::ExecutionProfile};
-use ahash::RandomState;
 use indexmap::IndexSet;
+
+#[cfg(feature = "ahash")]
+use ahash::{AHashMap as HashMap, RandomState};
+#[cfg(not(feature = "ahash"))]
+use std::collections::hash_map::RandomState;
 
 use super::*;
 use std::cmp::Ordering;
@@ -10,7 +14,7 @@ use std::ops::Range;
 /// Each transition condition's index into the range pool the generation
 /// resolved, the charset already taken out; `None` for the conditions the
 /// charset leaves nothing of.
-type RangeIds<'a> = AHashMap<&'a Condition, Option<u32>>;
+type RangeIds<'a> = HashMap<&'a Condition, Option<u32>>;
 
 /// How [`FastAutomaton::generate_strings`] schedules the *paths* of a
 /// language: one at a time, or interleaved so that every shape the pattern
@@ -519,7 +523,7 @@ fn resolve_ranges<'a>(
     charset: Option<&CharRange>,
 ) -> Result<(Vec<CharRange>, RangeIds<'a>), EngineError> {
     let mut range_pool: Vec<CharRange> = Vec::new();
-    let mut range_ids: RangeIds = AHashMap::with_capacity(automaton.transitions.len());
+    let mut range_ids: RangeIds = HashMap::with_capacity(automaton.transitions.len());
 
     for state in automaton.states() {
         for (cond, _) in automaton.transitions_from(state) {

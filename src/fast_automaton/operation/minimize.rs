@@ -71,7 +71,7 @@ impl FastAutomaton {
             }
         }
 
-        let mut x = IntSet::with_capacity(self.number_of_states());
+        let mut x = IntSet::with_capacity_and_hasher(self.number_of_states(), Default::default());
 
         let mut intersection_states: Vec<Vec<usize>> = vec![Vec::new(); max_states];
         let mut touched_partitions: Vec<usize> = Vec::with_capacity(max_states);
@@ -120,7 +120,8 @@ impl FastAutomaton {
 
                     // A split happens! 'int_states' becomes the new partition.
                     let new_idx = partitions.len();
-                    let mut new_part = IntSet::with_capacity(int_states.len());
+                    let mut new_part =
+                        IntSet::with_capacity_and_hasher(int_states.len(), Default::default());
 
                     for &state in int_states.iter() {
                         partitions[p_idx].remove(&state); // Remove from original (forming the difference)

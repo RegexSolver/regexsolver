@@ -84,7 +84,10 @@ impl FastAutomaton {
         new_states: &mut IntMap<usize, usize>,
         condition_converter: Option<&ConditionConverter>,
     ) -> Result<IntSet<usize>, EngineError> {
-        let mut imcomplete_states = IntSet::with_capacity(other.out_degree(other.start_state) + 1);
+        let mut imcomplete_states = IntSet::with_capacity_and_hasher(
+            other.out_degree(other.start_state) + 1,
+            Default::default(),
+        );
         // If `other` accepts the empty string we must make the union's *entry*
         // state accepting, but only after the start state is finalized below.
         // Marking the current start eagerly is wrong when it has incoming edges
@@ -317,7 +320,7 @@ impl FastAutomaton {
 
         // Track which 'other' states are already mapped in the start phase
         // so we don't double-count them when calculating accept state savings.
-        let mut mapped_other_states = IntSet::new();
+        let mut mapped_other_states = IntSet::with_capacity_and_hasher(0, Default::default());
         mapped_other_states.insert(other.start_state);
 
         if other_in != 0 {

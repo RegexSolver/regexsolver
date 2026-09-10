@@ -1,5 +1,3 @@
-use ahash::HashMapExt;
-
 use super::*;
 
 impl Gnfa {
@@ -8,8 +6,14 @@ impl Gnfa {
             start_state: 0,  // start_state is not set yet
             accept_state: 0, // accept_state is not set yet
             transitions: Vec::with_capacity(automaton.number_of_states()),
-            transitions_in: IntMap::with_capacity(automaton.number_of_states()),
-            removed_states: IntSet::with_capacity(automaton.number_of_states()),
+            transitions_in: IntMap::with_capacity_and_hasher(
+                automaton.number_of_states(),
+                Default::default(),
+            ),
+            removed_states: IntSet::with_capacity_and_hasher(
+                automaton.number_of_states(),
+                Default::default(),
+            ),
             empty: false,
         };
 
@@ -18,7 +22,8 @@ impl Gnfa {
             return Ok(state_elimination_automaton);
         }
 
-        let mut states_map = IntMap::with_capacity(automaton.number_of_states());
+        let mut states_map =
+            IntMap::with_capacity_and_hasher(automaton.number_of_states(), Default::default());
 
         for from_state in automaton.states() {
             let new_from_state = *states_map
@@ -81,12 +86,17 @@ impl Gnfa {
     fn new_state(&mut self) -> usize {
         if let Some(&new_state) = self.removed_states.iter().next() {
             self.removed_states.remove(&new_state);
-            self.transitions_in.insert(new_state, IntSet::new());
+            self.transitions_in.insert(
+                new_state,
+                IntSet::with_capacity_and_hasher(0, Default::default()),
+            );
             new_state
         } else {
             self.transitions.push(IntMap::default());
-            self.transitions_in
-                .insert(self.transitions.len() - 1, IntSet::new());
+            self.transitions_in.insert(
+                self.transitions.len() - 1,
+                IntSet::with_capacity_and_hasher(0, Default::default()),
+            );
             self.transitions.len() - 1
         }
     }
