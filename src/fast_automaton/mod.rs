@@ -1,5 +1,4 @@
 use crate::error::EngineError;
-use ahash::{AHashMap, HashSetExt};
 use condition::Condition;
 use regex_charclass::CharacterClass;
 use spanning_set::SpanningSet;

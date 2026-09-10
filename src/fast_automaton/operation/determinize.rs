@@ -4,6 +4,11 @@ use crate::{EngineError, execution_profile::ExecutionProfile};
 
 use super::*;
 
+#[cfg(feature = "ahash")]
+use ahash::AHashMap as HashMap;
+#[cfg(not(feature = "ahash"))]
+use std::collections::HashMap;
+
 impl FastAutomaton {
     /// [`determinize`](Self::determinize) on behalf of an operation that
     /// requires a deterministic automaton: when the execution profile
@@ -30,7 +35,7 @@ impl FastAutomaton {
         let mut worklist = VecDeque::with_capacity(self.number_of_states());
 
         let map_capacity = (self.number_of_states() as f64 / 0.75).ceil() as usize;
-        let mut new_states = AHashMap::with_capacity(map_capacity);
+        let mut new_states = HashMap::with_capacity(map_capacity);
 
         let mut accept_states = BitSet::new();
         for &state in &self.accept_states {

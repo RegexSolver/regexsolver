@@ -6,6 +6,11 @@ use crate::{error::EngineError, execution_profile::ExecutionProfile};
 
 use super::*;
 
+#[cfg(feature = "ahash")]
+use ahash::AHashMap as HashMap;
+#[cfg(not(feature = "ahash"))]
+use std::collections::HashMap;
+
 impl FastAutomaton {
     /// Computes the intersection between `self` and `other`.
     pub fn intersection(&self, other: &FastAutomaton) -> Result<Self, EngineError> {
@@ -103,8 +108,8 @@ impl FastAutomaton {
         let mut new_automaton = FastAutomaton::new_empty();
         let mut worklist =
             VecDeque::with_capacity(self.number_of_states() + other.number_of_states());
-        let mut new_states: AHashMap<(usize, usize), (usize, usize, usize), _> =
-            AHashMap::with_capacity(self.number_of_states() + other.number_of_states());
+        let mut new_states: HashMap<(usize, usize), (usize, usize, usize), _> =
+            HashMap::with_capacity(self.number_of_states() + other.number_of_states());
 
         let initial_pair = (
             new_automaton.start_state,
@@ -198,8 +203,8 @@ impl FastAutomaton {
         let mut new_automaton = FastAutomaton::new_empty();
         let mut worklist =
             VecDeque::with_capacity(self.number_of_states() + other.number_of_states());
-        let mut new_states: AHashMap<(usize, usize), (usize, usize, usize), _> =
-            AHashMap::with_capacity(self.number_of_states() + other.number_of_states());
+        let mut new_states: HashMap<(usize, usize), (usize, usize, usize), _> =
+            HashMap::with_capacity(self.number_of_states() + other.number_of_states());
 
         let initial_pair = (
             new_automaton.start_state,

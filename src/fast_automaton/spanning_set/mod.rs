@@ -1,10 +1,14 @@
 use std::slice::Iter;
 
-use ahash::AHashMap;
 use regex_charclass::irange::RangeSet;
 
 use super::{from_scalar, scalar};
 use crate::CharRange;
+
+#[cfg(feature = "ahash")]
+use ahash::AHashMap as HashMap;
+#[cfg(not(feature = "ahash"))]
+use std::collections::HashMap;
 
 /// Converts merged, ascending scalar segments (see [`scalar`](super::scalar))
 /// back into a [`CharRange`]. The segments are disjoint and non-adjacent, so
@@ -194,7 +198,8 @@ impl SpanningSet {
     fn sweep_wide(input_count: usize, events: &[Event]) -> (Vec<CharRange>, Vec<(u32, u32)>) {
         let mut active = vec![0u64; input_count.div_ceil(64)];
         let mut active_count = 0usize;
-        let mut atoms: AHashMap<Vec<u64>, Vec<(u32, u32)>> = AHashMap::new();
+        let mut atoms: HashMap<Vec<u64>, Vec<(u32, u32)>> =
+            HashMap::with_capacity_and_hasher(0, Default::default());
         let mut covered: Vec<(u32, u32)> = Vec::new();
 
         let mut i = 0;
