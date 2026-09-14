@@ -45,7 +45,7 @@ Under the hood, every pattern compiles to a finite automaton:
 cargo add regexsolver
 ```
 
-The default `parallel` feature runs unions and intersections of more than 3 operands, and parts of the automaton-to-regex conversion, on [rayon](https://crates.io/crates/rayon). Turn it off for a leaner dependency tree on single-threaded workloads:
+The default `parallel` feature runs unions and intersections of more than 3 operands, and parts of the automaton-to-regex conversion, on [rayon](https://crates.io/crates/rayon). It is a no-op on `wasm`, which has no threads and does not depend on rayon at all. Turn it off for a leaner dependency tree on single-threaded workloads:
 
 ```toml
 regexsolver = { version = "1", default-features = false }

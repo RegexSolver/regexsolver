@@ -95,6 +95,49 @@ jobs:
           cargo check --locked --all-features
           cargo check --locked --no-default-features
 
+  # `wasm32-unknown-unknown` has no threads, no clock and no system randomness,
+  # so a dependency reaching for one of them either fails to compile
+  # (`getrandom`) or panics at runtime; `wasm32-wasip1` has all three but no
+  # thread spawning.
+  wasm:
+    name: WebAssembly (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [wasm32-unknown-unknown, wasm32-wasip1]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Build with default features
+        run: cargo build --locked --lib --target ${{ matrix.target }}
+      - name: Build with no default features
+        run: cargo build --locked --lib --no-default-features --target ${{ matrix.target }}
+
+      # `wasm32-wasip1` is the only one of the two that can run the test
+      # harness: `wasm32-unknown-unknown` has no way to start a process or
+      # print to stdout, which libtest needs. The tests that panic on purpose
+      # are `ignore`d for `wasm`, which is `panic = abort`.
+      - uses: bytecodealliance/actions/wasmtime/setup@9152e710e9f7182e4c29ad218e4f335a7b203613 # v1
+        if: matrix.target == 'wasm32-wasip1'
+      - name: Test with default features
+        if: matrix.target == 'wasm32-wasip1'
+        env:
+          # `--dir` grants the guest the `tests/data` the integration tests read.
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime --dir=.
+        run: cargo test --locked --tests --target ${{ matrix.target }}
+      - name: Test with no default features
+        if: matrix.target == 'wasm32-wasip1'
+        env:
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime --dir=.
+        run: cargo test --locked --tests --no-default-features --target ${{ matrix.target }}
+
   package:
     name: Package
     runs-on: ubuntu-latest

@@ -93,7 +93,10 @@ use std::{
 use cardinality::Cardinality;
 use error::EngineError;
 use fast_automaton::{FastAutomaton, GenerationOptions};
-#[cfg(feature = "parallel")]
+// `parallel` stays enabled on `wasm` but has nothing to enable there: the target
+// has no threads, so `rayon` is not a dependency. Every gate below pairs the
+// feature with the target for that reason.
+#[cfg(all(feature = "parallel", not(target_family = "wasm")))]
 use rayon::prelude::*;
 use regex::RegularExpression;
 use regex_charclass::{char::Char, irange::RangeSet};
@@ -411,19 +414,20 @@ impl Term {
         }
 
         if has_automaton {
-            let parallel = cfg!(feature = "parallel") && terms.len() > 3;
+            let parallel =
+                cfg!(all(feature = "parallel", not(target_family = "wasm"))) && terms.len() > 3;
 
             let automaton_list = self.get_automata(&terms, parallel)?;
 
             let automaton_list = automaton_list.iter().map(AsRef::as_ref).collect::<Vec<_>>();
 
-            #[cfg(feature = "parallel")]
+            #[cfg(all(feature = "parallel", not(target_family = "wasm")))]
             let return_automaton = if parallel {
                 FastAutomaton::union_all_par(automaton_list)
             } else {
                 FastAutomaton::union_all(automaton_list)
             }?;
-            #[cfg(not(feature = "parallel"))]
+            #[cfg(any(not(feature = "parallel"), target_family = "wasm"))]
             let return_automaton = FastAutomaton::union_all(automaton_list)?;
 
             Ok(Term::Automaton(return_automaton))
@@ -461,19 +465,20 @@ impl Term {
         let terms: Vec<_> = terms.into_iter().collect();
         let terms: Vec<&Term> = terms.iter().map(Borrow::borrow).collect();
 
-        let parallel = cfg!(feature = "parallel") && terms.len() > 3;
+        let parallel =
+            cfg!(all(feature = "parallel", not(target_family = "wasm"))) && terms.len() > 3;
 
         let automaton_list = self.get_automata(&terms, parallel)?;
 
         let automaton_list = automaton_list.iter().map(AsRef::as_ref).collect::<Vec<_>>();
 
-        #[cfg(feature = "parallel")]
+        #[cfg(all(feature = "parallel", not(target_family = "wasm")))]
         let return_automaton = if terms.len() > 3 {
             FastAutomaton::intersection_all_par(automaton_list)
         } else {
             FastAutomaton::intersection_all(automaton_list)
         }?;
-        #[cfg(not(feature = "parallel"))]
+        #[cfg(any(not(feature = "parallel"), target_family = "wasm"))]
         let return_automaton = FastAutomaton::intersection_all(automaton_list)?;
 
         Ok(Term::Automaton(return_automaton))
@@ -1022,7 +1027,7 @@ impl Term {
         let mut automaton_list = Vec::with_capacity(terms.len() + 1);
         automaton_list.push(self.to_automaton()?);
 
-        #[cfg(feature = "parallel")]
+        #[cfg(all(feature = "parallel", not(target_family = "wasm")))]
         let mut terms_automata = if parallel {
             let execution_profile = ExecutionProfile::get();
             terms
@@ -1035,7 +1040,7 @@ impl Term {
                 .map(|a| a.to_automaton())
                 .collect::<Result<Vec<_>, _>>()
         }?;
-        #[cfg(not(feature = "parallel"))]
+        #[cfg(any(not(feature = "parallel"), target_family = "wasm"))]
         let mut terms_automata = {
             let _ = parallel;
             terms
