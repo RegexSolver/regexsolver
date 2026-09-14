@@ -4,7 +4,7 @@ All notable changes to this crate are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.2] - 2026-09-14
 
 ### Changed
 - On `wasm32-unknown-unknown`, `ahash` uses its `compile-time-rng` feature instead of the default `runtime-rng`, so `getrandom`, which otherwise requires a backend opt-in from the final binary on that target, is no longer compiled into the library and the crate builds there out of the box. Hash keys are drawn at build time rather than at process start; other targets are unchanged.
