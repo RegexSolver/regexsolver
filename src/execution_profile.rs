@@ -1,9 +1,33 @@
-use std::{
-    cell::RefCell,
-    time::{Duration, Instant},
-};
+use std::{cell::RefCell, time::Duration};
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+use std::{sync::OnceLock, time::Instant};
 
 use crate::error::EngineError;
+
+/// A monotonic clock: the time elapsed since a fixed but otherwise arbitrary
+/// origin, such as process start or page load.
+///
+/// The execution timeout is enforced by comparing readings of the profile's
+/// clock. Every profile starts with a clock backed by [`std::time::Instant`],
+/// except on `wasm32-unknown-unknown`, where the standard library cannot read
+/// the time and the host has to supply one through
+/// [`ExecutionProfileBuilder::clock`].
+pub type Clock = fn() -> Duration;
+
+/// [`std::time::Instant`], read as the time elapsed since the first reading.
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+fn std_clock() -> Duration {
+    static ORIGIN: OnceLock<Instant> = OnceLock::new();
+    ORIGIN.get_or_init(Instant::now).elapsed()
+}
+
+/// `wasm32-unknown-unknown` has no clock the standard library can read
+/// (`Instant::now` panics there), so profiles start without one and a timeout
+/// needs a host-provided [`Clock`].
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+const DEFAULT_CLOCK: Option<Clock> = Some(std_clock);
+#[cfg(all(target_family = "wasm", target_os = "unknown"))]
+const DEFAULT_CLOCK: Option<Clock> = None;
 
 /// Holds settings that constrain how operations execute within the engine.
 ///
@@ -33,6 +57,39 @@ use crate::error::EngineError;
 ///
 /// let execution_profile = ExecutionProfileBuilder::new()
 ///     .execution_timeout(5) // 5ms
+///     .build();
+///
+/// execution_profile.run(|| {
+///     assert_eq!(EngineError::OperationTimeOutError, term.generate_strings(100_000_000, 0, GenerationOptions::new()).unwrap_err());
+/// });
+/// ```
+///
+/// ## Supplying the clock
+///
+/// The timeout compares readings of a monotonic [`Clock`]. The default reads
+/// [`std::time::Instant`]; on `wasm32-unknown-unknown`, where the standard
+/// library has no clock, pass one from the host (a binding to
+/// `performance.now()`, which is monotonic; `Date.now()` is not). Any monotonic
+/// `fn() -> Duration` works, which also makes a timeout testable without
+/// waiting for it:
+///
+/// ```
+/// use std::sync::atomic::{AtomicU64, Ordering};
+/// use std::time::Duration;
+/// use regexsolver::{Term, execution_profile::ExecutionProfileBuilder, error::EngineError, fast_automaton::GenerationOptions};
+///
+/// // Advances one millisecond per reading, so the deadline is hit after a
+/// // fixed number of checks rather than after real time has passed.
+/// static READINGS: AtomicU64 = AtomicU64::new(0);
+/// fn ticking_clock() -> Duration {
+///     Duration::from_millis(READINGS.fetch_add(1, Ordering::Relaxed))
+/// }
+///
+/// let term = Term::from_pattern(".*abc.*cdef.*sqdsqf.*").unwrap();
+///
+/// let execution_profile = ExecutionProfileBuilder::new()
+///     .execution_timeout(5)
+///     .clock(ticking_clock)
 ///     .build();
 ///
 /// execution_profile.run(|| {
@@ -90,9 +147,13 @@ pub struct ExecutionProfile {
     /// The longest an operation may run, in milliseconds. It is checked
     /// between steps, so the exact time is not guaranteed.
     execution_timeout: Option<u64>,
-    /// The instant past which [`EngineError::OperationTimeOutError`] is
-    /// returned.
-    execution_deadline: Option<Instant>,
+    /// The [`clock`](ExecutionProfileBuilder::clock) reading past which
+    /// [`EngineError::OperationTimeOutError`] is returned. Set by
+    /// [`run`](Self::run), and only when a clock is available.
+    execution_deadline: Option<Duration>,
+    /// The clock the timeout is measured against; `None` on a target without
+    /// one, until the host supplies it.
+    clock: Option<Clock>,
     /// Whether [`FastAutomaton`](crate::fast_automaton::FastAutomaton)
     /// operations that require a deterministic automaton may determinize a
     /// non-deterministic input on their own (the default). When `false`,
@@ -105,9 +166,9 @@ pub struct ExecutionProfile {
 }
 
 /// Equality compares the *configuration* (state limit, timeout, implicit
-/// determinization) and deliberately ignores `execution_deadline`: two
-/// profiles built alike compare equal whether or not one is currently
-/// installed and running.
+/// determinization) and deliberately ignores `execution_deadline` and the
+/// clock: two profiles built alike compare equal whether or not one is
+/// currently installed and running, and whichever clock they read.
 impl PartialEq for ExecutionProfile {
     fn eq(&self, other: &ExecutionProfile) -> bool {
         self.max_number_of_states == other.max_number_of_states
@@ -137,15 +198,12 @@ impl ExecutionProfile {
     ///
     /// Return [`EngineError::OperationTimeOutError`] otherwise.
     pub fn assert_not_timed_out(&self) -> Result<(), EngineError> {
-        if let Some(execution_deadline) = self.execution_deadline {
-            if Instant::now() > execution_deadline {
-                Err(EngineError::OperationTimeOutError)
-            } else {
-                Ok(())
-            }
-        } else {
-            Ok(())
+        if let (Some(execution_deadline), Some(clock)) = (self.execution_deadline, self.clock)
+            && clock() > execution_deadline
+        {
+            return Err(EngineError::OperationTimeOutError);
         }
+        Ok(())
     }
 
     /// Whether a maximum number of states is configured. When it is not, the
@@ -211,7 +269,26 @@ impl ExecutionProfile {
         self
     }
 
+    /// Returns a copy of this profile reading the time from `clock`. See
+    /// [`ExecutionProfileBuilder::clock`].
+    ///
+    /// A deadline already computed by [`run`](Self::run) is dropped, since it
+    /// was measured against the previous clock and the two origins are
+    /// unrelated. The next `run` computes one against `clock`.
+    pub fn with_clock(mut self, clock: Clock) -> Self {
+        self.clock = Some(clock);
+        self.execution_deadline = None;
+        self
+    }
+
     /// Runs the given closure with this profile installed for the current thread, setting its start time to now.
+    ///
+    /// # Panics
+    ///
+    /// If an execution timeout is set but the profile has no [`Clock`]. That
+    /// only happens where the standard library cannot read the time and none
+    /// is installed by default; supply one with [`ExecutionProfileBuilder::clock`]
+    /// or [`with_clock`](Self::with_clock).
     pub fn run<F, R>(&self, f: F) -> R
     where
         F: FnOnce() -> R,
@@ -220,11 +297,15 @@ impl ExecutionProfile {
 
         let mut execution_profile = self.clone();
         if let Some(execution_timeout) = execution_profile.execution_timeout {
-            // `Instant + Duration` overflow behavior is platform-dependent; a
-            // timeout so large the deadline is unrepresentable is equivalent
+            let clock = execution_profile.clock.expect(
+                "an execution timeout is set but the profile has no clock: this target cannot \
+                 read the time through the standard library, so supply one with \
+                 `ExecutionProfileBuilder::clock` (for instance a binding to `performance.now()`)",
+            );
+            // A timeout so large the deadline is unrepresentable is equivalent
             // to no deadline at all.
             execution_profile.execution_deadline =
-                Instant::now().checked_add(Duration::from_millis(execution_timeout));
+                clock().checked_add(Duration::from_millis(execution_timeout));
         }
 
         ThreadLocalParams::set_execution_profile(&execution_profile);
@@ -278,6 +359,9 @@ pub struct ExecutionProfileBuilder {
     /// Whether operations requiring a deterministic automaton may determinize
     /// a non-deterministic input on their own. Defaults to `true`.
     implicit_determinization: bool,
+    /// The clock the timeout is measured against. Defaults to the standard
+    /// library's, where it has one.
+    clock: Option<Clock>,
 }
 impl Default for ExecutionProfileBuilder {
     fn default() -> Self {
@@ -294,15 +378,32 @@ impl ExecutionProfileBuilder {
             max_number_of_states: None,
             execution_timeout: None,
             implicit_determinization: true,
+            clock: DEFAULT_CLOCK,
         }
     }
 
     /// Sets the longest time, in milliseconds, that an operation may run before
     /// it aborts with [`EngineError::OperationTimeOutError`]. Enforcement is
     /// best-effort (checked between internal steps), so the exact deadline is
-    /// not guaranteed. Unset by default (no timeout).
+    /// not guaranteed. Unset by default (no timeout). The time is read from
+    /// the profile's [`clock`](Self::clock).
     pub fn execution_timeout(mut self, execution_timeout_in_ms: u64) -> Self {
         self.execution_timeout = Some(execution_timeout_in_ms);
+        self
+    }
+
+    /// Sets the [`Clock`] the execution timeout is measured against: any
+    /// monotonic `fn() -> Duration`, compared by difference only.
+    ///
+    /// Defaults to [`std::time::Instant`], so this is only required where the
+    /// standard library cannot read the time: bind `performance.now()` from the
+    /// host and pass it here. A wall clock such as `Date.now()` does not
+    /// qualify: it steps when the system time is adjusted, which either times
+    /// an operation out early or never. Elsewhere it is a way to make the
+    /// timeout deterministic, as in the
+    /// [type-level example](ExecutionProfile#supplying-the-clock).
+    pub fn clock(mut self, clock: Clock) -> Self {
+        self.clock = Some(clock);
         self
     }
 
@@ -335,6 +436,7 @@ impl ExecutionProfileBuilder {
             execution_timeout: self.execution_timeout,
             execution_deadline: None,
             implicit_determinization: self.implicit_determinization,
+            clock: self.clock,
         }
     }
 }
@@ -343,9 +445,10 @@ struct ThreadLocalParams;
 impl ThreadLocalParams {
     thread_local! {
         static MAX_NUMBER_OF_STATES: RefCell<Option<usize>> = const { RefCell::new(None) };
-        static EXECUTION_DEADLINE: RefCell<Option<Instant>> = const { RefCell::new(None) };
+        static EXECUTION_DEADLINE: RefCell<Option<Duration>> = const { RefCell::new(None) };
         static EXECUTION_TIMEOUT: RefCell<Option<u64>> = const { RefCell::new(None) };
         static IMPLICIT_DETERMINIZATION: RefCell<bool> = const { RefCell::new(true) };
+        static CLOCK: RefCell<Option<Clock>> = const { RefCell::new(DEFAULT_CLOCK) };
     }
 
     /// Store on the current thread [`ExecutionProfile`].
@@ -365,14 +468,22 @@ impl ThreadLocalParams {
         ThreadLocalParams::IMPLICIT_DETERMINIZATION.with(|cell| {
             *cell.borrow_mut() = profile.implicit_determinization;
         });
+
+        ThreadLocalParams::CLOCK.with(|cell| {
+            *cell.borrow_mut() = profile.clock;
+        });
     }
 
     fn get_max_number_of_states() -> Option<usize> {
         ThreadLocalParams::MAX_NUMBER_OF_STATES.with(|cell| *cell.borrow())
     }
 
-    fn get_execution_deadline() -> Option<Instant> {
+    fn get_execution_deadline() -> Option<Duration> {
         ThreadLocalParams::EXECUTION_DEADLINE.with(|cell| *cell.borrow())
+    }
+
+    fn get_clock() -> Option<Clock> {
+        ThreadLocalParams::CLOCK.with(|cell| *cell.borrow())
     }
 
     fn get_execution_timeout() -> Option<u64> {
@@ -390,18 +501,138 @@ impl ThreadLocalParams {
             execution_deadline: Self::get_execution_deadline(),
             execution_timeout: Self::get_execution_timeout(),
             implicit_determinization: Self::get_implicit_determinization(),
+            clock: Self::get_clock(),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        cell::Cell,
+        sync::atomic::{AtomicU64, Ordering},
+        time::Instant,
+    };
+
     use crate::{Term, fast_automaton::GenerationOptions, regex::RegularExpression};
 
     use super::*;
 
     fn assert_send<T: Send>() {}
     fn assert_sync<T: Sync>() {}
+
+    thread_local! {
+        static FAKE_NOW: Cell<Duration> = const { Cell::new(Duration::ZERO) };
+    }
+
+    /// A clock the test moves by hand.
+    fn fake_clock() -> Duration {
+        FAKE_NOW.get()
+    }
+
+    /// A clock that advances one millisecond per reading.
+    fn ticking_clock() -> Duration {
+        static READINGS: AtomicU64 = AtomicU64::new(0);
+        Duration::from_millis(READINGS.fetch_add(1, Ordering::Relaxed))
+    }
+
+    #[test]
+    fn timeout_is_measured_against_the_profile_clock() {
+        FAKE_NOW.set(Duration::from_millis(1_000));
+        ExecutionProfileBuilder::new()
+            .execution_timeout(10)
+            .clock(fake_clock)
+            .build()
+            .run(|| {
+                let profile = ExecutionProfile::get();
+                assert!(profile.limits_execution_time());
+                assert!(profile.assert_not_timed_out().is_ok());
+
+                FAKE_NOW.set(Duration::from_millis(1_010));
+                assert!(
+                    profile.assert_not_timed_out().is_ok(),
+                    "the deadline itself is allowed"
+                );
+
+                FAKE_NOW.set(Duration::from_millis(1_011));
+                assert_eq!(
+                    profile.assert_not_timed_out().unwrap_err(),
+                    EngineError::OperationTimeOutError
+                );
+            });
+    }
+
+    #[test]
+    fn operation_times_out_on_an_injected_clock() {
+        let term = Term::from_pattern(".*abc.*def.*qdsqd.*sqdsqd.*qsdsqdsqdz").unwrap();
+        ExecutionProfileBuilder::new()
+            .execution_timeout(5)
+            .clock(ticking_clock)
+            .build()
+            .run(|| {
+                assert_eq!(
+                    EngineError::OperationTimeOutError,
+                    term.generate_strings(100_000_000, 0, GenerationOptions::new())
+                        .unwrap_err()
+                );
+            });
+    }
+
+    #[test]
+    fn apply_keeps_the_running_deadline() {
+        FAKE_NOW.set(Duration::ZERO);
+        ExecutionProfileBuilder::new()
+            .execution_timeout(10)
+            .clock(fake_clock)
+            .build()
+            .run(|| {
+                let running = ExecutionProfile::get();
+                FAKE_NOW.set(Duration::from_millis(20));
+                running.apply(|| {
+                    assert_eq!(
+                        ExecutionProfile::get().assert_not_timed_out().unwrap_err(),
+                        EngineError::OperationTimeOutError
+                    );
+                });
+            });
+    }
+
+    #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+    #[test]
+    fn ambient_profile_has_the_default_clock() {
+        ExecutionProfile::get()
+            .with_execution_timeout(60_000)
+            .run(|| {
+                let profile = ExecutionProfile::get();
+                assert!(profile.limits_execution_time());
+                assert!(profile.assert_not_timed_out().is_ok());
+            });
+    }
+
+    #[test]
+    #[cfg_attr(
+        target_family = "wasm",
+        ignore = "wasm is panic = abort: a panicking test aborts the whole binary"
+    )]
+    #[should_panic(expected = "no clock")]
+    fn run_without_a_clock_panics_clearly() {
+        let mut profile = ExecutionProfileBuilder::new().execution_timeout(10).build();
+        profile.clock = None;
+        profile.run(|| {});
+    }
+
+    #[test]
+    fn run_without_a_timeout_needs_no_clock() {
+        let mut profile = ExecutionProfileBuilder::new()
+            .max_number_of_states(3)
+            .build();
+        profile.clock = None;
+        profile.run(|| {
+            let profile = ExecutionProfile::get();
+            assert!(!profile.limits_execution_time());
+            assert!(profile.assert_not_timed_out().is_ok());
+        });
+    }
 
     // `max_number_of_states(N)` allows exactly N states and only rejects N+1,
     // matching the documented "maximum an automaton may hold".
@@ -430,6 +661,10 @@ mod tests {
     // closure panics: a leaked temporary profile would permanently poison
     // pooled (e.g. rayon) threads.
     #[test]
+    #[cfg_attr(
+        target_family = "wasm",
+        ignore = "wasm is panic = abort: a panicking test aborts the whole binary"
+    )]
     fn run_restores_previous_profile_on_panic() {
         let outer = ExecutionProfileBuilder::new()
             .max_number_of_states(123)

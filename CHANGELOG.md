@@ -4,6 +4,18 @@ All notable changes to this crate are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- On `wasm32-unknown-unknown`, `ahash` uses its `compile-time-rng` feature instead of the default `runtime-rng`, so `getrandom`, which otherwise requires a backend opt-in from the final binary on that target, is no longer compiled into the library and the crate builds there out of the box. Hash keys are drawn at build time rather than at process start; other targets are unchanged.
+- `rayon` is no longer a dependency on `wasm` targets, whatever the features: the target has no threads, so `rayon` only ever ran its single-thread fallback there. The `parallel` feature stays enabled and compiles to the same sequential code as `--no-default-features`, so `wasm` consumers keep it out of their build even when another crate in the graph turns it on. `FastAutomaton::union_all_par` and `FastAutomaton::intersection_all_par` are therefore absent on `wasm`; every other item is unchanged, as is every non-`wasm` target.
+
+### Added
+- `ExecutionProfileBuilder::clock` and `ExecutionProfile::with_clock`, plus the `execution_profile::Clock` type (`fn() -> Duration`): the monotonic clock the execution timeout is measured against. It defaults to `std::time::Instant`, so existing profiles behave as before. On `wasm32-unknown-unknown`, where the standard library cannot read the time and a timeout previously panicked inside `Instant::now`, the host supplies one (a binding to `performance.now()`, say) and the timeout works; setting a timeout there without a clock makes `run` panic with a message saying so. A custom clock also makes timeouts deterministic in tests, as the `ExecutionProfile` documentation shows.
+
+### Fixed
+- On 32-bit targets (`wasm32`, `i686`, `armv7`, ...), `CharacterOrder::Shuffled` and `PathOrder::Shuffled` drew from the first 2^32 combinations of each path only, because the window indexing them was a `usize`: for `[a-z]{20}` every string shared its first 13 characters. The window is now 64-bit on every target; 64-bit targets are unchanged.
+
 ## [1.0.1] - 2026-09-07
 
 A maintenance release covering dependencies and packaging. The public API is unchanged, and no operation returns a different result.

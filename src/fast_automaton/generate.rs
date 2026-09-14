@@ -387,7 +387,7 @@ impl FastAutomaton {
                 // cursors; the shuffled one has to index them through the
                 // permutation, which a window over everything is.
                 let window =
-                    (options.characters == CharacterOrder::Shuffled).then_some(0..usize::MAX);
+                    (options.characters == CharacterOrder::Shuffled).then_some(0..u64::MAX);
                 generation.walk(self, window.as_ref(), None)?;
             }
             PathOrder::Interleave | PathOrder::Shuffled => {
@@ -399,7 +399,7 @@ impl FastAutomaton {
                 // a pass finds nothing left to cover. Exhausting the automaton
                 // also proves the paths finite and leaves them in `cache`, so
                 // the passes after it replay them instead of searching again.
-                let mut window = 0..1;
+                let mut window = 0u64..1;
                 let mut cache = PathCache::new();
                 loop {
                     let covered = if cache.complete {
@@ -636,9 +636,9 @@ impl<'a> Generation<'a> {
     fn walk(
         &mut self,
         automaton: &'a FastAutomaton,
-        window: Option<&Range<usize>>,
+        window: Option<&Range<u64>>,
         mut cache: Option<&mut PathCache>,
-    ) -> Result<usize, EngineError> {
+    ) -> Result<u64, EngineError> {
         let start_state = automaton.start_state();
 
         // If the start state can't reach an accept state, exit immediately
@@ -646,7 +646,7 @@ impl<'a> Generation<'a> {
             return Ok(0);
         }
 
-        let mut covered = 0usize;
+        let mut covered = 0u64;
 
         let mut q = BinaryHeap::new();
         q.push(QueueItem {
@@ -677,7 +677,7 @@ impl<'a> Generation<'a> {
                 let resolved = resolve(&self.range_pool, &ranges);
                 covered = covered.saturating_add(match window {
                     Some(window) => self.emitter.emit_window(&resolved, &ranges, window)?,
-                    None => self.emitter.emit_all(&resolved)?,
+                    None => self.emitter.emit_all(&resolved)? as u64,
                 });
 
                 if self.emitter.is_full() {
@@ -772,8 +772,8 @@ impl<'a> Generation<'a> {
     /// Emits `window` from every path of a complete [`PathCache`], in the
     /// order the search popped them: what a [`walk`](Self::walk) pass would
     /// do, minus the search.
-    fn replay(&mut self, cache: &PathCache, window: &Range<usize>) -> Result<usize, EngineError> {
-        let mut covered = 0usize;
+    fn replay(&mut self, cache: &PathCache, window: &Range<u64>) -> Result<u64, EngineError> {
+        let mut covered = 0u64;
 
         for path in cache.paths() {
             self.emitter.execution_profile.assert_not_timed_out()?;
@@ -903,8 +903,8 @@ impl Emitter {
         &mut self,
         ranges: &[&CharRange],
         path: &[u32],
-        window: &Range<usize>,
-    ) -> Result<usize, EngineError> {
+        window: &Range<u64>,
+    ) -> Result<u64, EngineError> {
         let range_lengths: Vec<u128> = ranges.iter().map(|r| r.get_cardinality() as u128).collect();
 
         // `None` once the product stops fitting: such a path holds more
@@ -912,16 +912,15 @@ impl Emitter {
         let total_combinations = range_lengths
             .iter()
             .try_fold(1u128, |total, &len| total.checked_mul(len));
-        let bound =
-            total_combinations.map_or(usize::MAX, |total| total.min(usize::MAX as u128) as usize);
+        let bound = total_combinations.map_or(u64::MAX, |total| total.min(u64::MAX as u128) as u64);
 
         let covered = window.end.min(bound) - window.start.min(bound);
-        if self.offset >= covered {
-            self.offset -= covered;
+        if self.offset as u64 >= covered {
+            self.offset -= covered as usize;
             return Ok(covered);
         }
 
-        let first = window.start.min(bound) + self.offset;
+        let first = window.start.min(bound) + self.offset as u64;
         self.offset = 0;
 
         let tweak = self

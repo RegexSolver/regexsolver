@@ -32,8 +32,9 @@ impl FastAutomaton {
 
     /// Computes in parallel the intersection of all automata in the given iterator.
     ///
-    /// Only available with the `parallel` feature (enabled by default).
-    #[cfg(feature = "parallel")]
+    /// Only available with the `parallel` feature (enabled by default), and not
+    /// on `wasm`, which has no threads and does not depend on `rayon`.
+    #[cfg(all(feature = "parallel", not(target_family = "wasm")))]
     #[tracing::instrument(level = "debug", skip_all)]
     pub fn intersection_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(
         automata: I,

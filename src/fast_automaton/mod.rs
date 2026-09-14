@@ -409,6 +409,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        target_family = "wasm",
+        ignore = "wasm is panic = abort: a panicking test aborts the whole binary"
+    )]
     #[should_panic(expected = "does not exist")]
     fn remove_states_panics_clearly_on_out_of_range() {
         let mut a = FastAutomaton::new_total();
@@ -418,6 +422,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        target_family = "wasm",
+        ignore = "wasm is panic = abort: a panicking test aborts the whole binary"
+    )]
     #[should_panic(expected = "does not exist")]
     fn remove_states_panics_clearly_on_tombstoned_id() {
         let mut a = FastAutomaton::new_empty();
