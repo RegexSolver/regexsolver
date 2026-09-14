@@ -916,7 +916,6 @@ impl Emitter {
 
         let covered = window.end.min(bound) - window.start.min(bound);
         if self.offset as u64 >= covered {
-            // `covered` fits: it is at most `offset`, a `usize`.
             self.offset -= covered as usize;
             return Ok(covered);
         }
