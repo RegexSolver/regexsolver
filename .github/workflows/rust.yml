@@ -30,11 +30,14 @@ jobs:
         run: cargo test --locked --all-targets
       - name: Test with no default features
         run: cargo test --locked --no-default-features --all-targets
+      # The tests needing model weights are ignored; this covers the rest.
+      - name: Test with neural synthesis
+        run: cargo test --locked --features neural-synthesis-hub --all-targets
 
       # `--all-targets` skips doctests, and the public API is documented with
-      # them.
+      # them; with neural synthesis, so its module's examples compile too.
       - name: Doctests
-        run: cargo test --locked --doc
+        run: cargo test --locked --features neural-synthesis-hub --doc
 
   lint:
     name: Format and Clippy
@@ -54,6 +57,8 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: Clippy (no default features)
         run: cargo clippy --locked --no-default-features --all-targets -- -D warnings
+      - name: Clippy (neural synthesis)
+        run: cargo clippy --locked --features neural-synthesis-hub --all-targets -- -D warnings
 
   docs:
     name: Documentation
@@ -66,9 +71,11 @@ jobs:
           toolchain: nightly
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
-      # Nightly with `--cfg docsrs`, to match how docs.rs builds the crate.
+      # Nightly with `--cfg docsrs`, to match how docs.rs builds the crate
+      # (its features: `package.metadata.docs.rs` in Cargo.toml). Not
+      # `--all-features`: the GPU backends need their toolkits.
       - name: Build documentation
-        run: cargo doc --locked --all-features --no-deps
+        run: cargo doc --locked --features neural-synthesis-hub --no-deps
         env:
           RUSTDOCFLAGS: --cfg docsrs -D warnings
 
@@ -90,9 +97,11 @@ jobs:
           toolchain: ${{ steps.msrv.outputs.msrv }}
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
+      # `neural-synthesis-hub` is left out: its Hub client needs a newer Rust
+      # (documented in the README), and the GPU backends need their toolkits.
       - name: Check on MSRV
         run: |
-          cargo check --locked --all-features
+          cargo check --locked --features neural-synthesis
           cargo check --locked --no-default-features
 
   # `wasm32-unknown-unknown` has no threads, no clock and no system randomness,

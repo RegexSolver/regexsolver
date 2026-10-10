@@ -455,3 +455,26 @@ fn errors_are_comparable_cloneable_and_non_exhaustive() {
     };
     assert_eq!("bounds", described);
 }
+
+#[cfg(feature = "neural-synthesis")]
+#[test]
+fn neural_synthesis_refuses_unusable_models() {
+    use regexsolver::neural_synthesis::{Device, NeuralSynthesisError, NeuralSynthesizer};
+
+    let config = br#"{"name": "x", "format": "other", "format_version": 1}"#;
+    let error = NeuralSynthesizer::from_bytes(config, vec![], Device::Cpu).unwrap_err();
+    assert_eq!(
+        NeuralSynthesisError::UnsupportedFormat {
+            format: "other".to_string(),
+            version: 1
+        },
+        error
+    );
+    assert_eq!(error, error.clone());
+    assert!(!error.to_string().is_empty());
+
+    assert!(matches!(
+        NeuralSynthesizer::from_dir("no-such-model", Device::Cpu),
+        Err(NeuralSynthesisError::Io(_))
+    ));
+}

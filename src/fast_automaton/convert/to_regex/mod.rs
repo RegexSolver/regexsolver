@@ -1,5 +1,7 @@
 use super::*;
 
+#[cfg(feature = "neural-synthesis")]
+pub mod neural_synthesis;
 mod state_elimination;
 
 impl FastAutomaton {
@@ -7,6 +9,39 @@ impl FastAutomaton {
     #[tracing::instrument(level = "debug", skip_all, fields(states = self.number_of_states()))]
     pub fn to_regex(&self) -> Result<RegularExpression, EngineError> {
         state_elimination::convert_to_regex(self)
+    }
+
+    /// Converts the automaton to a [`RegularExpression`], with the help of a
+    /// [`NeuralSynthesizer`](crate::neural_synthesis::NeuralSynthesizer).
+    ///
+    /// Returns the simpler of the model's verified proposal and
+    /// [`to_regex`](Self::to_regex)'s state elimination; state elimination
+    /// alone when the model has no correct proposal. The result always
+    /// describes exactly the automaton's language.
+    #[cfg(feature = "neural-synthesis")]
+    #[tracing::instrument(level = "debug", skip_all, fields(states = self.number_of_states()))]
+    pub fn to_regex_with(
+        &self,
+        synthesizer: &neural_synthesis::NeuralSynthesizer,
+    ) -> Result<RegularExpression, EngineError> {
+        let proposed = match synthesizer.propose(self) {
+            Ok(proposed) => proposed,
+            Err(err) => {
+                tracing::debug!("neural synthesis skipped: {err}");
+                None
+            }
+        };
+        let Some(proposed) = proposed else {
+            return self.to_regex();
+        };
+        match self.to_regex() {
+            Ok(eliminated) if eliminated.evaluate_complexity() < proposed.evaluate_complexity() => {
+                Ok(eliminated)
+            }
+            // The proposal stands on its own if state elimination runs out
+            // of budget.
+            _ => Ok(proposed),
+        }
     }
 }
 

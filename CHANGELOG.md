@@ -4,6 +4,14 @@ All notable changes to this crate are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Neural synthesis (`neural-synthesis` feature, off by default): `FastAutomaton::to_regex_with` and `Term::to_regex_with` convert an automaton with the help of a learned model, a `neural_synthesis::NeuralSynthesizer`. Every regex the model proposes is checked for equivalence with the automaton before use, and the simpler of the model's regex and state elimination's is returned, so the result is never wrong. Models are loaded from their `config.json` and `model.safetensors` (`from_files`, `from_dir`, `from_bytes`), or downloaded from the Hugging Face Hub with the `neural-synthesis-hub` feature (`from_hub`, `from_hub_revision`), and run with candle on a `Device`: the CPU, or a GPU with the `neural-synthesis-cuda`, `-cudnn` or `-metal` feature (`-mkl` and `-accelerate` speed up the CPU). The model format is read from `config.json`; the first supported one is Kleene (`kleene` v1), for minimal DFAs of at most 16 states and 16 bases. The `neural_synthesis` example compares both conversions.
+
+### Changed
+- `RegularExpression::evaluate_complexity` now returns the pattern's cognitive complexity, the measure the neural synthesis models are trained to minimize: every class costs 1 whatever its characters, and quantifiers, alternations and groups cost more the deeper they nest. State elimination (`to_regex`) uses it to order eliminations, so some converted patterns change; over the test corpus, patterns converted from DFAs are about 9% shorter.
+
 ## [1.0.2] - 2026-09-14
 
 ### Changed

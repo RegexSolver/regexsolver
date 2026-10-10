@@ -117,6 +117,32 @@ execution_profile.run(|| {
 
 The same profile caps how many states an automaton may hold (`max_number_of_states`, failing with `EngineError::AutomatonHasTooManyStates`), and can refuse implicit determinization outright (`implicit_determinization(false)`), so the potentially exponential subset construction only ever runs through an explicit `determinize()` call. Both are documented with examples on [`ExecutionProfile`](https://docs.rs/regexsolver/latest/regexsolver/execution_profile/struct.ExecutionProfile.html).
 
+## Simpler regexes with neural synthesis (optional)
+
+State elimination always produces a correct pattern, but not always a readable one. The `neural-synthesis` feature adds [`FastAutomaton::to_regex_with`](https://docs.rs/regexsolver/latest/regexsolver/fast_automaton/struct.FastAutomaton.html) and `Term::to_regex_with`, which ask a learned model for a shorter pattern through a `NeuralSynthesizer`. Each candidate is checked for equivalence with the automaton and discarded unless it matches exactly the same strings, so the result is never wrong; it falls back to state elimination otherwise, and keeps the simpler of the two.
+
+```rust,ignore
+use regexsolver::neural_synthesis::{Device, NeuralSynthesizer};
+
+// Downloaded once into the Hugging Face cache (`neural-synthesis-hub` feature)...
+let synthesizer = NeuralSynthesizer::from_hub(NeuralSynthesizer::DEFAULT_HUB_MODEL, Device::best_available())?;
+// ...or loaded from its files.
+let synthesizer = NeuralSynthesizer::from_files("config.json", "model.safetensors", Device::Cpu)?;
+
+let regex = automaton.to_regex_with(&synthesizer)?;
+```
+
+Models run with [candle](https://github.com/huggingface/candle). The model's format is read from its `config.json`; the first supported one is Kleene (`kleene1-9m-b16-t128`, 9M parameters), for minimal DFAs of at most 16 states and 16 character classes. On the CPU it adds tens to hundreds of milliseconds per conversion.
+
+| Feature | Adds |
+|---|---|
+| `neural-synthesis` | `NeuralSynthesizer`, loading models from their files |
+| `neural-synthesis-hub` | downloads from the Hugging Face Hub (`HF_HOME`, `HF_TOKEN` and `HF_ENDPOINT` apply); needs Rust 1.95, not available on `wasm` |
+| `neural-synthesis-cuda`, `-cudnn`, `-metal` | GPU devices (`Device::Cuda`, `Device::Metal`); need the CUDA toolkit or Metal |
+| `neural-synthesis-mkl`, `-accelerate` | faster CPU inference with Intel MKL or Apple Accelerate |
+
+On `wasm32-unknown-unknown`, the final binary has to enable [getrandom's `wasm_js` backend](https://docs.rs/getrandom/0.3/#webassembly-support), which candle depends on.
+
 ## Implementation
 
 - Patterns are parsed with [regex-syntax](https://docs.rs/regex-syntax/latest/regex_syntax/) and simplified into a small regular-expression AST; set operations run on finite automata; results convert back to patterns via state elimination.

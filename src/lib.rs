@@ -114,6 +114,8 @@ pub mod execution_profile;
 /// Finite automata: [`FastAutomaton`] and its building blocks (conditions,
 /// spanning sets).
 pub mod fast_automaton;
+#[cfg(feature = "neural-synthesis")]
+pub use fast_automaton::convert::to_regex::neural_synthesis;
 /// The parsed-pattern AST: [`RegularExpression`].
 pub mod regex;
 
@@ -1011,6 +1013,21 @@ impl Term {
         Ok(match self {
             Term::RegularExpression(regex) => Cow::Borrowed(regex),
             Term::Automaton(automaton) => Cow::Owned(automaton.to_regex()?),
+        })
+    }
+
+    /// Converts the term to a [`RegularExpression`], with the help of a
+    /// [`NeuralSynthesizer`](neural_synthesis::NeuralSynthesizer) when it is
+    /// automaton-backed: see [`FastAutomaton::to_regex_with`]. A regex-backed
+    /// term is borrowed as is.
+    #[cfg(feature = "neural-synthesis")]
+    pub fn to_regex_with(
+        &self,
+        synthesizer: &neural_synthesis::NeuralSynthesizer,
+    ) -> Result<Cow<'_, RegularExpression>, EngineError> {
+        Ok(match self {
+            Term::RegularExpression(regex) => Cow::Borrowed(regex),
+            Term::Automaton(automaton) => Cow::Owned(automaton.to_regex_with(synthesizer)?),
         })
     }
 

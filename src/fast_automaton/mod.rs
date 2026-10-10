@@ -19,7 +19,7 @@ mod builder;
 /// Transition labels: the bitvector [`Condition`] type over an automaton's
 /// spanning set of disjoint character ranges.
 pub mod condition;
-mod convert;
+pub(crate) mod convert;
 mod generate;
 mod operation;
 /// The [`SpanningSet`]: an automaton's partition of the alphabet into disjoint
