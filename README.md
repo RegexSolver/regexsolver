@@ -132,7 +132,7 @@ let regex = automaton.to_regex_with(&synthesizer)?;
 // to_regex_with: [a-egh]*hbh?
 ```
 
-Every pattern the model proposes is checked against the automaton, so the result is never wrong, and state elimination's pattern is kept when it is simpler. The model takes automata of up to 16 states; larger ones are split into pieces it can take. On the CPU, a conversion takes tens to hundreds of milliseconds, and up to seconds for automata of dozens of states.
+Every pattern the model proposes is checked against the automaton, so the result is never wrong, and state elimination's pattern is kept when it is simpler. The model, [Kleene](https://huggingface.co/alexvbrdn/kleene1-9m-b16-t128), takes automata of up to 16 states; larger ones are split into pieces it can take. Conversions are slower than state elimination: on a CPU without MKL or Accelerate, expect a few hundred milliseconds for automata of up to 16 states (occasionally more than a second), and from about a second to tens of seconds for larger ones. Actual times vary with the CPU.
 
 | Feature | Adds |
 |---|---|
