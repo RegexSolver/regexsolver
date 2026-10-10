@@ -21,7 +21,7 @@ impl NeuralSynthesizer {
     }
 
     /// Downloads a model from the Hugging Face Hub at `revision` (a branch,
-    /// a tag such as a release `r1`, or a commit hash) and loads it.
+    /// a release tag such as `v1.0`, or a commit hash) and loads it.
     pub fn from_hub_revision(
         repo_id: &str,
         revision: &str,
