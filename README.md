@@ -117,6 +117,32 @@ execution_profile.run(|| {
 
 The same profile caps how many states an automaton may hold (`max_number_of_states`, failing with `EngineError::AutomatonHasTooManyStates`), and can refuse implicit determinization outright (`implicit_determinization(false)`), so the potentially exponential subset construction only ever runs through an explicit `determinize()` call. Both are documented with examples on [`ExecutionProfile`](https://docs.rs/regexsolver/latest/regexsolver/execution_profile/struct.ExecutionProfile.html).
 
+## Simpler regexes with neural synthesis (optional)
+
+`to_regex` converts an automaton back to a pattern by state elimination, which is always correct but often hard to read. With the `neural-synthesis` feature, `to_regex_with` can ask a learned model instead:
+
+```rust,ignore
+use regexsolver::neural_synthesis::{Device, NeuralSynthesizer};
+
+// From the Hugging Face Hub (`neural-synthesis-hub` feature), or from its files with `from_files`.
+let synthesizer = NeuralSynthesizer::from_hub(NeuralSynthesizer::DEFAULT_HUB_MODEL, Device::best_available())?;
+
+let regex = automaton.to_regex_with(&synthesizer)?;
+// to_regex:      [a-eg]*h(b(hb)*(h{2}|([a-eg]|h[ac-eg])[a-eg]*h)|([ac-eg][a-eg]*)?h)*b(hb)*h?
+// to_regex_with: [a-egh]*hbh?
+```
+
+Every pattern the model proposes is checked against the automaton, so the result is never wrong, and state elimination's pattern is kept when it is simpler. The model, [Kleene](https://huggingface.co/alexvbrdn/kleene1-9m-b16-t128), takes automata of up to 16 states; larger ones are split into pieces it can take. Conversions are slower than state elimination: on a CPU without MKL or Accelerate, expect a few hundred milliseconds for automata of up to 16 states (occasionally more than a second), and from about a second to tens of seconds for larger ones. Actual times vary with the CPU.
+
+| Feature | Adds |
+|---|---|
+| `neural-synthesis` | `NeuralSynthesizer`, loading models from their files |
+| `neural-synthesis-hub` | downloads from the Hugging Face Hub; needs Rust 1.95, not available on `wasm` |
+| `neural-synthesis-cuda`, `-cudnn`, `-metal` | GPU devices; need the CUDA toolkit or Metal |
+| `neural-synthesis-mkl`, `-accelerate` | faster CPU inference with Intel MKL (needs oneAPI MKL's static libraries) or Apple Accelerate |
+
+On `wasm32-unknown-unknown`, build with `RUSTFLAGS='--cfg getrandom_backend="unsupported"'`: `getrandom`, which candle depends on, only compiles there with a backend chosen, and neural synthesis never asks it for randomness.
+
 ## Implementation
 
 - Patterns are parsed with [regex-syntax](https://docs.rs/regex-syntax/latest/regex_syntax/) and simplified into a small regular-expression AST; set operations run on finite automata; results convert back to patterns via state elimination.

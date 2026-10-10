@@ -1,3 +1,3 @@
 use super::*;
 
-mod to_regex;
+pub(crate) mod to_regex;

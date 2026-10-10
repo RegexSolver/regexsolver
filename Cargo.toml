@@ -20,6 +20,7 @@ include = [
     "/examples/**/*.rs",
     "/tests/**/*.rs",
     "/tests/data/*.txt",
+    "/tests/data/*.json",
     "/README.md",
     "/CHANGELOG.md",
     "/LICENSE",
@@ -32,12 +33,20 @@ regex-syntax = "0.8.11"
 regex-charclass = { version = "1.2.0", features = ["ucd-16"] }
 bit-set = "0.11.1"
 indexmap = "2.13.0"
+# `neural-synthesis`: learned DFA -> regex models, run with candle.
+candle-core = { version = "0.11.0", optional = true }
+candle-nn = { version = "0.11.0", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
 
 # `wasm` has no threads: `rayon` would build, but only as its single-thread
 # fallback. The `parallel` feature stays enabled there and compiles to the same
 # sequential code as `--no-default-features`, minus the dependency.
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 rayon = { version = "1.10.0", optional = true }
+# `neural-synthesis-hub`: downloads models from the Hugging Face Hub. Its
+# blocking client runs a tokio runtime on a thread, which `wasm` does not have.
+hf-hub = { version = "1.0.0", features = ["blocking"], optional = true }
 
 # `ahash` draws its hash keys from `getrandom`, which `wasm32-unknown-unknown` has
 # no backend for; there it falls back to `compile-time-rng`, drawing them at build
@@ -52,6 +61,18 @@ ahash = { version = "0.8.11", default-features = false, features = ["std", "comp
 [features]
 default = ["parallel"]
 parallel = ["dep:rayon"]
+# Converts small automata to short regexes with a learned model, each candidate
+# verified against the automaton before use (`neural_synthesis` module). Models
+# are loaded from their files (`config.json`, `model.safetensors`).
+neural-synthesis = ["dep:candle-core", "dep:candle-nn", "dep:serde", "dep:serde_json"]
+# Also downloads models from the Hugging Face Hub (not on `wasm`).
+neural-synthesis-hub = ["neural-synthesis", "dep:hf-hub"]
+# Hardware backends for the models (candle's).
+neural-synthesis-cuda = ["neural-synthesis", "candle-core/cuda", "candle-nn/cuda"]
+neural-synthesis-cudnn = ["neural-synthesis-cuda", "candle-core/cudnn", "candle-nn/cudnn"]
+neural-synthesis-metal = ["neural-synthesis", "candle-core/metal", "candle-nn/metal"]
+neural-synthesis-mkl = ["neural-synthesis", "candle-core/mkl", "candle-nn/mkl"]
+neural-synthesis-accelerate = ["neural-synthesis", "candle-core/accelerate", "candle-nn/accelerate"]
 
 [dev-dependencies]
 proptest = { version = "1", default-features = false, features = ["std", "bit-set"] }
@@ -60,8 +81,10 @@ regex = "1.13.1"
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
 
+# Not `all-features`: the hardware backends need their toolkits (CUDA, Metal,
+# MKL, Accelerate) to build, and add no API.
 [package.metadata.docs.rs]
-all-features = true
+features = ["neural-synthesis-hub"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [profile.bench]
@@ -70,3 +93,7 @@ codegen-units = 1
 [[bench]]
 name = "operations"
 harness = false
+
+[[example]]
+name = "neural_synthesis"
+required-features = ["neural-synthesis-hub"]

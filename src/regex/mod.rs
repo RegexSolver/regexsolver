@@ -272,94 +272,82 @@ impl RegularExpression {
         }
     }
 
-    /// Returns a heuristic score for the readability of the pattern.
+    /// Returns the cognitive complexity of the pattern: a readability score,
+    /// independent of the characters used.
+    ///
+    /// - class: 1.
+    /// - concatenation: the sum of its parts.
+    /// - alternation: its branches read one level deeper, plus `1 + depth` per
+    ///   extra branch.
+    /// - quantifier: its operand, plus the quantifier's weight × `(1 + depth)`;
+    ///   `?`, `*`, `+` are cheapest, then `{n}`, `{n,}`, `{m,n}`. A quantified
+    ///   group reads one level deeper, and a quantifier with another quantifier
+    ///   inside it pays an extra `1 + depth`.
+    ///
+    /// The empty string costs 0; the empty language `[]` is a class (1).
     pub fn evaluate_complexity(&self) -> f64 {
-        let (score, depth, _) = self.eval_inner();
-        score + Self::depth_penalty(depth)
-    }
+        const CLASS: f64 = 1.0;
+        const NESTED_QUANTIFIER: f64 = 1.0;
 
-    /// Returns: (score, max_depth, contains_repetition)
-    fn eval_inner(&self) -> (f64, usize, bool) {
-        match self {
-            RegularExpression::Character(range) => {
-                let len = range.to_regex().len() as f64;
-                // small, capped cost for raw length
-                let base = 1.0 + 0.05 * len.min(40.0);
-                (base, 1, false)
-            }
-
-            RegularExpression::Repetition(inner, min, max_opt) => {
-                let (inner_score, inner_depth, inner_has_rep) = inner.eval_inner();
-
-                // multipliers tuned for readability impact
-                let mut m = match max_opt {
-                    None => 1.6,
-                    Some(max) if max > min => 1.3,
-                    Some(max) if max == min && *min > 1 => 1.1,
-                    _ => 1.0,
-                };
-
-                // nested quantifiers like (...+)+ are harder
-                if inner_has_rep {
-                    m *= 1.5;
+        // Iterative, since a hand-built tree can nest arbitrarily deep. Each
+        // node adds its own cost at its depth. A quantifier's extra cost for
+        // holding another one is settled at the end: each quantifier marks
+        // the nearest one around it, which suffices, as that one is in turn
+        // inside any further ones.
+        let mut score = 0.0;
+        // Per quantifier: its `1 + depth`, and whether it holds another one.
+        let mut quantifiers: Vec<(f64, bool)> = Vec::new();
+        let mut stack = vec![(self, 0usize, None::<usize>)];
+        while let Some((node, depth, enclosing)) = stack.pop() {
+            let nesting = 1.0 + depth as f64;
+            match node {
+                RegularExpression::Character(_) => score += CLASS,
+                RegularExpression::Concat(items) => {
+                    stack.extend(items.iter().map(|item| (item, depth, enclosing)));
                 }
-
-                (inner_score * m, inner_depth + 1, true)
-            }
-
-            RegularExpression::Concat(items) => {
-                let mut sum = 0.0;
-                let mut max_depth = 0usize;
-                let mut has_rep = false;
-
-                for (i, it) in items.iter().enumerate() {
-                    let (s, d, h) = it.eval_inner();
-                    sum += s;
-                    if i > 0 {
-                        // tiny discount: linear sequences are relatively easy to read
-                        sum *= 0.98;
+                RegularExpression::Alternation(branches) => {
+                    score += branches.len().saturating_sub(1) as f64 * nesting;
+                    stack.extend(branches.iter().map(|branch| (branch, depth + 1, enclosing)));
+                }
+                RegularExpression::Repetition(inner, min, max) => {
+                    score += Self::quantifier_weight(*min, *max) * nesting;
+                    if let Some(enclosing) = enclosing {
+                        quantifiers[enclosing].1 = true;
                     }
-                    if d > max_depth {
-                        max_depth = d;
-                    }
-                    has_rep |= h;
+                    quantifiers.push((nesting, false));
+                    // A single class needs no group; anything else is a group
+                    // the reader has to enter.
+                    let inner_depth = match **inner {
+                        RegularExpression::Character(_) => depth,
+                        _ => depth + 1,
+                    };
+                    stack.push((inner, inner_depth, Some(quantifiers.len() - 1)));
                 }
-
-                (sum, max_depth + 1, has_rep)
-            }
-
-            RegularExpression::Alternation(branches) => {
-                if branches.is_empty() {
-                    return (0.0, 1, false);
-                }
-                let mut sum = 0.0;
-                let mut max_depth = 0usize;
-                let mut has_rep = false;
-
-                for b in branches {
-                    let (s, d, h) = b.eval_inner();
-                    sum += s;
-                    if d > max_depth {
-                        max_depth = d;
-                    }
-                    has_rep |= h;
-                }
-
-                // branching cost: more alternatives = harder to scan
-                let k = branches.len() as f64;
-                let multiplier = 1.0 + 0.15 * (k - 1.0);
-
-                (sum * multiplier, max_depth + 1, has_rep)
             }
         }
+        score
+            + quantifiers
+                .iter()
+                .filter(|(_, nested)| *nested)
+                .map(|(nesting, _)| NESTED_QUANTIFIER * nesting)
+                .sum::<f64>()
     }
 
-    fn depth_penalty(depth: usize) -> f64 {
-        // no penalty up to depth 2, then quadratic growth
-        if depth <= 2 {
-            0.0
-        } else {
-            ((depth - 2) as f64).powi(2) * 0.8
+    fn quantifier_weight(min: u32, max: Option<u32>) -> f64 {
+        /// `?`, `*`, `+`.
+        const SIMPLE_QUANTIFIER: f64 = 0.5;
+        /// `{n}`.
+        const EXACT_COUNT: f64 = 1.0;
+        /// `{n,}`.
+        const OPEN_COUNT: f64 = 1.5;
+        /// `{m,n}`.
+        const RANGE_COUNT: f64 = 2.0;
+
+        match (min, max) {
+            (0, Some(1)) | (0, None) | (1, None) => SIMPLE_QUANTIFIER,
+            (_, None) => OPEN_COUNT,
+            (min, Some(max)) if min == max => EXACT_COUNT,
+            _ => RANGE_COUNT,
         }
     }
 }
@@ -367,6 +355,23 @@ impl RegularExpression {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_evaluate_complexity() {
+        let complexity = |pattern: &str| {
+            RegularExpression::parse(pattern, false)
+                .unwrap()
+                .evaluate_complexity()
+        };
+        assert_eq!(complexity(""), 0.0);
+        assert_eq!(complexity("[]"), 1.0);
+        assert_eq!(complexity("abc"), 3.0);
+        assert_eq!(complexity("[a-c]*"), 1.5);
+        assert_eq!(complexity("(ab|c)"), 4.0);
+        assert_eq!(complexity("(ab)*"), 2.5);
+        assert_eq!(complexity("(a*b)+"), 4.5);
+        assert!(complexity("[a-egh]*hbh?") < complexity("(h+b)+h?"));
+    }
 
     #[test]
     fn test_empty() -> Result<(), String> {

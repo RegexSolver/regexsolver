@@ -19,13 +19,14 @@ mod builder;
 /// Transition labels: the bitvector [`Condition`] type over an automaton's
 /// spanning set of disjoint character ranges.
 pub mod condition;
-mod convert;
+pub(crate) mod convert;
 mod generate;
 mod operation;
 /// The [`SpanningSet`]: an automaton's partition of the alphabet into disjoint
 /// character ranges, over which transition conditions are defined.
 pub mod spanning_set;
 
+pub use convert::to_regex::{RegexSynthesizer, StateElimination};
 pub use generate::{CharacterOrder, GenerationOptions, PathOrder};
 
 /// The block of code points `char` cannot hold: [`regex_charclass::char::Char`]
