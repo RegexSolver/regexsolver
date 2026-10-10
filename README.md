@@ -141,7 +141,7 @@ Every pattern the model proposes is checked against the automaton, so the result
 | `neural-synthesis-cuda`, `-cudnn`, `-metal` | GPU devices; need the CUDA toolkit or Metal |
 | `neural-synthesis-mkl`, `-accelerate` | faster CPU inference with Intel MKL (needs oneAPI MKL's static libraries) or Apple Accelerate |
 
-On `wasm32-unknown-unknown`, candle needs a `getrandom` backend: [`wasm_js`](https://docs.rs/getrandom/0.3/#webassembly-support) with JavaScript, or `RUSTFLAGS='--cfg getrandom_backend="unsupported"'` without, as neural synthesis uses no randomness.
+On `wasm32-unknown-unknown`, build with `RUSTFLAGS='--cfg getrandom_backend="unsupported"'`: `getrandom`, which candle depends on, only compiles there with a backend chosen, and neural synthesis never asks it for randomness.
 
 ## Implementation
 
