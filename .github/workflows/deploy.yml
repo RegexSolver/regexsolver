@@ -42,13 +42,15 @@ jobs:
         run: |
           cargo clippy --locked --all-targets -- -D warnings
           cargo clippy --locked --no-default-features --all-targets -- -D warnings
+          cargo clippy --locked --features neural-synthesis-hub --all-targets -- -D warnings
       - name: Test
         run: |
           cargo test --locked --all-targets
           cargo test --locked --no-default-features --all-targets
-          cargo test --locked --doc
+          cargo test --locked --features neural-synthesis-hub --all-targets
+          cargo test --locked --features neural-synthesis-hub --doc
       - name: Docs
-        run: cargo doc --locked --no-deps
+        run: cargo doc --locked --features neural-synthesis-hub --no-deps
 
       # Also verify the declared MSRV before publishing, like CI does.
       - name: Read MSRV from Cargo.toml
@@ -57,9 +59,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master
         with:
           toolchain: ${{ steps.msrv.outputs.msrv }}
+      # `neural-synthesis-hub` is left out: its Hub client needs a newer Rust
+      # (documented in the README), and the GPU backends need their toolkits.
       - name: Check on MSRV
         run: |
-          cargo +${{ steps.msrv.outputs.msrv }} check --locked --all-features
+          cargo +${{ steps.msrv.outputs.msrv }} check --locked --features neural-synthesis
           cargo +${{ steps.msrv.outputs.msrv }} check --locked --no-default-features
 
       # Checks the tarball is complete and builds on its own, before an upload
