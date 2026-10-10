@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-10
+
 ### Added
 - `FastAutomaton::to_regex_with` and `Term::to_regex_with` convert an automaton with any `fast_automaton::RegexSynthesizer`, such as `fast_automaton::StateElimination` (what `to_regex` uses) or a dependent's own.
 - Neural synthesis (`neural-synthesis` feature, off by default): `neural_synthesis::NeuralSynthesizer`, a `RegexSynthesizer` that asks a learned model for simpler regexes. Every proposal is checked against the automaton, and state elimination's regex is kept when it is simpler, so the result is never wrong. Automata too large for the model are split into pieces it can take. Models are loaded from their files, or from the Hugging Face Hub with `neural-synthesis-hub`, and run on the CPU or, with `neural-synthesis-cuda`, `-cudnn` or `-metal`, a GPU (`-mkl` and `-accelerate` speed up the CPU). The first supported model is [Kleene](https://huggingface.co/alexvbrdn/kleene1-9m-b16-t128), for automata of up to 16 states. The `neural_synthesis` example compares both conversions.
@@ -91,6 +93,8 @@ This is a major redesign of the public API around the `Term` enum (wrapping eith
 
 Releases prior to 1.0.0 (`v0.1.0` through `v0.3.1`) predate this changelog; see the [GitHub tags](https://github.com/RegexSolver/regexsolver/tags) and commit history for details.
 
-[Unreleased]: https://github.com/RegexSolver/regexsolver/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/RegexSolver/regexsolver/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/RegexSolver/regexsolver/compare/v1.0.2...v1.1.0
+[1.0.2]: https://github.com/RegexSolver/regexsolver/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/RegexSolver/regexsolver/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/RegexSolver/regexsolver/compare/v0.3.1...v1.0.0
