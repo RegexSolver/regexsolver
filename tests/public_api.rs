@@ -456,6 +456,52 @@ fn errors_are_comparable_cloneable_and_non_exhaustive() {
     assert_eq!("bounds", described);
 }
 
+/// `to_regex_with` takes any `RegexSynthesizer`, the crate's or a dependent's
+/// own, concrete or as a trait object.
+#[test]
+fn to_regex_with_takes_any_synthesizer() {
+    use regexsolver::fast_automaton::{RegexSynthesizer, StateElimination};
+
+    /// A dependent's own: state elimination's regex, simplified.
+    struct Simplified;
+    impl RegexSynthesizer for Simplified {
+        fn synthesize(&self, automaton: &FastAutomaton) -> Result<RegularExpression, EngineError> {
+            Ok(automaton.to_regex()?.simplify())
+        }
+    }
+
+    let automaton = RegularExpression::new("(ab|cd)*e")
+        .unwrap()
+        .to_automaton()
+        .unwrap();
+    assert_eq!(
+        automaton.to_regex_with(&StateElimination).unwrap(),
+        automaton.to_regex().unwrap()
+    );
+    let synthesizers: [&dyn RegexSynthesizer; 2] = [&StateElimination, &Simplified];
+    for synthesizer in synthesizers {
+        let regex = automaton.to_regex_with(synthesizer).unwrap();
+        assert!(
+            regex
+                .to_automaton()
+                .unwrap()
+                .equivalent(&automaton)
+                .unwrap()
+        );
+
+        let converted = Term::Automaton(automaton.clone());
+        assert_eq!(
+            converted.to_regex_with(synthesizer).unwrap().into_owned(),
+            regex
+        );
+        let regex_backed = term("abc");
+        assert!(matches!(
+            regex_backed.to_regex_with(synthesizer).unwrap(),
+            Cow::Borrowed(_)
+        ));
+    }
+}
+
 #[cfg(feature = "neural-synthesis")]
 #[test]
 fn neural_synthesis_refuses_unusable_models() {

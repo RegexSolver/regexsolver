@@ -26,6 +26,7 @@ mod operation;
 /// character ranges, over which transition conditions are defined.
 pub mod spanning_set;
 
+pub use convert::to_regex::{RegexSynthesizer, StateElimination};
 pub use generate::{CharacterOrder, GenerationOptions, PathOrder};
 
 /// The block of code points `char` cannot hold: [`regex_charclass::char::Char`]

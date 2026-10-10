@@ -9,11 +9,16 @@ use candle_nn::{
 };
 use serde::Deserialize;
 
+use super::attention::{AttendOne, attend_one_unfused};
 use super::grammar::PrefixGrammar;
 use super::graph::Graph;
 use super::tokens::{BOS, CHAR, EOS, VOCAB_SIZE};
 
 const LAYER_NORM_EPS: f64 = 1e-5;
+/// Most nodes encoded together.
+const ENCODER_NODES: usize = 512;
+/// Decoder positions the self-attention cache first has room for.
+const INITIAL_CAPACITY: usize = 16;
 /// Added to the attention denominators of the graph layers, as PyG does.
 const SOFTMAX_EPS: f64 = 1e-16;
 
@@ -73,31 +78,49 @@ impl Attention {
             .contiguous()
     }
 
-    /// Unmasked self-attention over `x` `[N, d]`.
-    fn self_attend(&self, x: &Tensor) -> Result<Tensor> {
+    /// Self-attention over `x` `[N, d]`, the pairs where `mask` `[N, N]` is
+    /// -∞ left out.
+    fn self_attend(&self, x: &Tensor, mask: Option<&Tensor>) -> Result<Tensor> {
         let (n, d) = x.dims2()?;
         let qkv = self.qkv.forward(x)?;
         let [q, k, v] = [0, 1, 2].map(|i| qkv.narrow(1, i * d, d).and_then(|x| self.split(&x)));
         let (q, k, v) = (q?, k?, v?);
-        let scores = (q.matmul(&k.t()?)? / ((d / self.heads) as f64).sqrt())?;
+        let mut scores = (q.matmul(&k.t()?)? / ((d / self.heads) as f64).sqrt())?;
+        if let Some(mask) = mask {
+            scores = scores.broadcast_add(mask)?;
+        }
         let attended = candle_nn::ops::softmax_last_dim(&scores)?.matmul(&v)?;
         self.out
             .forward(&attended.transpose(0, 1)?.reshape((n, d))?)
     }
 
     /// One query per row: `q` `[B, d]` over `keys` and `values` `[B or 1,
-    /// heads, T, d / heads]`. Returns `[B, d]` after the output projection.
-    ///
-    /// Multiply-and-sum rather than matmul: candle runs a batched matmul as
-    /// one gemm call per matrix, far slower for `B × heads` single rows.
-    fn attend_one(&self, q: &Tensor, keys: &Tensor, values: &Tensor) -> Result<Tensor> {
-        let (b, d) = q.dims2()?;
-        let hd = d / self.heads;
-        let q = q.reshape((b, self.heads, 1, hd))?;
-        let scores = (keys.broadcast_mul(&q)?.sum(D::Minus1)? / (hd as f64).sqrt())?;
-        let weights = candle_nn::ops::softmax_last_dim(&scores)?.unsqueeze(D::Minus1)?;
-        let attended = values.broadcast_mul(&weights)?.sum(2)?;
-        self.out.forward(&attended.reshape((b, d))?)
+    /// heads, T, d / heads]`, each row attending to its first
+    /// `key_lengths[row]` keys, all without them. `key_mask` `[B, 1, T]`, -∞
+    /// past each row's keys, says the same: the CPU's [`AttendOne`] reads the
+    /// lengths, the other devices' tensor operations the mask. Returns
+    /// `[B, d]` after the output projection.
+    fn attend_one(
+        &self,
+        q: &Tensor,
+        keys: &Tensor,
+        values: &Tensor,
+        key_lengths: Option<&[u32]>,
+        key_mask: Option<&Tensor>,
+    ) -> Result<Tensor> {
+        let attended = if q.device().is_cpu() {
+            q.apply_op3_no_bwd(
+                keys,
+                values,
+                &AttendOne {
+                    heads: self.heads,
+                    lengths: key_lengths,
+                },
+            )?
+        } else {
+            attend_one_unfused(q, keys, values, key_mask, self.heads)?
+        };
+        self.out.forward(&attended)
     }
 }
 
@@ -120,20 +143,43 @@ impl FeedForward {
     }
 }
 
-/// The edges of a graph, laid out for [`TransformerConv`].
+/// The edges of graphs, laid out for [`TransformerConv`].
 struct Edges {
     src: Tensor,
     dst: Tensor,
-    /// `[N, E]`: 1 where edge `e` ends at node `n`.
-    incoming: Tensor,
-    /// `[N, E, 1]`: 0 where edge `e` ends at node `n`, -∞ elsewhere.
-    incoming_bias: Tensor,
+    /// `dst` on the host, for the softmax's per-node maxima.
+    dst_nodes: Vec<u32>,
     /// `[E, edge_dim]` edge-type embeddings.
     embedded: Tensor,
 }
 
+impl Edges {
+    /// For each edge, the largest of `scores` `[E, H]` over the edges into
+    /// the same node, per head.
+    fn incoming_max(&self, scores: &Tensor, nodes: usize) -> Result<Tensor> {
+        let (e, h) = scores.dims2()?;
+        let mut max = vec![f32::NEG_INFINITY; nodes * h];
+        for (row, node) in scores.to_vec2::<f32>()?.iter().zip(&self.dst_nodes) {
+            let node = *node as usize;
+            for (max, score) in max[node * h..(node + 1) * h].iter_mut().zip(row) {
+                *max = max.max(*score);
+            }
+        }
+        let per_edge: Vec<f32> = self
+            .dst_nodes
+            .iter()
+            .flat_map(|node| {
+                max[*node as usize * h..(*node as usize + 1) * h]
+                    .iter()
+                    .copied()
+            })
+            .collect();
+        Tensor::from_vec(per_edge, (e, h), scores.device())
+    }
+}
+
 /// PyG's `TransformerConv` (`concat`, `beta`, `root_weight`, edge features),
-/// evaluated with dense `[nodes, edges]` matrices: the graphs are tiny.
+/// aggregating over the edges into each node with scatter-adds.
 struct TransformerConv {
     key: Linear,
     query: Linear,
@@ -172,19 +218,18 @@ impl TransformerConv {
             // [E, H]
             let alpha = ((query * key)?.reshape((e, h, c))?.sum(D::Minus1)? / (c as f64).sqrt())?;
             // Softmax over the edges into each node.
-            let max = alpha
-                .unsqueeze(0)?
-                .broadcast_add(&edges.incoming_bias)?
-                .max(1)?
-                .index_select(&edges.dst, 0)?;
+            let max = edges.incoming_max(&alpha, n)?;
             let exp = (alpha - max)?.exp()?;
-            let sum = (edges.incoming.matmul(&exp)? + SOFTMAX_EPS)?.index_select(&edges.dst, 0)?;
+            let sum =
+                Tensor::zeros((n, h), exp.dtype(), exp.device())?.index_add(&edges.dst, &exp, 0)?;
+            let sum = (sum + SOFTMAX_EPS)?.index_select(&edges.dst, 0)?;
             let alpha = (exp / sum)?;
             let messages = value
                 .reshape((e, h, c))?
                 .broadcast_mul(&alpha.unsqueeze(D::Minus1)?)?
                 .reshape((e, d))?;
-            edges.incoming.matmul(&messages)?
+            Tensor::zeros((n, d), messages.dtype(), messages.device())?
+                .index_add(&edges.dst, &messages, 0)?
         };
         let beta = candle_nn::ops::sigmoid(
             &self
@@ -219,8 +264,8 @@ struct EncoderLayer {
 }
 
 impl EncoderLayer {
-    fn forward(&self, x: &Tensor) -> Result<Tensor> {
-        let x = (x + self.attn.self_attend(&self.norm1.forward(x)?)?)?;
+    fn forward(&self, x: &Tensor, mask: Option<&Tensor>) -> Result<Tensor> {
+        let x = (x + self.attn.self_attend(&self.norm1.forward(x)?, mask)?)?;
         &x + self.ffn.forward(&self.norm2.forward(&x)?)?
     }
 }
@@ -276,40 +321,66 @@ impl Encoder {
         })
     }
 
-    /// Node embeddings `[N, d]`.
-    fn forward(&self, graph: &Graph, device: &Device) -> Result<Tensor> {
-        let ids = |v: &[u32]| Tensor::from_slice(v, v.len(), device);
-        let mut h = (self.type_emb.forward(&ids(&graph.node_type)?)?
-            + self.accept_emb.forward(&ids(&graph.is_accept)?)?)?;
-        h = (h + self.fwd_depth_emb.forward(&ids(&graph.fwd_depth)?)?)?;
-        h = (h + self.to_accept_emb.forward(&ids(&graph.bwd_depth)?)?)?;
-        h = (h + self.to_reject_emb.forward(&ids(&graph.to_reject)?)?)?;
+    /// Node embeddings of `graphs`, one after the other: `[ΣN, d]`. The
+    /// graphs are encoded together, as one graph whose nodes attend only
+    /// within their own.
+    fn forward(&self, graphs: &[&Graph], device: &Device) -> Result<Tensor> {
+        let ids = |v: Vec<u32>| {
+            let len = v.len();
+            Tensor::from_vec(v, len, device)
+        };
+        let concat = |field: fn(&Graph) -> &Vec<u32>| -> Vec<u32> {
+            graphs
+                .iter()
+                .flat_map(|graph| field(graph).iter().copied())
+                .collect()
+        };
+        let mut h = (self.type_emb.forward(&ids(concat(|g| &g.node_type))?)?
+            + self.accept_emb.forward(&ids(concat(|g| &g.is_accept))?)?)?;
+        h = (h + self
+            .fwd_depth_emb
+            .forward(&ids(concat(|g| &g.fwd_depth))?)?)?;
+        h = (h + self
+            .to_accept_emb
+            .forward(&ids(concat(|g| &g.bwd_depth))?)?)?;
+        h = (h + self
+            .to_reject_emb
+            .forward(&ids(concat(|g| &g.to_reject))?)?)?;
 
-        let (n, e) = (graph.nodes, graph.edge_dst.len());
-        let incoming: Vec<f32> = (0..n)
-            .flat_map(|node| {
-                graph
-                    .edge_dst
-                    .iter()
-                    .map(move |dst| (*dst as usize == node) as u8 as f32)
-            })
-            .collect();
-        let incoming_bias: Vec<f32> = incoming
-            .iter()
-            .map(|i| if *i > 0.0 { 0.0 } else { f32::NEG_INFINITY })
-            .collect();
+        // Each graph's edges, renumbered to its place among the nodes.
+        let mut offset = 0;
+        let (mut src, mut dst) = (vec![], vec![]);
+        for graph in graphs {
+            src.extend(graph.edge_src.iter().map(|node| node + offset));
+            dst.extend(graph.edge_dst.iter().map(|node| node + offset));
+            offset += graph.nodes as u32;
+        }
         let edges = Edges {
-            src: ids(&graph.edge_src)?,
-            dst: ids(&graph.edge_dst)?,
-            incoming: Tensor::from_vec(incoming, (n, e), device)?,
-            incoming_bias: Tensor::from_vec(incoming_bias, (n, e, 1), device)?,
-            embedded: self.edge_emb.forward(&ids(&graph.edge_type)?)?,
+            src: ids(src)?,
+            dst: ids(dst.clone())?,
+            dst_nodes: dst,
+            embedded: self.edge_emb.forward(&ids(concat(|g| &g.edge_type))?)?,
         };
         for layer in &self.layers {
             h = layer.forward(&h, &edges)?;
         }
+
+        let mask = if graphs.len() > 1 {
+            let n = offset as usize;
+            let mut mask = vec![f32::NEG_INFINITY; n * n];
+            let mut start = 0;
+            for graph in graphs {
+                for row in start..start + graph.nodes {
+                    mask[row * n + start..row * n + start + graph.nodes].fill(0.0);
+                }
+                start += graph.nodes;
+            }
+            Some(Tensor::from_vec(mask, (n, n), device)?)
+        } else {
+            None
+        };
         for layer in &self.global_layers {
-            h = layer.forward(&h)?;
+            h = layer.forward(&h, mask.as_ref())?;
         }
         self.out_norm.forward(&h)
     }
@@ -336,17 +407,77 @@ struct Decoder {
     mask_head: Linear,
 }
 
-/// The state of an incremental decoding of `B` sequences.
+/// The state of an incremental decoding of `B` sequences, over one DFA or
+/// several.
 struct Cache {
-    /// `[1, d]`, added at position 0.
+    /// `[1 or B, d]`, added at position 0.
     start: Tensor,
-    /// Per layer: memory keys and values, `[1, heads, N, d / heads]`.
+    /// Per layer: memory keys and values, `[1, heads, N, d / heads]` for one
+    /// DFA, `[B, heads, N, d / heads]` (padded to the largest DFA) for
+    /// several.
     cross: Vec<(Tensor, Tensor)>,
+    /// For several DFAs: each row's number of nodes, and `[B, 1, N]`, -∞ on
+    /// the padding nodes.
+    key_lengths: Option<Vec<u32>>,
+    key_mask: Option<Tensor>,
     /// Per layer: self-attention keys and values of the positions so far,
-    /// `[B, heads, T, d / heads]`.
+    /// in buffers with room for more, `[B, heads, capacity, d / heads]`.
     past: Vec<Option<(Tensor, Tensor)>>,
     /// Positions fed so far.
     t: usize,
+}
+
+impl Cache {
+    /// Writes layer `layer`'s self-attention keys and values of position
+    /// `self.t`, `[B, heads, 1, d / heads]`, in place (doubling the buffers
+    /// when full), and returns those of the positions so far.
+    fn append(&mut self, layer: usize, key: &Tensor, value: &Tensor) -> Result<(Tensor, Tensor)> {
+        let t = self.t;
+        let (keys, values) = match self.past[layer].take() {
+            None => {
+                let (rows, heads, _, hd) = key.dims4()?;
+                let buffer = || {
+                    Tensor::zeros(
+                        (rows, heads, INITIAL_CAPACITY, hd),
+                        key.dtype(),
+                        key.device(),
+                    )
+                };
+                (buffer()?, buffer()?)
+            }
+            Some((keys, values)) if keys.dim(2)? == t => (
+                keys.pad_with_zeros(2, 0, t)?,
+                values.pad_with_zeros(2, 0, t)?,
+            ),
+            Some(past) => past,
+        };
+        keys.slice_set(&key.contiguous()?, 2, t)?;
+        values.slice_set(&value.contiguous()?, 2, t)?;
+        let so_far = (keys.narrow(2, 0, t + 1)?, values.narrow(2, 0, t + 1)?);
+        self.past[layer] = Some((keys, values));
+        Ok(so_far)
+    }
+
+    /// Keeps only the sequences `keep` (indices into the current rows).
+    fn retain(&mut self, keep: &[u32]) -> Result<()> {
+        if let Some(key_lengths) = &mut self.key_lengths {
+            *key_lengths = keep.iter().map(|row| key_lengths[*row as usize]).collect();
+        }
+        let keep = &Tensor::new(keep, self.start.device())?;
+        for past in self.past.iter_mut().flatten() {
+            *past = (past.0.index_select(keep, 0)?, past.1.index_select(keep, 0)?);
+        }
+        if let Some(key_mask) = &self.key_mask {
+            self.key_mask = Some(key_mask.index_select(keep, 0)?);
+            for cross in &mut self.cross {
+                *cross = (
+                    cross.0.index_select(keep, 0)?,
+                    cross.1.index_select(keep, 0)?,
+                );
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Decoder {
@@ -378,25 +509,94 @@ impl Decoder {
         })
     }
 
-    /// Prepares the decoding over the node embeddings `memory` `[N, d]`; the
-    /// start state is node 0.
-    fn start_cache(&self, memory: &Tensor) -> Result<Cache> {
+    /// Prepares the decoding of `rows` sequences per DFA over `memory`
+    /// `[ΣN, d]`, the node embeddings of DFAs of `nodes` nodes one after the
+    /// other; each DFA's start state is its first node.
+    fn start_cache(&self, memory: &Tensor, nodes: &[usize], rows: usize) -> Result<Cache> {
         let d = memory.dim(1)?;
+        let device = memory.device();
+        let dfas = nodes.len();
+        let firsts: Vec<u32> = nodes
+            .iter()
+            .scan(0, |first, n| {
+                let this = *first;
+                *first += *n as u32;
+                Some(this)
+            })
+            .collect();
+        let start = self
+            .start_proj
+            .forward(&memory.index_select(&Tensor::new(firsts.as_slice(), device)?, 0)?)?;
+        if dfas == 1 {
+            let cross = self
+                .layers
+                .iter()
+                .map(|layer| {
+                    let attn = &layer.cross_attn;
+                    let kv = attn.kv.forward(memory)?;
+                    Ok((
+                        attn.split(&kv.narrow(1, 0, d)?)?.unsqueeze(0)?,
+                        attn.split(&kv.narrow(1, d, d)?)?.unsqueeze(0)?,
+                    ))
+                })
+                .collect::<Result<_>>()?;
+            return Ok(Cache {
+                start,
+                cross,
+                key_lengths: None,
+                key_mask: None,
+                past: vec![None; self.layers.len()],
+                t: 0,
+            });
+        }
+
+        // Each DFA's nodes in `longest` slots, the padding at a zero row
+        // appended after the nodes.
+        let longest = nodes.iter().copied().max().unwrap_or(0);
+        let padding = firsts[dfas - 1] + nodes[dfas - 1] as u32;
+        let mut slots = Vec::with_capacity(dfas * longest);
+        let mut key_mask = Vec::with_capacity(dfas * longest);
+        for (first, n) in firsts.iter().zip(nodes) {
+            for slot in 0..longest {
+                let real = slot < *n;
+                slots.push(if real { first + slot as u32 } else { padding });
+                key_mask.push(if real { 0.0 } else { f32::NEG_INFINITY });
+            }
+        }
+        let slots = Tensor::from_vec(slots, dfas * longest, device)?;
+        // Row `r` decodes DFA `r / rows`.
+        let owner: Vec<u32> = (0..dfas * rows).map(|r| (r / rows) as u32).collect();
+        let owner = Tensor::from_vec(owner, dfas * rows, device)?;
         let cross = self
             .layers
             .iter()
             .map(|layer| {
                 let attn = &layer.cross_attn;
-                let kv = attn.kv.forward(memory)?;
-                Ok((
-                    attn.split(&kv.narrow(1, 0, d)?)?.unsqueeze(0)?,
-                    attn.split(&kv.narrow(1, d, d)?)?.unsqueeze(0)?,
-                ))
+                let (heads, hd) = (attn.heads, d / attn.heads);
+                let kv = attn
+                    .kv
+                    .forward(memory)?
+                    .pad_with_zeros(0, 0, 1)?
+                    .index_select(&slots, 0)?
+                    .reshape((dfas, longest, 2 * d))?;
+                // `[DFAs, longest, d]` → `[B, heads, longest, d / heads]`.
+                let per_row = |part: usize| -> Result<Tensor> {
+                    kv.narrow(2, part * d, d)?
+                        .reshape((dfas, longest, heads, hd))?
+                        .transpose(1, 2)?
+                        .contiguous()?
+                        .index_select(&owner, 0)
+                };
+                Ok((per_row(0)?, per_row(1)?))
             })
             .collect::<Result<_>>()?;
+        let key_mask = Tensor::from_vec(key_mask, (dfas, 1, longest), device)?;
+        let key_lengths = (0..dfas * rows).map(|r| nodes[r / rows] as u32).collect();
         Ok(Cache {
-            start: self.start_proj.forward(&memory.narrow(0, 0, 1)?)?,
+            start: start.index_select(&owner, 0)?,
             cross,
+            key_lengths: Some(key_lengths),
+            key_mask: Some(key_mask.index_select(&owner, 0)?),
             past: vec![None; self.layers.len()],
             t: 0,
         })
@@ -417,20 +617,20 @@ impl Decoder {
             let (heads, hd) = (attn.heads, d / attn.heads);
             let qkv = attn.qkv.forward(&layer.norm1.forward(&x)?)?;
             let head = |part: usize| qkv.narrow(1, part * d, d)?.reshape((b, heads, 1, hd));
-            let (k, v) = match cache.past[i].take() {
-                Some((pk, pv)) => (
-                    Tensor::cat(&[&pk, &head(1)?], 2)?,
-                    Tensor::cat(&[&pv, &head(2)?], 2)?,
-                ),
-                None => (head(1)?, head(2)?),
-            };
-            x = (x + attn.attend_one(&qkv.narrow(1, 0, d)?, &k, &v)?)?;
-            cache.past[i] = Some((k, v));
+            let (k, v) = cache.append(i, &head(1)?, &head(2)?)?;
+            x = (x + attn.attend_one(&qkv.narrow(1, 0, d)?, &k, &v, None, None)?)?;
 
             let attn = &layer.cross_attn;
             let q = attn.q.forward(&layer.norm2.forward(&x)?)?;
             let (k, v) = &cache.cross[i];
-            x = (&x + attn.attend_one(&q, k, v)?)?;
+            x = (&x
+                + attn.attend_one(
+                    &q,
+                    k,
+                    v,
+                    cache.key_lengths.as_deref(),
+                    cache.key_mask.as_ref(),
+                )?)?;
 
             x = (&x + layer.ffn.forward(&layer.norm3.forward(&x)?)?)?;
         }
@@ -441,11 +641,15 @@ impl Decoder {
 }
 
 /// A small deterministic generator (SplitMix64) for sampling candidates.
-pub(super) struct Rng(u64);
+struct Rng(u64);
 
 impl Rng {
-    pub(super) fn new(seed: u64) -> Self {
-        Self(seed)
+    /// The generator of candidate `index` for `seed`: each candidate has its
+    /// own, so a candidate does not depend on what is decoded with it.
+    fn for_candidate(seed: u64, index: usize) -> Self {
+        let mut rng = Self(seed ^ (index as u64).wrapping_mul(0xd1b5_4a32_d192_ed03));
+        rng.next_u64();
+        rng
     }
 
     fn next_u64(&mut self) -> u64 {
@@ -479,6 +683,15 @@ pub(super) type Candidate = (Vec<u32>, Vec<u64>);
 impl Network {
     pub(super) fn new(cfg: &ModelConfig, weights: Vec<u8>, device: &Device) -> Result<Self> {
         let vb = VarBuilder::from_buffered_safetensors(weights, DType::F32, device)?;
+        Self::from_var_builder(cfg, vb, device)
+    }
+
+    /// The network whose parameters `vb` provides.
+    pub(super) fn from_var_builder(
+        cfg: &ModelConfig,
+        vb: VarBuilder,
+        device: &Device,
+    ) -> Result<Self> {
         Ok(Self {
             encoder: Encoder::new(cfg, vb.pp("encoder"))?,
             decoder: Decoder::new(cfg, vb.pp("decoder"))?,
@@ -499,11 +712,31 @@ impl Network {
         self.max_depth
     }
 
+    /// Node embeddings of `graphs`, one after the other: `[ΣN, d]`. The
+    /// graphs are encoded in groups of at most [`ENCODER_NODES`] nodes, which
+    /// bounds the global attention's `[N, N]` scores.
+    fn encode<'g>(&self, graphs: impl Iterator<Item = &'g Graph>) -> Result<Tensor> {
+        let mut encoded = vec![];
+        let mut group: Vec<&Graph> = vec![];
+        let mut group_nodes = 0;
+        for graph in graphs {
+            if !group.is_empty() && group_nodes + graph.nodes > ENCODER_NODES {
+                encoded.push(self.encoder.forward(&group, &self.device)?);
+                group.clear();
+                group_nodes = 0;
+            }
+            group.push(graph);
+            group_nodes += graph.nodes;
+        }
+        encoded.push(self.encoder.forward(&group, &self.device)?);
+        Tensor::cat(&encoded, 0)
+    }
+
     /// The logits after BOS, for comparison with the PyTorch model.
     #[cfg(test)]
     pub(super) fn first_logits(&self, graph: &Graph) -> Result<(Vec<f32>, Vec<f32>)> {
-        let memory = self.encoder.forward(graph, &self.device)?;
-        let mut cache = self.decoder.start_cache(&memory)?;
+        let memory = self.encoder.forward(&[graph], &self.device)?;
+        let mut cache = self.decoder.start_cache(&memory, &[graph.nodes], 1)?;
         let (tok, mask) = self.decoder.step(
             &mut cache,
             &Tensor::new(&[BOS], &self.device)?,
@@ -512,54 +745,90 @@ impl Network {
         Ok((tok.squeeze(0)?.to_vec1()?, mask.squeeze(0)?.to_vec1()?))
     }
 
-    /// `count` candidates for `graph`, a DFA with `bases` bases: the first is
-    /// the greedy decoding, the others are sampled at `temperature` (greedy
-    /// too when it is not positive; tokens
-    /// from the softmax, each base-mask bit from its sigmoid). Only
-    /// well-formed trees within `max_len` are produced, masks only use the
-    /// DFA's bases, and the empty class `[]` appears only as the whole regex.
-    /// Candidates may repeat.
+    /// `count` candidates for `graph`, a DFA with `bases` bases: see
+    /// [`generate_batch`](Self::generate_batch).
+    #[cfg(test)]
     pub(super) fn generate(
         &self,
         graph: &Graph,
         bases: usize,
         count: usize,
         temperature: f64,
-        rng: &mut Rng,
+        seed: u64,
     ) -> Result<Vec<Candidate>> {
-        let nb = self.max_bases;
-        let memory = self.encoder.forward(graph, &self.device)?;
-        let mut cache = self.decoder.start_cache(&memory)?;
-        let present: u64 = if bases >= 64 {
-            u64::MAX
-        } else {
-            (1 << bases) - 1
-        };
+        Ok(self
+            .generate_batch(&[(graph, bases)], count, temperature, seed)?
+            .pop()
+            .unwrap())
+    }
 
-        let mut grammars = vec![PrefixGrammar::new(self.max_len); count];
-        let mut tokens: Vec<Vec<u32>> = vec![vec![BOS]; count];
-        let mut masks: Vec<Vec<u64>> = vec![vec![0]; count];
-        let mut done = vec![false; count];
+    /// `count` candidates for each of `inputs`, DFAs as graphs with their
+    /// number of bases, decoded together. For each DFA, the first candidate
+    /// is the greedy decoding, the others are sampled at `temperature`
+    /// (greedy too when it is not positive; tokens from the softmax, each
+    /// base-mask bit from its sigmoid), each from its own generator seeded
+    /// from `seed` and its index, so a DFA's candidates do not depend on the
+    /// other DFAs. Only well-formed trees within `max_len` are produced,
+    /// masks only use the DFA's bases, and the empty class `[]` appears only
+    /// as the whole regex. Candidates may repeat.
+    pub(super) fn generate_batch(
+        &self,
+        inputs: &[(&Graph, usize)],
+        count: usize,
+        temperature: f64,
+        seed: u64,
+    ) -> Result<Vec<Vec<Candidate>>> {
+        if inputs.is_empty() || count == 0 {
+            return Ok(vec![vec![]; inputs.len()]);
+        }
+        let nb = self.max_bases;
+        let memory = self.encode(inputs.iter().map(|(graph, _)| *graph))?;
+        let nodes: Vec<usize> = inputs.iter().map(|(graph, _)| graph.nodes).collect();
+        let mut cache = self.decoder.start_cache(&memory, &nodes, count)?;
+        let present: Vec<u64> = inputs
+            .iter()
+            .map(|(_, bases)| {
+                if *bases >= 64 {
+                    u64::MAX
+                } else {
+                    (1 << bases) - 1
+                }
+            })
+            .collect();
+
+        let rows = inputs.len() * count;
+        let mut grammars = vec![PrefixGrammar::new(self.max_len); rows];
+        let mut rngs: Vec<Rng> = (0..rows)
+            .map(|r| Rng::for_candidate(seed, r % count))
+            .collect();
+        let mut tokens: Vec<Vec<u32>> = vec![vec![BOS]; rows];
+        let mut masks: Vec<Vec<u64>> = vec![vec![0]; rows];
+        // The rows still decoding, in the order of the cache's rows.
+        let mut active: Vec<usize> = (0..rows).collect();
         for _ in 0..self.max_len - 1 {
-            let last_tokens: Vec<u32> = tokens.iter().map(|t| *t.last().unwrap()).collect();
-            let last_masks: Vec<f32> = masks
+            let last_tokens: Vec<u32> =
+                active.iter().map(|r| *tokens[*r].last().unwrap()).collect();
+            let last_masks: Vec<f32> = active
                 .iter()
-                .flat_map(|m| {
-                    let m = *m.last().unwrap();
+                .flat_map(|r| {
+                    let m = *masks[*r].last().unwrap();
                     (0..nb).map(move |i| (m >> i & 1) as f32)
                 })
                 .collect();
             let (tok_logits, mask_logits) = self.decoder.step(
                 &mut cache,
-                &Tensor::from_vec(last_tokens, count, &self.device)?,
-                &Tensor::from_vec(last_masks, (count, nb), &self.device)?,
+                &Tensor::from_vec(last_tokens, active.len(), &self.device)?,
+                &Tensor::from_vec(last_masks, (active.len(), nb), &self.device)?,
             )?;
             let tok_logits = tok_logits.to_vec2::<f32>()?;
             let mask_logits = mask_logits.to_vec2::<f32>()?;
 
-            for row in 0..count {
-                let greedy = row == 0 || temperature.is_nan() || temperature <= 0.0;
-                let logits: Vec<f64> = tok_logits[row]
+            for (i, &row) in active.iter().enumerate() {
+                let (input, index) = (row / count, row % count);
+                let bases = inputs[input].1;
+                let greedy = index == 0 || temperature.is_nan() || temperature <= 0.0;
+                let rng = &mut rngs[row];
+                let logits: Vec<f64> = tok_logits[i]
                     .iter()
                     .enumerate()
                     .map(|(t, l)| {
@@ -570,16 +839,13 @@ impl Network {
                         }
                     })
                     .collect();
-                let mut next = if greedy {
+                let next = if greedy {
                     argmax(&logits)
                 } else {
                     sample(&logits, temperature, rng)
                 } as u32;
-                if done[row] {
-                    next = EOS;
-                }
 
-                let ml = &mask_logits[row];
+                let ml = &mask_logits[i];
                 let mut mask = 0u64;
                 if next == CHAR {
                     for (i, l) in ml.iter().enumerate() {
@@ -590,7 +856,7 @@ impl Network {
                         };
                         mask |= (set as u64) << i;
                     }
-                    mask &= present;
+                    mask &= present[input];
                     // No empty class [] except as the whole regex (the empty
                     // language): an empty mask gets its most likely base.
                     if mask == 0 && tokens[row].len() > 1 {
@@ -604,24 +870,29 @@ impl Network {
                 grammars[row].step(next);
                 tokens[row].push(next);
                 masks[row].push(mask);
-                done[row] |= next == EOS;
             }
-            if done.iter().all(|d| *d) {
+
+            let keep: Vec<u32> = (0..active.len() as u32)
+                .filter(|i| *tokens[active[*i as usize]].last().unwrap() != EOS)
+                .collect();
+            if keep.is_empty() {
                 break;
+            }
+            if keep.len() < active.len() {
+                active = keep.iter().map(|i| active[*i as usize]).collect();
+                cache.retain(&keep)?;
             }
         }
 
-        Ok(tokens
-            .into_iter()
-            .zip(masks)
-            .map(|(tokens, masks)| {
-                let end = tokens
-                    .iter()
-                    .position(|t| *t == EOS)
-                    .unwrap_or(tokens.len());
-                (tokens[1..end].to_vec(), masks[1..end].to_vec())
-            })
-            .collect())
+        let mut candidates: Vec<Vec<Candidate>> = vec![Vec::with_capacity(count); inputs.len()];
+        for (row, (tokens, masks)) in tokens.into_iter().zip(masks).enumerate() {
+            let end = tokens
+                .iter()
+                .position(|t| *t == EOS)
+                .unwrap_or(tokens.len());
+            candidates[row / count].push((tokens[1..end].to_vec(), masks[1..end].to_vec()));
+        }
+        Ok(candidates)
     }
 }
 

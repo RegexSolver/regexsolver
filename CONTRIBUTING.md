@@ -27,7 +27,7 @@ RUSTDOCFLAGS="-D warnings" cargo doc --locked --features neural-synthesis-hub --
 The tests of `neural_synthesis` that run a model are ignored by default, as the weights are not in the repository. With a model release directory (`config.json` and `model.safetensors`, e.g. from [the Hugging Face Hub](https://huggingface.co/alexvbrdn/kleene1-9m-b16-t128)):
 
 ```sh
-KLEENE_MODEL_DIR=<release dir> cargo test --release --features neural-synthesis neural_synthesis -- --ignored
+KLEENE_MODEL_DIR=<release dir> cargo test --release --features neural-synthesis neural_synthesis -- --ignored --skip bench
 ```
 
 Please also:
@@ -57,6 +57,8 @@ Patterns are parsed by `regex-syntax`, whose Unicode tables are compiled in, and
 `cargo bench` measures the operation families over named inputs: realistic patterns at three sizes, plus the `(a|b)*a(a|b){N}` family whose minimal DFA has 2^N states, which is the worst case of subset construction. Numbers move a lot with machine load, so compare runs on an otherwise idle machine before claiming a change is faster.
 
 `cargo test --test state_elimination_quality -- --ignored --nocapture` reports how large the patterns produced by automaton-to-regex conversion are over a corpus, which is the number to watch when changing a state-elimination heuristic.
+
+With a model release directory, `KLEENE_MODEL_DIR=<release dir> cargo test --release --features neural-synthesis --lib -- --ignored --nocapture bench_generate bench_decompose` times the model (`bench_generate`, one DFA at a time and batched, with a checksum of the candidates so an optimization can be checked not to change them) and decomposition on automata beyond the model's limits (`bench_decompose`, with the complexity of the results against state elimination's).
 
 ## Releasing
 

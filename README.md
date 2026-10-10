@@ -119,7 +119,7 @@ The same profile caps how many states an automaton may hold (`max_number_of_stat
 
 ## Simpler regexes with neural synthesis (optional)
 
-State elimination always produces a correct pattern, but not always a readable one. The `neural-synthesis` feature adds [`FastAutomaton::to_regex_with`](https://docs.rs/regexsolver/latest/regexsolver/fast_automaton/struct.FastAutomaton.html) and `Term::to_regex_with`, which ask a learned model for a shorter pattern through a `NeuralSynthesizer`. Each candidate is checked for equivalence with the automaton and discarded unless it matches exactly the same strings, so the result is never wrong; it falls back to state elimination otherwise, and keeps the simpler of the two.
+State elimination always produces a correct pattern, but not always a readable one. `FastAutomaton::to_regex` and `Term::to_regex` convert by state elimination; [`FastAutomaton::to_regex_with`](https://docs.rs/regexsolver/latest/regexsolver/fast_automaton/struct.FastAutomaton.html) and `Term::to_regex_with` take any `RegexSynthesizer` instead. The `neural-synthesis` feature adds one, `NeuralSynthesizer`, which asks a learned model for a shorter pattern. Each candidate is checked for equivalence with the automaton and discarded unless it matches exactly the same strings, so the result is never wrong. When the model has no correct pattern, or the automaton is too large for it, the automaton is split into independent pieces, each converted by the model or by state elimination, and their patterns combined; the simpler of that and state elimination's pattern is kept.
 
 ```rust,ignore
 use regexsolver::neural_synthesis::{Device, NeuralSynthesizer};
@@ -132,7 +132,7 @@ let synthesizer = NeuralSynthesizer::from_files("config.json", "model.safetensor
 let regex = automaton.to_regex_with(&synthesizer)?;
 ```
 
-Models run with [candle](https://github.com/huggingface/candle). The model's format is read from its `config.json`; the first supported one is Kleene (`kleene1-9m-b16-t128`, 9M parameters), for minimal DFAs of at most 16 states and 16 character classes. On the CPU it adds tens to hundreds of milliseconds per conversion.
+Models run with [candle](https://github.com/huggingface/candle). The model's format is read from its `config.json`; the first supported one is Kleene (`kleene1-9m-b16-t128`, 9M parameters), for minimal DFAs of at most 16 states and 16 character classes. On the CPU it adds tens to hundreds of milliseconds per conversion, and up to seconds for automata of dozens of states, which are split into many pieces; `NeuralSynthesizer::with_decomposition(false)` turns splitting off.
 
 | Feature | Adds |
 |---|---|
@@ -140,6 +140,8 @@ Models run with [candle](https://github.com/huggingface/candle). The model's for
 | `neural-synthesis-hub` | downloads from the Hugging Face Hub (`HF_HOME`, `HF_TOKEN` and `HF_ENDPOINT` apply); needs Rust 1.95, not available on `wasm` |
 | `neural-synthesis-cuda`, `-cudnn`, `-metal` | GPU devices (`Device::Cuda`, `Device::Metal`); need the CUDA toolkit or Metal |
 | `neural-synthesis-mkl`, `-accelerate` | faster CPU inference with Intel MKL or Apple Accelerate |
+
+`neural-synthesis-mkl` links Intel oneAPI MKL's static libraries, found through `pkg-config` or `MKLROOT` (for instance after `source /opt/intel/oneapi/setvars.sh`, with `intel-oneapi-mkl-core-devel` installed); without them, the copy of MKL that `intel-mkl-src` downloads is too old for candle and the build fails to link.
 
 On `wasm32-unknown-unknown`, the final binary has to enable [getrandom's `wasm_js` backend](https://docs.rs/getrandom/0.3/#webassembly-support), which candle depends on.
 

@@ -1,0 +1,51 @@
+{
+  "format": "kleene",
+  "format_version": 1,
+  "limits": {
+    "max_bases": 16
+  },
+  "model_config": {
+    "d_model": 16,
+    "dec_layers": 1,
+    "edge_dim": 4,
+    "enc_global_layers": 1,
+    "enc_layers": 1,
+    "ffn": 32,
+    "max_bases": 16,
+    "max_depth": 64,
+    "max_len": 8,
+    "n_heads": 2,
+    "vocab": {
+      "ALT": 4,
+      "BOS": 1,
+      "CHAR": 6,
+      "CONCAT": 3,
+      "COUNT_0": 8,
+      "COUNT_1": 9,
+      "COUNT_10": 18,
+      "COUNT_11": 19,
+      "COUNT_12": 20,
+      "COUNT_13": 21,
+      "COUNT_14": 22,
+      "COUNT_15": 23,
+      "COUNT_16": 24,
+      "COUNT_2": 10,
+      "COUNT_3": 11,
+      "COUNT_4": 12,
+      "COUNT_5": 13,
+      "COUNT_6": 14,
+      "COUNT_7": 15,
+      "COUNT_8": 16,
+      "COUNT_9": 17,
+      "COUNT_INF": 25,
+      "END": 5,
+      "EOS": 2,
+      "PAD": 0,
+      "REPEAT": 7
+    }
+  },
+  "name": "kleene-tiny",
+  "trained_on": {
+    "max_states": 16
+  }
+}

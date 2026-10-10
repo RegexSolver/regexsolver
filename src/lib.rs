@@ -1007,7 +1007,8 @@ impl Term {
     ///
     /// Returns a [`Cow`]: borrows the expression when the term is already
     /// regex-backed, and allocates a new one when converting from a
-    /// [`FastAutomaton`] via state elimination.
+    /// [`FastAutomaton`] via state elimination (see
+    /// [`FastAutomaton::to_regex`]).
     #[tracing::instrument(level = "debug", skip_all, fields(self_deterministic = self.is_deterministic()))]
     pub fn to_regex(&self) -> Result<Cow<'_, RegularExpression>, EngineError> {
         Ok(match self {
@@ -1016,14 +1017,12 @@ impl Term {
         })
     }
 
-    /// Converts the term to a [`RegularExpression`], with the help of a
-    /// [`NeuralSynthesizer`](neural_synthesis::NeuralSynthesizer) when it is
-    /// automaton-backed: see [`FastAutomaton::to_regex_with`]. A regex-backed
-    /// term is borrowed as is.
-    #[cfg(feature = "neural-synthesis")]
-    pub fn to_regex_with(
+    /// Converts the term to a [`RegularExpression`] with `synthesizer` when it
+    /// is automaton-backed: see [`FastAutomaton::to_regex_with`]. A
+    /// regex-backed term is borrowed as is.
+    pub fn to_regex_with<S: fast_automaton::RegexSynthesizer + ?Sized>(
         &self,
-        synthesizer: &neural_synthesis::NeuralSynthesizer,
+        synthesizer: &S,
     ) -> Result<Cow<'_, RegularExpression>, EngineError> {
         Ok(match self {
             Term::RegularExpression(regex) => Cow::Borrowed(regex),

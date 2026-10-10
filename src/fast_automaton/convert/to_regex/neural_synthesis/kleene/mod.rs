@@ -14,13 +14,14 @@ use crate::{
     regex::RegularExpression,
 };
 
+mod attention;
 mod canonical;
 mod grammar;
 mod graph;
 mod network;
 mod tokens;
 
-use network::{ModelConfig, Network, Rng};
+use network::{ModelConfig, Network};
 
 pub(super) const FORMAT: &str = "kleene";
 pub(super) const FORMAT_VERSION: u32 = 1;
@@ -108,35 +109,45 @@ impl Model for Kleene {
 
     fn candidates(
         &self,
-        dfa: &FastAutomaton,
+        dfas: &[&FastAutomaton],
         sampling: &Sampling,
-    ) -> Result<Vec<RegularExpression>, String> {
-        if dfa.number_of_states() > self.max_states {
-            return Ok(vec![]);
+    ) -> Result<Vec<Vec<RegularExpression>>, String> {
+        let mut inputs = Vec::with_capacity(dfas.len());
+        let mut bases = Vec::with_capacity(dfas.len());
+        let mut decoded = vec![vec![]; dfas.len()];
+        for (i, dfa) in dfas.iter().enumerate() {
+            if dfa.number_of_states() > self.max_states {
+                continue;
+            }
+            let canonical = canonical::canonicalize(dfa);
+            if canonical.k == 0 || canonical.k > self.max_bases {
+                continue;
+            }
+            let graph = graph::Graph::new(
+                &canonical,
+                self.network.max_bases(),
+                self.network.max_depth(),
+            );
+            inputs.push((i, graph, canonical.k));
+            bases.push(canonical.bases);
         }
-        let canonical = canonical::canonicalize(dfa);
-        if canonical.k == 0 || canonical.k > self.max_bases {
-            return Ok(vec![]);
-        }
-        let graph = graph::Graph::new(
-            &canonical,
-            self.network.max_bases(),
-            self.network.max_depth(),
-        );
+        let graphs: Vec<(&graph::Graph, usize)> = inputs.iter().map(|(_, g, k)| (g, *k)).collect();
         let candidates = self
             .network
-            .generate(
-                &graph,
-                canonical.k,
+            .generate_batch(
+                &graphs,
                 sampling.candidates,
                 sampling.temperature,
-                &mut Rng::new(sampling.seed),
+                sampling.seed,
             )
             .map_err(|err| err.to_string())?;
-        Ok(candidates
-            .into_iter()
-            .filter_map(|(tokens, masks)| tokens::decode(&tokens, &masks, &canonical.bases))
-            .collect())
+        for (((i, _, _), candidates), bases) in inputs.iter().zip(candidates).zip(&bases) {
+            decoded[*i] = candidates
+                .into_iter()
+                .filter_map(|(tokens, masks)| tokens::decode(&tokens, &masks, bases))
+                .collect();
+        }
+        Ok(decoded)
     }
 }
 
@@ -224,10 +235,7 @@ mod tests {
                 max_diff = max_diff.max((a - b).abs());
             }
 
-            let greedy = kleene
-                .network
-                .generate(&g, canonical.k, 1, 1.0, &mut Rng::new(0))
-                .unwrap();
+            let greedy = kleene.network.generate(&g, canonical.k, 1, 1.0, 0).unwrap();
             let (tokens, masks) = &greedy[0];
             assert_eq!(
                 tokens.iter().map(|t| *t as u64).collect::<Vec<_>>(),
@@ -238,6 +246,75 @@ mod tests {
         }
         println!("{} cases, max logit difference {max_diff}", reference.len());
         assert!(max_diff < 1e-3, "max logit difference {max_diff}");
+    }
+
+    /// Writes `tests/data/kleene_tiny`, a model of the format with tiny
+    /// dimensions and untrained weights, for the tests that need a model to
+    /// run but not good proposals. Its regexes are at most 6 tokens long:
+    /// untrained, longer ones nest counted repetitions too costly to check.
+    /// The weights are drawn from generators seeded by the parameters' names,
+    /// so writing it again gives the same files.
+    /// `cargo test --features neural-synthesis kleene::tests::write_tiny_model -- --ignored`
+    #[test]
+    #[ignore = "writes the tiny model fixture"]
+    fn write_tiny_model() {
+        let config = serde_json::json!({
+            "name": "kleene-tiny",
+            "format": FORMAT,
+            "format_version": FORMAT_VERSION,
+            "limits": {"max_bases": 16},
+            "trained_on": {"max_states": 16},
+            "model_config": {
+                "vocab": tokens::vocab().into_iter().collect::<std::collections::BTreeMap<_, _>>(),
+                "max_bases": 16,
+                "max_len": 8,
+                "d_model": 16,
+                "n_heads": 2,
+                "enc_layers": 1,
+                "enc_global_layers": 1,
+                "dec_layers": 1,
+                "ffn": 32,
+                "edge_dim": 4,
+                "max_depth": 64
+            }
+        });
+        let model_config = ModelConfig::deserialize(&config["model_config"]).unwrap();
+        let varmap = candle_nn::VarMap::new();
+        let vb = candle_nn::VarBuilder::from_varmap(
+            &varmap,
+            candle_core::DType::F32,
+            &candle_core::Device::Cpu,
+        );
+        Network::from_var_builder(&model_config, vb, &candle_core::Device::Cpu).unwrap();
+        for (name, var) in varmap.data().lock().unwrap().iter() {
+            // FNV-1a of the name, then SplitMix64: uniform in [-0.5, 0.5).
+            let mut state = name.bytes().fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| {
+                (hash ^ byte as u64).wrapping_mul(0x100_0000_01b3)
+            });
+            let values: Vec<f32> = (0..var.elem_count())
+                .map(|_| {
+                    state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+                    let mut z = state;
+                    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+                    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+                    ((z ^ (z >> 31)) >> 40) as f32 / (1u64 << 24) as f32 - 0.5
+                })
+                .collect();
+            var.set(
+                &candle_core::Tensor::from_vec(values, var.shape(), &candle_core::Device::Cpu)
+                    .unwrap(),
+            )
+            .unwrap();
+        }
+
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/kleene_tiny");
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(
+            format!("{dir}/config.json"),
+            serde_json::to_string_pretty(&config).unwrap() + "\n",
+        )
+        .unwrap();
+        varmap.save(format!("{dir}/model.safetensors")).unwrap();
     }
 
     #[test]
@@ -321,10 +398,7 @@ mod tests {
             let mut pass = || {
                 let start = Instant::now();
                 for (g, k) in &inputs {
-                    let candidates = kleene
-                        .network
-                        .generate(g, *k, count, 1.0, &mut Rng::new(0))
-                        .unwrap();
+                    let candidates = kleene.network.generate(g, *k, count, 1.0, 0).unwrap();
                     candidates.hash(&mut checksum);
                 }
                 start.elapsed()
@@ -339,6 +413,40 @@ mod tests {
                 per_dfa(times[0]),
                 per_dfa(times[RUNS - 1]),
                 checksum.finish()
+            );
+
+            // All the DFAs in one batch: the same candidates, up to float
+            // rounding (counted), in less time.
+            let one_by_one: Vec<_> = inputs
+                .iter()
+                .map(|(g, k)| kleene.network.generate(g, *k, count, 1.0, 0).unwrap())
+                .collect();
+            let batch: Vec<(&graph::Graph, usize)> = inputs.iter().map(|(g, k)| (g, *k)).collect();
+            let batched = kleene
+                .network
+                .generate_batch(&batch, count, 1.0, 0)
+                .unwrap();
+            let same = one_by_one
+                .iter()
+                .zip(&batched)
+                .flat_map(|(a, b)| a.iter().zip(b))
+                .filter(|(a, b)| a == b)
+                .count();
+            let mut times: Vec<_> = (0..RUNS)
+                .map(|_| {
+                    let start = Instant::now();
+                    kleene
+                        .network
+                        .generate_batch(&batch, count, 1.0, 0)
+                        .unwrap();
+                    start.elapsed()
+                })
+                .collect();
+            times.sort();
+            println!(
+                "{count} candidate(s), batched: {:?} per DFA (median of {RUNS}); {same}/{} candidates as one by one",
+                per_dfa(times[RUNS / 2]),
+                inputs.len() * count
             );
         }
     }

@@ -1,4 +1,4 @@
-//! Short, readable regexes for small automata, proposed by learned models.
+//! Short, readable regexes for automata, proposed by learned models.
 //!
 //! [`FastAutomaton::to_regex`] converts an automaton by state elimination:
 //! always correct, but often long and hard to read. A [`NeuralSynthesizer`]
@@ -6,7 +6,15 @@
 //! it, usually much simpler ones. Every candidate is **checked** against the
 //! automaton with an equivalence test and discarded unless it describes
 //! exactly the same language, so a model can make a result simpler, never
-//! wrong.
+//! wrong. A `NeuralSynthesizer` is a [`RegexSynthesizer`]: pass it to
+//! [`FastAutomaton::to_regex_with`] or [`Term::to_regex_with`](crate::Term::to_regex_with).
+//!
+//! When the model has no correct regex for an automaton, or the automaton is
+//! beyond its limits, the conversion splits the minimal DFA
+//! into independent pieces (concatenations, unions, stars, and the paths
+//! around a few hub states that break up large cycles), runs the model on
+//! every piece small enough, in batches, and combines the simplest regex of
+//! each piece. [`NeuralSynthesizer::with_decomposition`] turns this off.
 //!
 //! ```no_run
 //! use regexsolver::{
@@ -52,10 +60,13 @@ use std::{fmt, path::Path};
 use serde::Deserialize;
 
 use crate::{
-    error::EngineError, execution_profile::ExecutionProfile, fast_automaton::FastAutomaton,
+    error::EngineError,
+    execution_profile::ExecutionProfile,
+    fast_automaton::{FastAutomaton, RegexSynthesizer},
     regex::RegularExpression,
 };
 
+mod decompose;
 #[cfg(all(feature = "neural-synthesis-hub", not(target_family = "wasm")))]
 mod hub;
 mod kleene;
@@ -165,14 +176,15 @@ trait Model: Send + Sync {
     /// The largest minimal DFA, in bases, the model takes.
     fn max_bases(&self) -> usize;
 
-    /// Candidate regexes for `dfa`, a DFA from [`minimal_dfa`], in decoding
-    /// order (the greedy one first); none when `dfa` is beyond the model's
-    /// limits. Candidates are not checked and may repeat.
+    /// Candidate regexes for each of `dfas`, DFAs from [`minimal_dfa`],
+    /// decoded together, in decoding order (the greedy one first); none for
+    /// a DFA beyond the model's limits. Candidates are not checked and may
+    /// repeat; a DFA's candidates do not depend on the others.
     fn candidates(
         &self,
-        dfa: &FastAutomaton,
+        dfas: &[&FastAutomaton],
         sampling: &Sampling,
-    ) -> Result<Vec<RegularExpression>, String>;
+    ) -> Result<Vec<Vec<RegularExpression>>, String>;
 }
 
 /// The fields of `config.json` every format has.
@@ -192,6 +204,7 @@ pub struct NeuralSynthesizer {
     name: String,
     model: Box<dyn Model>,
     sampling: Sampling,
+    decomposition: bool,
 }
 
 impl fmt::Debug for NeuralSynthesizer {
@@ -199,6 +212,7 @@ impl fmt::Debug for NeuralSynthesizer {
         f.debug_struct("NeuralSynthesizer")
             .field("name", &self.name)
             .field("sampling", &self.sampling)
+            .field("decomposition", &self.decomposition)
             .finish_non_exhaustive()
     }
 }
@@ -260,6 +274,7 @@ impl NeuralSynthesizer {
                 temperature: 1.0,
                 seed: 0,
             },
+            decomposition: true,
         })
     }
 
@@ -283,6 +298,17 @@ impl NeuralSynthesizer {
     /// deterministic for a given seed and device.
     pub fn with_seed(mut self, seed: u64) -> Self {
         self.sampling.seed = seed;
+        self
+    }
+
+    /// Sets whether converting ([`FastAutomaton::to_regex_with`]) splits an
+    /// automaton the model has no correct regex for, or is too large for,
+    /// into independent pieces and runs the model on those (default `true`).
+    /// Splitting finds simpler regexes for many more automata, at the cost of
+    /// running the model on many pieces: up to seconds on the CPU for
+    /// automata of dozens of states.
+    pub fn with_decomposition(mut self, decomposition: bool) -> Self {
+        self.decomposition = decomposition;
         self
     }
 
@@ -316,21 +342,67 @@ impl NeuralSynthesizer {
         &self,
         automaton: &FastAutomaton,
     ) -> Result<Option<RegularExpression>, EngineError> {
-        let dfa = minimal_dfa(automaton)?;
-        if dfa.number_of_states() > self.model.max_states() {
-            return Ok(None);
+        Ok(self.propose_batch(&[automaton])?.pop().flatten())
+    }
+
+    /// [`propose`](Self::propose) for several automata at once: the model
+    /// decodes them together, which is much faster than one by one. The
+    /// result for each automaton is the same as `propose`'s.
+    pub fn propose_batch(
+        &self,
+        automata: &[&FastAutomaton],
+    ) -> Result<Vec<Option<RegularExpression>>, EngineError> {
+        let mut dfas = Vec::with_capacity(automata.len());
+        for automaton in automata {
+            dfas.push(minimal_dfa(automaton)?);
         }
-        let candidates = match self.model.candidates(&dfa, &self.sampling) {
+        let eligible: Vec<usize> = (0..dfas.len())
+            .filter(|i| dfas[*i].number_of_states() <= self.model.max_states())
+            .collect();
+        let mut proposals = vec![None; dfas.len()];
+        if eligible.is_empty() {
+            return Ok(proposals);
+        }
+        let inputs: Vec<&FastAutomaton> = eligible.iter().map(|i| &dfas[*i]).collect();
+        let candidates = match self.model.candidates(&inputs, &self.sampling) {
             Ok(candidates) => candidates,
             Err(err) => {
                 tracing::warn!("{} inference failed: {err}", self.name);
-                return Ok(None);
+                return Ok(proposals);
             }
         };
         // Inference is bounded by the model's size, not by the input, but can
         // still outlast a short deadline.
         ExecutionProfile::get().assert_not_timed_out()?;
 
+        for (i, candidates) in eligible.into_iter().zip(candidates) {
+            proposals[i] = Self::check(&dfas[i], candidates);
+        }
+        Ok(proposals)
+    }
+
+    /// A regex for `automaton`, which the model has no correct regex for or
+    /// cannot take, from its minimal DFA split into pieces the model converts
+    /// (see the [module documentation](self)); `None` when decomposition is
+    /// disabled. The result describes exactly the automaton's language.
+    ///
+    /// Fails if the execution profile's deadline passes.
+    pub(crate) fn propose_decomposed(
+        &self,
+        automaton: &FastAutomaton,
+    ) -> Result<Option<RegularExpression>, EngineError> {
+        if !self.decomposition {
+            return Ok(None);
+        }
+        let mut decomposer = decompose::Decomposer::new(Some(self));
+        decomposer.whole_tried = true;
+        let regex = decomposer.convert(automaton)?;
+        tracing::debug!(stats = ?decomposer.stats, "decomposed");
+        Ok(Some(regex))
+    }
+
+    /// The simplest of `candidates` equivalent to `dfa`.
+    fn check(dfa: &FastAutomaton, candidates: Vec<RegularExpression>) -> Option<RegularExpression> {
         let mut unique: Vec<RegularExpression> = Vec::with_capacity(candidates.len());
         for candidate in candidates {
             if !unique.contains(&candidate) {
@@ -346,13 +418,50 @@ impl NeuralSynthesizer {
         ranked.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
 
         for (_, _, regex) in ranked {
-            match regex.to_automaton().and_then(|a| a.equivalent(&dfa)) {
-                Ok(true) => return Ok(Some(regex)),
+            match regex.to_automaton().and_then(|a| a.equivalent(dfa)) {
+                Ok(true) => return Some(regex),
                 Ok(false) => {}
                 Err(err) => tracing::debug!("candidate {regex} not checked: {err}"),
             }
         }
-        Ok(None)
+        None
+    }
+}
+
+impl RegexSynthesizer for NeuralSynthesizer {
+    /// The model first proposes a regex for the whole automaton. When it has
+    /// no correct one, or the automaton is beyond its limits, the automaton's
+    /// minimal DFA is split into independent pieces (unless
+    /// [`with_decomposition`](NeuralSynthesizer::with_decomposition) disables
+    /// it), each converted by the model or by state elimination, whichever is
+    /// simpler, and their regexes combined. Returns the simpler of that result
+    /// and [`FastAutomaton::to_regex`]'s state elimination; state elimination
+    /// alone if the model fails (for instance on the execution profile's
+    /// deadline). The result always describes exactly the automaton's
+    /// language.
+    fn synthesize(&self, automaton: &FastAutomaton) -> Result<RegularExpression, EngineError> {
+        let proposed = self.propose(automaton).and_then(|proposed| match proposed {
+            Some(proposed) => Ok(Some(proposed)),
+            None => self.propose_decomposed(automaton),
+        });
+        let proposed = match proposed {
+            Ok(proposed) => proposed,
+            Err(err) => {
+                tracing::debug!("neural synthesis skipped: {err}");
+                None
+            }
+        };
+        let Some(proposed) = proposed else {
+            return automaton.to_regex();
+        };
+        match automaton.to_regex() {
+            Ok(eliminated) if eliminated.evaluate_complexity() < proposed.evaluate_complexity() => {
+                Ok(eliminated)
+            }
+            // The proposal stands on its own if state elimination runs out
+            // of budget.
+            _ => Ok(proposed),
+        }
     }
 }
 
@@ -411,6 +520,43 @@ mod tests {
                 "{regex} vs {eliminated}"
             );
         }
+    }
+
+    #[test]
+    #[ignore = "needs the model weights (KLEENE_MODEL_DIR)"]
+    fn decomposes_automata_beyond_the_model() {
+        let synthesizer = kleene();
+        let mut automaton = RegularExpression::new(".*abc.*")
+            .unwrap()
+            .to_automaton()
+            .unwrap();
+        for other in [".*def.*", ".*gh.*"] {
+            let other = RegularExpression::new(other)
+                .unwrap()
+                .to_automaton()
+                .unwrap();
+            automaton = automaton.intersection(&other).unwrap();
+        }
+        // As a DFA, like the results of differences and complements.
+        let automaton = minimal_dfa(&automaton).unwrap();
+        assert!(automaton.number_of_states() > synthesizer.max_states());
+        let eliminated = automaton.to_regex().unwrap();
+
+        let regex = automaton.to_regex_with(&synthesizer).unwrap();
+        assert!(
+            regex
+                .to_automaton()
+                .unwrap()
+                .equivalent(&automaton)
+                .unwrap(),
+            "{regex}"
+        );
+        assert!(regex.evaluate_complexity() < eliminated.evaluate_complexity());
+
+        let undecomposed = automaton
+            .to_regex_with(&synthesizer.with_decomposition(false))
+            .unwrap();
+        assert_eq!(undecomposed, eliminated);
     }
 
     #[test]

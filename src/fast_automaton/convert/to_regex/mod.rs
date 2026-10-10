@@ -4,44 +4,55 @@ use super::*;
 pub mod neural_synthesis;
 mod state_elimination;
 
+/// A way to convert an automaton to a [`RegularExpression`], for
+/// [`FastAutomaton::to_regex_with`] and
+/// [`Term::to_regex_with`](crate::Term::to_regex_with).
+///
+/// The crate provides [`StateElimination`], what
+/// [`FastAutomaton::to_regex`] uses, and, with the `neural-synthesis` feature,
+/// `neural_synthesis::NeuralSynthesizer`, which asks a learned model for a
+/// simpler regex.
+pub trait RegexSynthesizer {
+    /// A regular expression describing exactly the language of `automaton`.
+    fn synthesize(&self, automaton: &FastAutomaton) -> Result<RegularExpression, EngineError>;
+}
+
+/// Conversion by state elimination, what [`FastAutomaton::to_regex`] uses:
+/// the automaton's states are removed one at a time, each removal folding the
+/// paths through the state into regexes on the transitions around it, until
+/// one transition from the start to acceptance remains. The result is always
+/// exact, but often long and hard to read.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct StateElimination;
+
+impl RegexSynthesizer for StateElimination {
+    fn synthesize(&self, automaton: &FastAutomaton) -> Result<RegularExpression, EngineError> {
+        automaton.to_regex()
+    }
+}
+
 impl FastAutomaton {
-    /// Converts the automaton to a [`RegularExpression`].
+    /// Converts the automaton to a [`RegularExpression`] by state
+    /// elimination (see [`StateElimination`]).
+    ///
+    /// The result describes exactly the automaton's language, but can be long
+    /// and hard to read; [`to_regex_with`](Self::to_regex_with) takes other
+    /// ways to convert it.
     #[tracing::instrument(level = "debug", skip_all, fields(states = self.number_of_states()))]
     pub fn to_regex(&self) -> Result<RegularExpression, EngineError> {
         state_elimination::convert_to_regex(self)
     }
 
-    /// Converts the automaton to a [`RegularExpression`], with the help of a
-    /// [`NeuralSynthesizer`](crate::neural_synthesis::NeuralSynthesizer).
-    ///
-    /// Returns the simpler of the model's verified proposal and
-    /// [`to_regex`](Self::to_regex)'s state elimination; state elimination
-    /// alone when the model has no correct proposal. The result always
-    /// describes exactly the automaton's language.
-    #[cfg(feature = "neural-synthesis")]
+    /// Converts the automaton to a [`RegularExpression`] with `synthesizer`,
+    /// for instance [`StateElimination`] (as [`to_regex`](Self::to_regex)
+    /// does) or, with the `neural-synthesis` feature, a
+    /// `neural_synthesis::NeuralSynthesizer`.
     #[tracing::instrument(level = "debug", skip_all, fields(states = self.number_of_states()))]
-    pub fn to_regex_with(
+    pub fn to_regex_with<S: RegexSynthesizer + ?Sized>(
         &self,
-        synthesizer: &neural_synthesis::NeuralSynthesizer,
+        synthesizer: &S,
     ) -> Result<RegularExpression, EngineError> {
-        let proposed = match synthesizer.propose(self) {
-            Ok(proposed) => proposed,
-            Err(err) => {
-                tracing::debug!("neural synthesis skipped: {err}");
-                None
-            }
-        };
-        let Some(proposed) = proposed else {
-            return self.to_regex();
-        };
-        match self.to_regex() {
-            Ok(eliminated) if eliminated.evaluate_complexity() < proposed.evaluate_complexity() => {
-                Ok(eliminated)
-            }
-            // The proposal stands on its own if state elimination runs out
-            // of budget.
-            _ => Ok(proposed),
-        }
+        synthesizer.synthesize(self)
     }
 }
 
