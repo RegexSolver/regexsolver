@@ -1,0 +1,8 @@
+# Read by `cargo audit`, locally and in CI's audit job.
+[advisories]
+ignore = [
+    # `paste` is unmaintained. It is a proc macro, used at build time only,
+    # pulled in through candle (`gemm`) by the `neural-synthesis` feature.
+    # Remove once candle moves off it.
+    "RUSTSEC-2024-0436",
+]
