@@ -256,9 +256,9 @@ impl NeuralSynthesizer {
         let header = Header::deserialize(&config)
             .map_err(|err| NeuralSynthesisError::Config(err.to_string()))?;
         let model: Box<dyn Model> = match (header.format.as_str(), header.format_version) {
-            (kleene::FORMAT, kleene::FORMAT_VERSION) => {
-                Box::new(kleene::Kleene::new(&config, weights, &device.to_candle()?)?)
-            }
+            (kleene::FORMAT, version) if kleene::FORMAT_VERSIONS.contains(&version) => Box::new(
+                kleene::Kleene::new(&config, version, weights, &device.to_candle()?)?,
+            ),
             _ => {
                 return Err(NeuralSynthesisError::UnsupportedFormat {
                     format: header.format,

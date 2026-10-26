@@ -28,21 +28,29 @@ pub(super) struct CanonicalDfa {
     pub bases: Vec<CharRange>,
 }
 
-/// The bases of `spanning_set` in condition bit order (the rest first, when
-/// non-empty).
-fn bases(spanning_set: &SpanningSet) -> Vec<CharRange> {
+/// The bases of `spanning_set` in condition bit order: the rest first, when
+/// non-empty and `rest_is_base`, then the spanning ranges.
+fn bases(spanning_set: &SpanningSet, rest_is_base: bool) -> Vec<CharRange> {
     std::iter::once(spanning_set.rest())
-        .filter(|rest| !rest.is_empty())
+        .filter(|rest| rest_is_base && !rest.is_empty())
         .chain(spanning_set.spanning_ranges())
         .cloned()
         .collect()
 }
 
-/// Canonicalizes a minimal (hence deterministic and trimmed) automaton.
-pub(super) fn canonicalize(automaton: &FastAutomaton) -> CanonicalDfa {
+/// Canonicalizes a minimal (hence deterministic and trimmed) automaton whose
+/// spanning set is minimal, so that no transition uses its rest.
+/// `rest_is_base`: the rest, when non-empty, is a base (format v1), one no
+/// transition uses; format v2 leaves it out, so that `a*` and `.*` are the
+/// same input.
+pub(super) fn canonicalize(automaton: &FastAutomaton, rest_is_base: bool) -> CanonicalDfa {
     debug_assert!(automaton.is_deterministic());
-    let bases = bases(automaton.spanning_set());
+    let spanning_set = automaton.spanning_set();
+    let bases = bases(spanning_set, rest_is_base);
     let k = bases.len();
+    // Conditions put the rest, when non-empty, at bit 0: without it, base
+    // `b` is bit `b + 1`.
+    let offset = usize::from(!rest_is_base && !spanning_set.rest().is_empty());
 
     let raw_states = automaton.states_vec();
     let n = raw_states.len();
@@ -55,8 +63,11 @@ pub(super) fn canonicalize(automaton: &FastAutomaton) -> CanonicalDfa {
     let mut delta = vec![DEAD; n * k];
     for (i, &from) in raw_states.iter().enumerate() {
         for (condition, &to) in automaton.transitions_from(from) {
-            for b in condition.iter_set_bits() {
-                delta[i * k + b] = dense[to];
+            for bit in condition.iter_set_bits() {
+                debug_assert!(bit >= offset, "a transition uses the rest");
+                if let Some(b) = bit.checked_sub(offset) {
+                    delta[i * k + b] = dense[to];
+                }
             }
         }
     }
@@ -318,7 +329,7 @@ mod tests {
 
     use super::*;
 
-    fn canonical(pattern: &str) -> CanonicalDfa {
+    fn canonical_with(pattern: &str, rest_is_base: bool) -> CanonicalDfa {
         canonicalize(
             &minimal_dfa(
                 &RegularExpression::new(pattern)
@@ -327,7 +338,12 @@ mod tests {
                     .unwrap(),
             )
             .unwrap(),
+            rest_is_base,
         )
+    }
+
+    fn canonical(pattern: &str) -> CanonicalDfa {
+        canonical_with(pattern, true)
     }
 
     fn key(pattern: &str) -> (Vec<bool>, Vec<u32>) {
@@ -358,6 +374,27 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![1]
         );
+    }
+
+    #[test]
+    fn without_the_rest() {
+        // Bases: `a`, `[bc]`, `d`; the transitions are those of v1 without
+        // the rest's column.
+        let (v1, v2) = (canonical("a(b|c)*d"), canonical_with("a(b|c)*d", false));
+        assert_eq!((v2.n, v2.k), (3, 3));
+        assert_eq!(v2.accept, v1.accept);
+        assert!(v1.delta.chunks(4).all(|row| row[0] == DEAD));
+        let without_rest: Vec<u32> = v1
+            .delta
+            .chunks(4)
+            .flat_map(|row| &row[1..])
+            .copied()
+            .collect();
+        assert_eq!(v2.delta, without_rest);
+        // `a*` and `.*` are the same input; with the rest, `a*` has two bases.
+        let (a, dot) = (canonical_with("a*", false), canonical_with(".*", false));
+        assert_eq!((a.k, a.accept, a.delta), (1, dot.accept, dot.delta));
+        assert_eq!(canonical("a*").k, 2);
     }
 
     #[test]

@@ -1,6 +1,8 @@
-//! The Kleene models (format `kleene` v1): a graph transformer
+//! The Kleene models (format `kleene` v1 and v2): a graph transformer
 //! encoder over the canonical minimal DFA, and a transformer decoder writing
-//! the regex in prefix order, constrained to well-formed trees.
+//! the regex in prefix order, constrained to well-formed trees. The two
+//! versions differ only in the input: v1 (Kleene 1) counts the rest of the
+//! spanning set as a base, v2 (Kleene 2) does not.
 //!
 //! A port of the PyTorch implementation the models are trained with; the
 //! input encoding is documented in each release's `config.json` (`inputs`).
@@ -24,7 +26,8 @@ mod tokens;
 use network::{ModelConfig, Network};
 
 pub(super) const FORMAT: &str = "kleene";
-pub(super) const FORMAT_VERSION: u32 = 1;
+/// The versions of the format this module runs.
+pub(super) const FORMAT_VERSIONS: [u32; 2] = [1, 2];
 
 /// `config.json`, the parts used here.
 #[derive(Deserialize)]
@@ -50,12 +53,16 @@ pub(super) struct Kleene {
     network: Network,
     max_states: usize,
     max_bases: usize,
+    /// Format v1: the rest of the spanning set is a base.
+    rest_is_base: bool,
 }
 
 impl Kleene {
-    /// Loads a model from its `config.json` and its weights.
+    /// Loads a model of format version `version` from its `config.json` and
+    /// its weights.
     pub(super) fn new(
         config: &serde_json::Value,
+        version: u32,
         weights: Vec<u8>,
         device: &candle_core::Device,
     ) -> Result<Self, NeuralSynthesisError> {
@@ -94,6 +101,7 @@ impl Kleene {
             network,
             max_states: config.trained_on.max_states,
             max_bases: config.limits.max_bases,
+            rest_is_base: version == 1,
         })
     }
 }
@@ -119,7 +127,7 @@ impl Model for Kleene {
             if dfa.number_of_states() > self.max_states {
                 continue;
             }
-            let canonical = canonical::canonicalize(dfa);
+            let canonical = canonical::canonicalize(dfa, self.rest_is_base);
             if canonical.k == 0 || canonical.k > self.max_bases {
                 continue;
             }
@@ -173,7 +181,8 @@ mod tests {
         let config: serde_json::Value =
             serde_json::from_slice(&std::fs::read(dir.join("config.json")).unwrap()).unwrap();
         let weights = std::fs::read(dir.join("model.safetensors")).unwrap();
-        let kleene = Kleene::new(&config, weights, &candle_core::Device::Cpu).unwrap();
+        let version = config["format_version"].as_u64().unwrap() as u32;
+        let kleene = Kleene::new(&config, version, weights, &candle_core::Device::Cpu).unwrap();
 
         let path = std::env::var("KLEENE_PARITY").unwrap_or_else(|_| {
             concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/kleene_parity.json").to_string()
@@ -204,7 +213,7 @@ mod tests {
                     .unwrap(),
             )
             .unwrap();
-            let canonical = canonical::canonicalize(&dfa);
+            let canonical = canonical::canonicalize(&dfa, kleene.rest_is_base);
             let bases: Vec<String> = canonical.bases.iter().map(|b| b.to_regex()).collect();
             let expected: Vec<&str> = case["base_ranges"]
                 .as_array()
@@ -261,7 +270,7 @@ mod tests {
         let config = serde_json::json!({
             "name": "kleene-tiny",
             "format": FORMAT,
-            "format_version": FORMAT_VERSION,
+            "format_version": 1,
             "limits": {"max_bases": 16},
             "trained_on": {"max_states": 16},
             "model_config": {
@@ -341,7 +350,12 @@ mod tests {
         for (n_heads, max_len) in [(0, 128), (3, 128), (8, 1)] {
             assert!(
                 matches!(
-                    Kleene::new(&config(n_heads, max_len), vec![], &candle_core::Device::Cpu),
+                    Kleene::new(
+                        &config(n_heads, max_len),
+                        1,
+                        vec![],
+                        &candle_core::Device::Cpu
+                    ),
                     Err(NeuralSynthesisError::Config(_))
                 ),
                 "n_heads {n_heads}, max_len {max_len}"
@@ -365,7 +379,8 @@ mod tests {
         let config: serde_json::Value =
             serde_json::from_slice(&std::fs::read(dir.join("config.json")).unwrap()).unwrap();
         let weights = std::fs::read(dir.join("model.safetensors")).unwrap();
-        let kleene = Kleene::new(&config, weights, &candle_core::Device::Cpu).unwrap();
+        let version = config["format_version"].as_u64().unwrap() as u32;
+        let kleene = Kleene::new(&config, version, weights, &candle_core::Device::Cpu).unwrap();
 
         let reference: Vec<serde_json::Value> = serde_json::from_slice(include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -382,7 +397,7 @@ mod tests {
                         .unwrap(),
                 )
                 .unwrap();
-                let canonical = canonical::canonicalize(&dfa);
+                let canonical = canonical::canonicalize(&dfa, kleene.rest_is_base);
                 let g = graph::Graph::new(
                     &canonical,
                     kleene.network.max_bases(),
