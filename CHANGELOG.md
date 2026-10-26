@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 - Neural synthesis runs the Kleene 2 models (`kleene` format v2), whose input leaves out the characters no transition uses, so that `a*` and `.*` are the same input. Kleene 1 models (v1) still load.
-- A model's `config.json` can give its success rate over a grid of features of the minimal DFA (states, bases, state elimination complexity). `to_regex_with` no longer runs the model on a whole automaton whose rate is below `NeuralSynthesizer::with_min_success` (default 5%) and goes straight to its decomposition; `NeuralSynthesizer::success_rate` returns the rate.
+- A model's `config.json` can give its success rate over a grid of features of the minimal DFA (states, bases, state elimination complexity). `to_regex_with` no longer runs the model on an automaton, or a piece of its decomposition, whose rate is below `NeuralSynthesizer::with_min_success` (default 5%): the automaton goes straight to its decomposition, a piece is split further or converted by state elimination; `NeuralSynthesizer::success_rate` returns the rate.
 
 ### Security
 - Updated `rustls-webpki`, `webpki-roots` and `webpki-root-certs` in `Cargo.lock` for RUSTSEC-2026-0381, -0382 and -0383. The `zip` and `ocipkg` advisories are ignored in `.cargo/audit.toml`: nothing in the dependency tree calls the affected functions.

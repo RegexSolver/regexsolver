@@ -10,9 +10,10 @@
 //! [`FastAutomaton::to_regex_with`] or [`Term::to_regex_with`](crate::Term::to_regex_with).
 //!
 //! A model can come with its success rate by size and difficulty of the DFA
-//! (see [Models](#models)); the conversion does not run it on a whole
-//! automaton whose rate is below a threshold
-//! ([`NeuralSynthesizer::with_min_success`]).
+//! (see [Models](#models)); the conversion does not run it on an automaton,
+//! or a piece of one, whose rate is below a threshold
+//! ([`NeuralSynthesizer::with_min_success`]): a piece that cannot be split
+//! further is then converted by state elimination.
 //!
 //! When the model has no correct regex for an automaton, or the automaton is
 //! beyond its limits or below the threshold, the conversion splits the minimal DFA
@@ -259,15 +260,23 @@ impl Gate {
         Ok(())
     }
 
-    /// The success rate for `dfa`, a DFA from [`minimal_dfa`]; `None` when its
-    /// cell has no data.
-    fn rate(&self, dfa: &FastAutomaton) -> Result<Option<f64>, EngineError> {
+    /// The success rate for `dfa`, a DFA from [`minimal_dfa`], whose state
+    /// elimination regex is `eliminated` when already computed; `None` when
+    /// its cell has no data.
+    fn rate(
+        &self,
+        dfa: &FastAutomaton,
+        eliminated: Option<&RegularExpression>,
+    ) -> Result<Option<f64>, EngineError> {
         let mut cell = 0;
         for axis in &self.axes {
             let value = match axis.feature {
                 Feature::States => dfa.number_of_states() as f64,
                 Feature::Bases => dfa.spanning_set().number_of_spanning_ranges() as f64,
-                Feature::Complexity => dfa.to_regex()?.evaluate_complexity(),
+                Feature::Complexity => match eliminated {
+                    Some(eliminated) => eliminated.evaluate_complexity(),
+                    None => dfa.to_regex()?.evaluate_complexity(),
+                },
             };
             let bin = axis.bins.partition_point(|lower| *lower <= value).max(1) - 1;
             cell = cell * axis.bins.len() + bin;
@@ -412,13 +421,15 @@ impl NeuralSynthesizer {
     }
 
     /// Sets the success rate below which converting
-    /// ([`FastAutomaton::to_regex_with`]) does not run the model on a whole
-    /// automaton, going straight to its decomposition (default
-    /// [`DEFAULT_MIN_SUCCESS`](Self::DEFAULT_MIN_SUCCESS)). The rate is the
-    /// model's, from its `config.json`, for DFAs like the automaton's minimal
-    /// DFA (see the [module documentation](self)); a model without one is
-    /// always run, and so is every model with 0. Skipping saves the decoding
-    /// and checking of candidates that are almost never correct.
+    /// ([`FastAutomaton::to_regex_with`]) does not run the model on an
+    /// automaton, going straight to its decomposition, nor on a piece of the
+    /// decomposition, which is then split further or converted by state
+    /// elimination (default [`DEFAULT_MIN_SUCCESS`](Self::DEFAULT_MIN_SUCCESS)).
+    /// The rate is the model's, from its `config.json`, for DFAs like the
+    /// automaton's (or the piece's) minimal DFA (see the [module
+    /// documentation](self)); a model without one is always run, and so is
+    /// every model with 0. Skipping saves the decoding and checking of
+    /// candidates that are almost never correct.
     pub fn with_min_success(mut self, min_success: f64) -> Self {
         self.min_success = min_success;
         self
@@ -433,7 +444,7 @@ impl NeuralSynthesizer {
     /// by state elimination, within the execution profile.
     pub fn success_rate(&self, automaton: &FastAutomaton) -> Result<Option<f64>, EngineError> {
         match &self.gate {
-            Some(gate) => gate.rate(&minimal_dfa(automaton)?),
+            Some(gate) => gate.rate(&minimal_dfa(automaton)?, None),
             None => Ok(None),
         }
     }
@@ -542,10 +553,8 @@ impl NeuralSynthesizer {
         automaton: &FastAutomaton,
     ) -> Result<Option<RegularExpression>, EngineError> {
         let dfa = minimal_dfa(automaton)?;
-        if let Some(gate) = &self.gate
-            && self.min_success > 0.0
-            && dfa.number_of_states() <= self.model.max_states()
-            && gate.rate(&dfa)?.is_some_and(|rate| rate < self.min_success)
+        if dfa.number_of_states() <= self.model.max_states()
+            && self.below_min_success(&dfa, None)?
         {
             tracing::debug!(
                 "{}: not run on the whole automaton (success rate)",
@@ -554,6 +563,23 @@ impl NeuralSynthesizer {
             return Ok(None);
         }
         Ok(self.propose_minimal(&[dfa])?.pop().flatten())
+    }
+
+    /// Whether the model's success rate for `dfa`, a DFA from [`minimal_dfa`]
+    /// whose state elimination regex is `eliminated` when already computed,
+    /// is below [`with_min_success`](Self::with_min_success)'s: the model is
+    /// then not run on it.
+    fn below_min_success(
+        &self,
+        dfa: &FastAutomaton,
+        eliminated: Option<&RegularExpression>,
+    ) -> Result<bool, EngineError> {
+        match &self.gate {
+            Some(gate) if self.min_success > 0.0 => Ok(gate
+                .rate(dfa, eliminated)?
+                .is_some_and(|rate| rate < self.min_success)),
+            _ => Ok(false),
+        }
     }
 
     /// The simplest of `candidates` equivalent to `dfa`.
@@ -777,19 +803,22 @@ mod tests {
             "rates": [0.9, 0.5, null, 0.01],
         }));
         // 2 states, complexity 1.
-        assert_eq!(gate.rate(&dfa("a")).unwrap(), Some(0.9));
+        assert_eq!(gate.rate(&dfa("a"), None).unwrap(), Some(0.9));
         // 2 states, complexity at least 5.
         let ab = dfa("(a|bc)*");
         assert_eq!(ab.number_of_states(), 2);
         assert!(ab.to_regex().unwrap().evaluate_complexity() >= 5.0);
-        assert_eq!(gate.rate(&ab).unwrap(), Some(0.5));
+        assert_eq!(gate.rate(&ab, None).unwrap(), Some(0.5));
         // 3 states or more: no data below complexity 5, 0.01 above.
-        assert_eq!(gate.rate(&dfa("abc")).unwrap(), None);
-        assert_eq!(gate.rate(&dfa("a(bc|de)*f")).unwrap(), Some(0.01));
+        assert_eq!(gate.rate(&dfa("abc"), None).unwrap(), None);
+        assert_eq!(gate.rate(&dfa("a(bc|de)*f"), None).unwrap(), Some(0.01));
+        // A state elimination regex already computed gives the complexity.
+        let complex = RegularExpression::new("(a|bc)*").unwrap();
+        assert_eq!(gate.rate(&dfa("a"), Some(&complex)).unwrap(), Some(0.5));
         // Bases: the spanning ranges, without the rest.
         let bases = gate_bases();
-        assert_eq!(bases.rate(&dfa("a*")).unwrap(), Some(1.0));
-        assert_eq!(bases.rate(&dfa("[ab]c*")).unwrap(), Some(2.0));
+        assert_eq!(bases.rate(&dfa("a*"), None).unwrap(), Some(1.0));
+        assert_eq!(bases.rate(&dfa("[ab]c*"), None).unwrap(), Some(2.0));
     }
 
     fn gate_bases() -> Gate {

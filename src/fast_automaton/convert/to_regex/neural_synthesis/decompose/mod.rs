@@ -68,6 +68,8 @@ pub(super) struct Stats {
     frontier_splits: usize,
     union_splits: usize,
     hub_splits: usize,
+    /// Pieces the model was not run on for their success rate.
+    neural_skipped: usize,
     /// Pieces the model ran on, and those it found a correct regex for.
     neural_runs: usize,
     neural_correct: usize,
@@ -251,25 +253,34 @@ impl<'a> Decomposer<'a> {
         Ok(regexes.swap_remove(root))
     }
 
-    /// The model's proposal for each piece small enough, within the budget,
-    /// the largest pieces (the closest to the whole) first.
+    /// The model's proposal for each piece small enough and not below its
+    /// minimum success rate, within the budget, the largest pieces (the
+    /// closest to the whole) first.
     fn propose(&mut self, root: usize) -> Result<Vec<Option<RegularExpression>>, EngineError> {
         let mut proposed = vec![None; self.pieces.len()];
         let Some(synthesizer) = self.synthesizer else {
             return Ok(proposed);
         };
-        let eligible: Vec<usize> = (0..self.pieces.len())
-            .rev()
-            .filter(|&piece| {
-                let Piece {
-                    dfa, eliminated, ..
-                } = &self.pieces[piece];
-                !(self.whole_tried && piece == root)
-                    && dfa.number_of_states() <= synthesizer.max_states()
-                    && eliminated.evaluate_complexity() > SKIP_COMPLEXITY
-            })
-            .take(NEURAL_BUDGET)
-            .collect();
+        let mut eligible = Vec::new();
+        for piece in (0..self.pieces.len()).rev() {
+            if eligible.len() == NEURAL_BUDGET {
+                break;
+            }
+            let Piece {
+                dfa, eliminated, ..
+            } = &self.pieces[piece];
+            if (self.whole_tried && piece == root)
+                || dfa.number_of_states() > synthesizer.max_states()
+                || eliminated.evaluate_complexity() <= SKIP_COMPLEXITY
+            {
+                continue;
+            }
+            if synthesizer.below_min_success(dfa, Some(eliminated))? {
+                self.stats.neural_skipped += 1;
+                continue;
+            }
+            eligible.push(piece);
+        }
         for batch in eligible.chunks(BATCH) {
             let dfas: Vec<&FastAutomaton> =
                 batch.iter().map(|piece| &self.pieces[*piece].dfa).collect();
