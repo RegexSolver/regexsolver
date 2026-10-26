@@ -190,8 +190,8 @@ type CanonicalForm = Vec<(bool, Vec<(CharRange, usize)>)>;
 
 pub(super) struct Decomposer<'a> {
     synthesizer: Option<&'a NeuralSynthesizer>,
-    /// Whether the model already failed on the whole automaton, so is not
-    /// run on it again.
+    /// Whether the model already failed on the whole automaton, or was not
+    /// run on it for its success rate, so is not run on it here.
     pub(super) whole_tried: bool,
     pub(super) stats: Stats,
     /// Children come before their parents.

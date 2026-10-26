@@ -9,8 +9,13 @@
 //! wrong. A `NeuralSynthesizer` is a [`RegexSynthesizer`]: pass it to
 //! [`FastAutomaton::to_regex_with`] or [`Term::to_regex_with`](crate::Term::to_regex_with).
 //!
+//! A model can come with its success rate by size and difficulty of the DFA
+//! (see [Models](#models)); the conversion does not run it on a whole
+//! automaton whose rate is below a threshold
+//! ([`NeuralSynthesizer::with_min_success`]).
+//!
 //! When the model has no correct regex for an automaton, or the automaton is
-//! beyond its limits, the conversion splits the minimal DFA
+//! beyond its limits or below the threshold, the conversion splits the minimal DFA
 //! into independent pieces (concatenations, unions, stars, and the paths
 //! around a few hub states that break up large cycles), runs the model on
 //! every piece small enough, in batches, and combines the simplest regex of
@@ -43,10 +48,18 @@
 //! (`NeuralSynthesizer::from_hub`). The format is read from
 //! `config.json`; the formats supported so far:
 //!
-//! - `kleene` v1, the Kleene models (`kleene1-9m-b16-t128`): a graph
-//!   transformer over the DFA and a transformer decoder over the regex, for
-//!   minimal DFAs of at most 16 states and 16 bases (the disjoint character
-//!   ranges labelling the transitions).
+//! - `kleene` v1 and v2, the Kleene models (`kleene1-9m-b16-t128`,
+//!   `kleene2-9m-b16-t128`): a graph transformer over the DFA and a
+//!   transformer decoder over the regex, for minimal DFAs of at most 16 states
+//!   and 16 bases (the disjoint character ranges labelling the transitions).
+//!
+//! `config.json` may give the model's success rate (`gate`): for each cell of
+//! a grid over features of a minimal DFA, the share of the DFAs of a
+//! calibration set for which one of the model's candidates is correct. The
+//! features are `states`, `bases` (its spanning ranges) and `complexity` (that
+//! of its state elimination regex); each axis lists the lower bounds of its
+//! bins, and the rates are in row-major order, `null` for a cell without DFAs
+//! (the model is then tried).
 //!
 //! # Devices
 //!
@@ -195,6 +208,74 @@ struct Header {
     format_version: u32,
 }
 
+/// A feature of a minimal DFA the success rate depends on.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum Feature {
+    /// Its number of states.
+    States,
+    /// Its number of bases: the ranges of its minimal spanning set.
+    Bases,
+    /// The complexity of its state elimination regex.
+    Complexity,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct Axis {
+    feature: Feature,
+    /// The lower bounds of the bins, increasing; a value below the first is
+    /// in the first bin.
+    bins: Vec<f64>,
+}
+
+/// The model's success rate over a grid of features (`config.json` `gate`).
+#[derive(Clone, Debug, Deserialize)]
+struct Gate {
+    axes: Vec<Axis>,
+    /// Per cell, in row-major order over `axes`; `None` without data.
+    rates: Vec<Option<f64>>,
+}
+
+impl Gate {
+    fn validate(&self) -> Result<(), String> {
+        let cells = self
+            .axes
+            .iter()
+            .map(|axis| axis.bins.len())
+            .product::<usize>();
+        if self
+            .axes
+            .iter()
+            .any(|axis| axis.bins.is_empty() || !axis.bins.is_sorted())
+        {
+            return Err("gate: every axis needs increasing bins".to_string());
+        }
+        if self.rates.len() != cells {
+            return Err(format!(
+                "gate: {} rates for {cells} cells",
+                self.rates.len()
+            ));
+        }
+        Ok(())
+    }
+
+    /// The success rate for `dfa`, a DFA from [`minimal_dfa`]; `None` when its
+    /// cell has no data.
+    fn rate(&self, dfa: &FastAutomaton) -> Result<Option<f64>, EngineError> {
+        let mut cell = 0;
+        for axis in &self.axes {
+            let value = match axis.feature {
+                Feature::States => dfa.number_of_states() as f64,
+                Feature::Bases => dfa.spanning_set().number_of_spanning_ranges() as f64,
+                Feature::Complexity => dfa.to_regex()?.evaluate_complexity(),
+            };
+            let bin = axis.bins.partition_point(|lower| *lower <= value).max(1) - 1;
+            cell = cell * axis.bins.len() + bin;
+        }
+        Ok(self.rates[cell])
+    }
+}
+
 /// A loaded model, which proposes regexes for automata. See the [module
 /// documentation](self).
 ///
@@ -205,6 +286,8 @@ pub struct NeuralSynthesizer {
     model: Box<dyn Model>,
     sampling: Sampling,
     decomposition: bool,
+    gate: Option<Gate>,
+    min_success: f64,
 }
 
 impl fmt::Debug for NeuralSynthesizer {
@@ -213,6 +296,7 @@ impl fmt::Debug for NeuralSynthesizer {
             .field("name", &self.name)
             .field("sampling", &self.sampling)
             .field("decomposition", &self.decomposition)
+            .field("min_success", &self.min_success)
             .finish_non_exhaustive()
     }
 }
@@ -221,6 +305,10 @@ impl NeuralSynthesizer {
     /// Default number of candidates per automaton: the greedy decoding plus
     /// seven samples.
     pub const DEFAULT_CANDIDATES: usize = 8;
+
+    /// Default success rate below which the model is not run on a whole
+    /// automaton (see [`with_min_success`](Self::with_min_success)).
+    pub const DEFAULT_MIN_SUCCESS: f64 = 0.05;
 
     /// Loads a model from its `config.json` and `model.safetensors` files.
     pub fn from_files(
@@ -255,6 +343,15 @@ impl NeuralSynthesizer {
             .map_err(|err| NeuralSynthesisError::Config(err.to_string()))?;
         let header = Header::deserialize(&config)
             .map_err(|err| NeuralSynthesisError::Config(err.to_string()))?;
+        let gate = match config.get("gate") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(gate) => {
+                let gate = Gate::deserialize(gate)
+                    .map_err(|err| NeuralSynthesisError::Config(format!("gate: {err}")))?;
+                gate.validate().map_err(NeuralSynthesisError::Config)?;
+                Some(gate)
+            }
+        };
         let model: Box<dyn Model> = match (header.format.as_str(), header.format_version) {
             (kleene::FORMAT, version) if kleene::FORMAT_VERSIONS.contains(&version) => Box::new(
                 kleene::Kleene::new(&config, version, weights, &device.to_candle()?)?,
@@ -275,6 +372,8 @@ impl NeuralSynthesizer {
                 seed: 0,
             },
             decomposition: true,
+            gate,
+            min_success: Self::DEFAULT_MIN_SUCCESS,
         })
     }
 
@@ -310,6 +409,33 @@ impl NeuralSynthesizer {
     pub fn with_decomposition(mut self, decomposition: bool) -> Self {
         self.decomposition = decomposition;
         self
+    }
+
+    /// Sets the success rate below which converting
+    /// ([`FastAutomaton::to_regex_with`]) does not run the model on a whole
+    /// automaton, going straight to its decomposition (default
+    /// [`DEFAULT_MIN_SUCCESS`](Self::DEFAULT_MIN_SUCCESS)). The rate is the
+    /// model's, from its `config.json`, for DFAs like the automaton's minimal
+    /// DFA (see the [module documentation](self)); a model without one is
+    /// always run, and so is every model with 0. Skipping saves the decoding
+    /// and checking of candidates that are almost never correct.
+    pub fn with_min_success(mut self, min_success: f64) -> Self {
+        self.min_success = min_success;
+        self
+    }
+
+    /// The model's success rate for `automaton`, from its `config.json`:
+    /// how often, on a calibration set, one of its candidates was correct for
+    /// DFAs like the automaton's minimal DFA. `None` when the model has no
+    /// rate or none for such DFAs.
+    ///
+    /// Fails if `automaton` cannot be minimized, or its minimal DFA converted
+    /// by state elimination, within the execution profile.
+    pub fn success_rate(&self, automaton: &FastAutomaton) -> Result<Option<f64>, EngineError> {
+        match &self.gate {
+            Some(gate) => gate.rate(&minimal_dfa(automaton)?),
+            None => Ok(None),
+        }
     }
 
     /// The model's name, from its `config.json` (e.g. `kleene1-9m-b16-t128`).
@@ -356,6 +482,14 @@ impl NeuralSynthesizer {
         for automaton in automata {
             dfas.push(minimal_dfa(automaton)?);
         }
+        self.propose_minimal(&dfas)
+    }
+
+    /// [`propose_batch`](Self::propose_batch) for DFAs from [`minimal_dfa`].
+    fn propose_minimal(
+        &self,
+        dfas: &[FastAutomaton],
+    ) -> Result<Vec<Option<RegularExpression>>, EngineError> {
         let eligible: Vec<usize> = (0..dfas.len())
             .filter(|i| dfas[*i].number_of_states() <= self.model.max_states())
             .collect();
@@ -381,8 +515,8 @@ impl NeuralSynthesizer {
         Ok(proposals)
     }
 
-    /// A regex for `automaton`, which the model has no correct regex for or
-    /// cannot take, from its minimal DFA split into pieces the model converts
+    /// A regex for `automaton`, which the model has no correct regex for,
+    /// cannot take or was not run on, from its minimal DFA split into pieces the model converts
     /// (see the [module documentation](self)); `None` when decomposition is
     /// disabled. The result describes exactly the automaton's language.
     ///
@@ -399,6 +533,27 @@ impl NeuralSynthesizer {
         let regex = decomposer.convert(automaton)?;
         tracing::debug!(stats = ?decomposer.stats, "decomposed");
         Ok(Some(regex))
+    }
+
+    /// The model's proposal for the whole of `automaton`, unless its success
+    /// rate for it is below [`with_min_success`](Self::with_min_success)'s.
+    fn propose_whole(
+        &self,
+        automaton: &FastAutomaton,
+    ) -> Result<Option<RegularExpression>, EngineError> {
+        let dfa = minimal_dfa(automaton)?;
+        if let Some(gate) = &self.gate
+            && self.min_success > 0.0
+            && dfa.number_of_states() <= self.model.max_states()
+            && gate.rate(&dfa)?.is_some_and(|rate| rate < self.min_success)
+        {
+            tracing::debug!(
+                "{}: not run on the whole automaton (success rate)",
+                self.name
+            );
+            return Ok(None);
+        }
+        Ok(self.propose_minimal(&[dfa])?.pop().flatten())
     }
 
     /// The simplest of `candidates` equivalent to `dfa`.
@@ -429,8 +584,11 @@ impl NeuralSynthesizer {
 }
 
 impl RegexSynthesizer for NeuralSynthesizer {
-    /// The model first proposes a regex for the whole automaton. When it has
-    /// no correct one, or the automaton is beyond its limits, the automaton's
+    /// The model first proposes a regex for the whole automaton, unless its
+    /// success rate for it is below the threshold
+    /// ([`with_min_success`](NeuralSynthesizer::with_min_success)). When it has
+    /// no correct one, or the automaton is beyond its limits or below the
+    /// threshold, the automaton's
     /// minimal DFA is split into independent pieces (unless
     /// [`with_decomposition`](NeuralSynthesizer::with_decomposition) disables
     /// it), each converted by the model or by state elimination, whichever is
@@ -440,10 +598,12 @@ impl RegexSynthesizer for NeuralSynthesizer {
     /// deadline). The result always describes exactly the automaton's
     /// language.
     fn synthesize(&self, automaton: &FastAutomaton) -> Result<RegularExpression, EngineError> {
-        let proposed = self.propose(automaton).and_then(|proposed| match proposed {
-            Some(proposed) => Ok(Some(proposed)),
-            None => self.propose_decomposed(automaton),
-        });
+        let proposed = self
+            .propose_whole(automaton)
+            .and_then(|proposed| match proposed {
+                Some(proposed) => Ok(Some(proposed)),
+                None => self.propose_decomposed(automaton),
+            });
         let proposed = match proposed {
             Ok(proposed) => proposed,
             Err(err) => {
@@ -588,6 +748,72 @@ mod tests {
             NeuralSynthesizer::from_bytes(b"not json", vec![], Device::Cpu),
             Err(NeuralSynthesisError::Config(_))
         ));
+    }
+
+    fn gate(json: serde_json::Value) -> Gate {
+        let gate = Gate::deserialize(json).unwrap();
+        gate.validate().unwrap();
+        gate
+    }
+
+    fn dfa(pattern: &str) -> FastAutomaton {
+        minimal_dfa(
+            &RegularExpression::new(pattern)
+                .unwrap()
+                .to_automaton()
+                .unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn gate_looks_up_the_cell_of_the_dfa() {
+        // States in bins [1, 3), [3, ...); complexity in [0, 5), [5, ...).
+        let gate = gate(serde_json::json!({
+            "axes": [
+                {"feature": "states", "bins": [1, 3]},
+                {"feature": "complexity", "bins": [0, 5]},
+            ],
+            "rates": [0.9, 0.5, null, 0.01],
+        }));
+        // 2 states, complexity 1.
+        assert_eq!(gate.rate(&dfa("a")).unwrap(), Some(0.9));
+        // 2 states, complexity at least 5.
+        let ab = dfa("(a|bc)*");
+        assert_eq!(ab.number_of_states(), 2);
+        assert!(ab.to_regex().unwrap().evaluate_complexity() >= 5.0);
+        assert_eq!(gate.rate(&ab).unwrap(), Some(0.5));
+        // 3 states or more: no data below complexity 5, 0.01 above.
+        assert_eq!(gate.rate(&dfa("abc")).unwrap(), None);
+        assert_eq!(gate.rate(&dfa("a(bc|de)*f")).unwrap(), Some(0.01));
+        // Bases: the spanning ranges, without the rest.
+        let bases = gate_bases();
+        assert_eq!(bases.rate(&dfa("a*")).unwrap(), Some(1.0));
+        assert_eq!(bases.rate(&dfa("[ab]c*")).unwrap(), Some(2.0));
+    }
+
+    fn gate_bases() -> Gate {
+        gate(serde_json::json!({
+            "axes": [{"feature": "bases", "bins": [1, 2]}],
+            "rates": [1.0, 2.0],
+        }))
+    }
+
+    #[test]
+    fn invalid_gates_are_config_errors() {
+        for gate in [
+            serde_json::json!({"axes": [{"feature": "states", "bins": [1, 3]}], "rates": [0.5]}),
+            serde_json::json!({"axes": [{"feature": "states", "bins": [3, 1]}], "rates": [0.5, 0.5]}),
+            serde_json::json!({"axes": [{"feature": "depth", "bins": [1]}], "rates": [0.5]}),
+        ] {
+            let config = serde_json::json!({
+                "name": "x", "format": "kleene", "format_version": 2, "gate": gate,
+            });
+            assert!(matches!(
+                NeuralSynthesizer::from_bytes(config.to_string().as_bytes(), vec![], Device::Cpu),
+                Err(NeuralSynthesisError::Config(err)) if err.starts_with("gate")
+            ));
+        }
     }
 
     #[test]
