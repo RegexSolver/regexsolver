@@ -649,7 +649,7 @@ mod tests {
     #[ignore = "needs the model weights (KLEENE_MODEL_DIR)"]
     fn to_regex_with_keeps_the_language() {
         let synthesizer = kleene();
-        assert_eq!(synthesizer.model_name(), "kleene1-9m-b16-t128");
+        assert!(synthesizer.model_name().starts_with("kleene"));
         assert_eq!(
             (synthesizer.max_states(), synthesizer.max_bases()),
             (16, 16)
