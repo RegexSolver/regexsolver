@@ -32,9 +32,9 @@
 
 use ahash::AHashMap;
 
-use super::{NeuralSynthesizer, minimal_dfa};
+use super::{CanonicalForm, NeuralSynthesizer, Target, canonical_form, minimal_dfa};
 use crate::{
-    CharRange, IntSet,
+    IntSet,
     error::EngineError,
     execution_profile::ExecutionProfile,
     fast_automaton::{FastAutomaton, State},
@@ -172,9 +172,11 @@ impl Plan {
     }
 }
 
-/// A minimal DFA, its state elimination regex and how it splits.
+/// A minimal DFA, its canonical form, its state elimination regex and how
+/// it splits.
 struct Piece {
     dfa: FastAutomaton,
+    form: CanonicalForm,
     eliminated: RegularExpression,
     plan: Plan,
 }
@@ -185,10 +187,6 @@ enum Origin {
     Neural,
     Composed,
 }
-
-/// A minimal DFA's states numbered by BFS from the start, following
-/// transitions in the order of their characters: equal for isomorphic DFAs.
-type CanonicalForm = Vec<(bool, Vec<(CharRange, usize)>)>;
 
 pub(super) struct Decomposer<'a> {
     synthesizer: Option<&'a NeuralSynthesizer>,
@@ -218,14 +216,30 @@ impl<'a> Decomposer<'a> {
         }
     }
 
-    /// Converts `automaton`, keeping for every piece the simplest of state
-    /// elimination, the model and the composition of its pieces.
-    #[tracing::instrument(level = "debug", skip_all, fields(states = automaton.number_of_states()))]
+    /// Converts `automaton`: see [`convert_minimal`](Self::convert_minimal).
+    #[cfg(test)]
     pub(super) fn convert(
         &mut self,
         automaton: &FastAutomaton,
     ) -> Result<RegularExpression, EngineError> {
-        let root = self.explore(minimal_dfa(automaton)?)?;
+        let dfa = minimal_dfa(automaton)?;
+        let form = canonical_form(&dfa)?;
+        Ok(self.convert_minimal(dfa, form, None)?.0)
+    }
+
+    /// Converts `dfa`, a DFA from [`minimal_dfa`] whose canonical form is
+    /// `form` and whose state elimination regex is `eliminated` when already
+    /// computed, keeping for every piece the simplest of state elimination,
+    /// the model and the composition of its pieces. Also returns `dfa`'s state
+    /// elimination regex.
+    #[tracing::instrument(level = "debug", skip_all, fields(states = dfa.number_of_states()))]
+    pub(super) fn convert_minimal(
+        &mut self,
+        dfa: FastAutomaton,
+        form: CanonicalForm,
+        eliminated: Option<RegularExpression>,
+    ) -> Result<(RegularExpression, RegularExpression), EngineError> {
+        let root = self.explore_with(dfa, form, eliminated)?;
         self.stats.pieces = self.pieces.len();
         let proposed = self.propose(root)?;
 
@@ -250,7 +264,8 @@ impl<'a> Decomposer<'a> {
             origins.push(origin);
         }
         self.count_result(root, &origins);
-        Ok(regexes.swap_remove(root))
+        let eliminated = self.pieces[root].eliminated.clone();
+        Ok((regexes.swap_remove(root), eliminated))
     }
 
     /// The model's proposal for each piece small enough and not below its
@@ -282,9 +297,20 @@ impl<'a> Decomposer<'a> {
             eligible.push(piece);
         }
         for batch in eligible.chunks(BATCH) {
-            let dfas: Vec<&FastAutomaton> =
-                batch.iter().map(|piece| &self.pieces[*piece].dfa).collect();
-            for (piece, regex) in batch.iter().zip(synthesizer.propose_batch(&dfas)?) {
+            // A proposal is kept only if at most as complex as state
+            // elimination's regex.
+            let targets: Vec<Target> = batch
+                .iter()
+                .map(|piece| {
+                    let piece = &self.pieces[*piece];
+                    Target {
+                        dfa: &piece.dfa,
+                        form: &piece.form,
+                        ceiling: Some(piece.eliminated.evaluate_complexity()),
+                    }
+                })
+                .collect();
+            for (piece, regex) in batch.iter().zip(synthesizer.propose_targets(&targets)?) {
                 self.stats.neural_runs += 1;
                 if regex.is_some() {
                     self.stats.neural_correct += 1;
@@ -319,12 +345,26 @@ impl<'a> Decomposer<'a> {
     /// The piece for `dfa`, a minimal DFA, split recursively.
     fn explore(&mut self, dfa: FastAutomaton) -> Result<usize, EngineError> {
         ExecutionProfile::get().assert_not_timed_out()?;
-        let canonical_form = pieces::canonical_form(&dfa)?;
-        if let Some(piece) = self.index.get(&canonical_form) {
+        let form = canonical_form(&dfa)?;
+        self.explore_with(dfa, form, None)
+    }
+
+    /// [`explore`](Self::explore) for `dfa` of canonical form `form` and state
+    /// elimination regex `eliminated`, when already computed.
+    fn explore_with(
+        &mut self,
+        dfa: FastAutomaton,
+        form: CanonicalForm,
+        eliminated: Option<RegularExpression>,
+    ) -> Result<usize, EngineError> {
+        if let Some(piece) = self.index.get(&form) {
             return Ok(*piece);
         }
         self.started += 1;
-        let eliminated = dfa.to_regex()?;
+        let eliminated = match eliminated {
+            Some(eliminated) => eliminated,
+            None => dfa.to_regex()?,
+        };
         let plan = if self.started > MAX_PIECES {
             Plan::Leaf
         } else {
@@ -333,10 +373,11 @@ impl<'a> Decomposer<'a> {
         let piece = self.pieces.len();
         self.pieces.push(Piece {
             dfa,
+            form: form.clone(),
             eliminated,
             plan,
         });
-        self.index.insert(canonical_form, piece);
+        self.index.insert(form, piece);
         Ok(piece)
     }
 
@@ -566,6 +607,7 @@ mod tests {
     use regex_charclass::char::Char;
 
     use super::*;
+    use crate::CharRange;
 
     fn assert_keeps_the_language(automaton: &FastAutomaton) -> Stats {
         let mut decomposer = Decomposer::new(None);
@@ -691,6 +733,26 @@ mod tests {
         fn keeps_the_language_of_random_automata(automaton in arb_automaton()) {
             let regex = Decomposer::new(None).convert(&automaton).unwrap();
             prop_assert!(regex.to_automaton().unwrap().equivalent(&automaton).unwrap());
+        }
+
+        /// The check of candidates agrees with [`FastAutomaton::equivalent`].
+        #[test]
+        fn candidates_are_checked_like_equivalence(
+            target in arb_automaton(),
+            candidate in arb_automaton(),
+        ) {
+            let dfa = minimal_dfa(&target).unwrap();
+            let form = canonical_form(&dfa).unwrap();
+            let target = Target { dfa: &dfa, form: &form, ceiling: None };
+            let mut complement = None;
+            for regex in [dfa.to_regex().unwrap(), candidate.to_regex().unwrap()] {
+                let equivalent = regex.to_automaton().unwrap().equivalent(&dfa).unwrap();
+                prop_assert_eq!(
+                    NeuralSynthesizer::describes(&regex, &target, &mut complement).unwrap(),
+                    equivalent,
+                    "{}", regex
+                );
+            }
         }
     }
 }

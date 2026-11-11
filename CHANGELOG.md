@@ -8,7 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 - Neural synthesis runs the Kleene 2 models (`kleene` format v2), whose input leaves out the characters no transition uses, so that `a*` and `.*` are the same input. Kleene 1 models (v1) still load.
-- A model's `config.json` can give its success rate over a grid of features of the minimal DFA (states, bases, state elimination complexity). `to_regex_with` no longer runs the model on an automaton, or a piece of its decomposition, whose rate is below `NeuralSynthesizer::with_min_success` (default 5%): the automaton goes straight to its decomposition, a piece is split further or converted by state elimination; `NeuralSynthesizer::success_rate` returns the rate.
+- A model's `config.json` can give its success rate over a grid of features of the minimal DFA (states, bases, state elimination complexity). `to_regex_with` no longer runs the model on an automaton, or a piece of its decomposition, whose rate is below `NeuralSynthesizer::with_min_success` (default 50%): the automaton goes straight to its decomposition, a piece is split further or converted by state elimination; `NeuralSynthesizer::success_rate` returns the rate.
+
+### Changed
+- Neural synthesis is faster, with the same results: the minimal DFA is converted by state elimination once rather than up to three times, pieces of a decomposition are not minimized again, candidates too complex to be kept are not checked, and the others are checked in parallel, against the canonical form of the minimal DFA rather than by a full equivalence test. The splits are found on dense state indices and bitsets, the canonical form of the model's input is computed without allocating per base order, and the model runs 2 to 3.5 times faster on the CPU (fused attention kernels, no copies of the attention caches per candidate). Converting set-operation results of 17 to 80 states takes 2.5 to 11 times less time on the CPU.
 
 ### Security
 - Updated `rustls-webpki`, `webpki-roots` and `webpki-root-certs` in `Cargo.lock` for RUSTSEC-2026-0381, -0382 and -0383. The `zip` and `ocipkg` advisories are ignored in `.cargo/audit.toml`: nothing in the dependency tree calls the affected functions.

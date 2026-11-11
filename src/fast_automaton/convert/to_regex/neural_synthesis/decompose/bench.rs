@@ -2,10 +2,16 @@
 //! and with state elimination, on DFAs beyond the model's limits:
 //! `KLEENE_MODEL_DIR=<release dir> cargo test --release --features neural-synthesis decompose::bench -- --ignored --nocapture`
 
-use std::time::{Duration, Instant};
+use std::{
+    hash::{DefaultHasher, Hash, Hasher},
+    time::{Duration, Instant},
+};
 
 use super::*;
-use crate::{execution_profile::ExecutionProfileBuilder, neural_synthesis::Device};
+use crate::{
+    execution_profile::ExecutionProfileBuilder,
+    neural_synthesis::{Device, test_patterns},
+};
 
 /// DFAs per set operation.
 const PER_OPERATION: usize = 10;
@@ -20,20 +26,17 @@ fn bench_decompose() {
     let whole = load().with_decomposition(false);
     let decomposing = load();
 
-    let reference: Vec<serde_json::Value> = serde_json::from_slice(include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/data/kleene_parity.json"
-    )))
-    .unwrap();
-    let atoms: Vec<RegularExpression> = reference
-        .iter()
-        .map(|case| RegularExpression::new(case["pattern"].as_str().unwrap()).unwrap())
-        .collect();
+    let atoms = test_patterns();
 
     for (operation, dfas) in large_dfas(&atoms, whole.max_states()) {
         let mut ratios = (0.0, 0.0);
         let mut simpler = 0;
         let mut times = (Duration::ZERO, Duration::ZERO);
+        // Of the decomposition without the model: the splits, state
+        // elimination and the combination.
+        let mut alone = Duration::ZERO;
+        // Of the regexes, so an optimization can be checked not to change them.
+        let mut checksum = DefaultHasher::new();
         for dfa in &dfas {
             let eliminated = dfa.to_regex().unwrap().evaluate_complexity();
             let start = Instant::now();
@@ -42,10 +45,14 @@ fn bench_decompose() {
             let start = Instant::now();
             let with = dfa.to_regex_with(&decomposing).unwrap();
             times.1 += start.elapsed();
+            let start = Instant::now();
+            let _ = Decomposer::new(None).convert(dfa).unwrap();
+            alone += start.elapsed();
             assert!(
                 with.to_automaton().unwrap().equivalent(dfa).unwrap(),
                 "{with}"
             );
+            (without.to_string(), with.to_string()).hash(&mut checksum);
 
             ratios.0 += (without.evaluate_complexity() / eliminated).ln();
             ratios.1 += (with.evaluate_complexity() / eliminated).ln();
@@ -53,11 +60,13 @@ fn bench_decompose() {
         }
         let count = dfas.len();
         println!(
-            "{operation:<13} {count} DFAs: complexity vs state elimination (geometric mean) {:.3} without decomposition, {:.3} with; simpler for {simpler}; {:?} and {:?} per DFA",
+            "{operation:<13} {count} DFAs: complexity vs state elimination (geometric mean) {:.3} without decomposition, {:.3} with; simpler for {simpler}; {:?} and {:?} per DFA ({:?} without the model); checksum {:016x}",
             (ratios.0 / count as f64).exp(),
             (ratios.1 / count as f64).exp(),
             times.0 / count as u32,
             times.1 / count as u32,
+            alone / count as u32,
+            checksum.finish(),
         );
     }
 }

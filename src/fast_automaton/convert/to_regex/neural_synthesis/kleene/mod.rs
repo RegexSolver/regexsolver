@@ -18,8 +18,10 @@ use crate::{
 
 mod attention;
 mod canonical;
+mod edge_attention;
 mod grammar;
 mod graph;
+mod layers;
 mod network;
 mod tokens;
 
@@ -163,14 +165,16 @@ impl Model for Kleene {
 mod tests {
     use regex_charclass::CharacterClass;
 
-    use crate::neural_synthesis::minimal_dfa;
+    use crate::neural_synthesis::{minimal_dfa, test_patterns};
 
     use super::*;
 
     /// Compares with the outputs of the PyTorch model the weights were trained
-    /// with (`tests/data/kleene_parity.json`, from the dfa2regex project): the
-    /// canonical bases, the input graph, the first logits and the greedy
-    /// decoding of each pattern's minimal DFA.
+    /// with (`tests/data/kleene_parity-<name>-<release>.json`, from the
+    /// dfa2regex project's release check, for the patterns of
+    /// `tests/data/kleene_patterns.txt`): the canonical bases, the input
+    /// graph, the first logits and the greedy decoding of each pattern's
+    /// minimal DFA.
     ///
     /// `KLEENE_MODEL_DIR=<release dir> cargo test --release --features neural-synthesis neural_synthesis -- --ignored`
     /// (`KLEENE_PARITY=<json>` for other reference outputs).
@@ -184,11 +188,22 @@ mod tests {
         let version = config["format_version"].as_u64().unwrap() as u32;
         let kleene = Kleene::new(&config, version, weights, &candle_core::Device::Cpu).unwrap();
 
+        // The reference outputs depend on the weights: one file per release.
         let path = std::env::var("KLEENE_PARITY").unwrap_or_else(|_| {
-            concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/kleene_parity.json").to_string()
+            format!(
+                "{}/tests/data/kleene_parity-{}-{}.json",
+                env!("CARGO_MANIFEST_DIR"),
+                config["name"].as_str().unwrap(),
+                config["release"].as_str().unwrap_or("unreleased"),
+            )
         });
-        let reference: Vec<serde_json::Value> =
-            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let reference = std::fs::read(&path).unwrap_or_else(|err| {
+            panic!(
+                "{path}: {err}; write the reference outputs of these weights with \
+                 dfa2regex's release check, then pass them as KLEENE_PARITY"
+            )
+        });
+        let reference: Vec<serde_json::Value> = serde_json::from_slice(&reference).unwrap();
         let ints = |v: &serde_json::Value| -> Vec<u64> {
             v.as_array()
                 .unwrap()
@@ -382,21 +397,10 @@ mod tests {
         let version = config["format_version"].as_u64().unwrap() as u32;
         let kleene = Kleene::new(&config, version, weights, &candle_core::Device::Cpu).unwrap();
 
-        let reference: Vec<serde_json::Value> = serde_json::from_slice(include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/data/kleene_parity.json"
-        )))
-        .unwrap();
-        let inputs: Vec<(graph::Graph, usize)> = reference
+        let inputs: Vec<(graph::Graph, usize)> = test_patterns()
             .iter()
-            .map(|case| {
-                let dfa = minimal_dfa(
-                    &RegularExpression::new(case["pattern"].as_str().unwrap())
-                        .unwrap()
-                        .to_automaton()
-                        .unwrap(),
-                )
-                .unwrap();
+            .map(|pattern| {
+                let dfa = minimal_dfa(&pattern.to_automaton().unwrap()).unwrap();
                 let canonical = canonical::canonicalize(&dfa, kleene.rest_is_base);
                 let g = graph::Graph::new(
                     &canonical,

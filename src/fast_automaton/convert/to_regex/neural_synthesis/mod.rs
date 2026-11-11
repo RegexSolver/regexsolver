@@ -74,9 +74,10 @@ use std::{fmt, path::Path};
 use serde::Deserialize;
 
 use crate::{
+    CharRange, IntMap,
     error::EngineError,
     execution_profile::ExecutionProfile,
-    fast_automaton::{FastAutomaton, RegexSynthesizer},
+    fast_automaton::{FastAutomaton, RegexSynthesizer, State},
     regex::RegularExpression,
 };
 
@@ -283,6 +284,23 @@ impl Gate {
         }
         Ok(self.rates[cell])
     }
+
+    /// Whether [`rate`](Self::rate) needs the state elimination regex.
+    fn uses_complexity(&self) -> bool {
+        self.axes
+            .iter()
+            .any(|axis| axis.feature == Feature::Complexity)
+    }
+}
+
+/// A DFA from [`minimal_dfa`] to propose a regex for.
+struct Target<'a> {
+    dfa: &'a FastAutomaton,
+    /// Its canonical form, which the minimal DFA of a correct candidate has.
+    form: &'a CanonicalForm,
+    /// Candidates more complex than this are not checked: they would not be
+    /// kept.
+    ceiling: Option<f64>,
 }
 
 /// A loaded model, which proposes regexes for automata. See the [module
@@ -317,7 +335,7 @@ impl NeuralSynthesizer {
 
     /// Default success rate below which the model is not run on a whole
     /// automaton (see [`with_min_success`](Self::with_min_success)).
-    pub const DEFAULT_MIN_SUCCESS: f64 = 0.05;
+    pub const DEFAULT_MIN_SUCCESS: f64 = 0.5;
 
     /// Loads a model from its `config.json` and `model.safetensors` files.
     pub fn from_files(
@@ -490,25 +508,37 @@ impl NeuralSynthesizer {
         automata: &[&FastAutomaton],
     ) -> Result<Vec<Option<RegularExpression>>, EngineError> {
         let mut dfas = Vec::with_capacity(automata.len());
+        let mut forms = Vec::with_capacity(automata.len());
         for automaton in automata {
-            dfas.push(minimal_dfa(automaton)?);
+            let dfa = minimal_dfa(automaton)?;
+            forms.push(canonical_form(&dfa)?);
+            dfas.push(dfa);
         }
-        self.propose_minimal(&dfas)
+        let targets: Vec<Target> = dfas
+            .iter()
+            .zip(&forms)
+            .map(|(dfa, form)| Target {
+                dfa,
+                form,
+                ceiling: None,
+            })
+            .collect();
+        self.propose_targets(&targets)
     }
 
-    /// [`propose_batch`](Self::propose_batch) for DFAs from [`minimal_dfa`].
-    fn propose_minimal(
+    /// [`propose_batch`](Self::propose_batch) for [`Target`]s.
+    fn propose_targets(
         &self,
-        dfas: &[FastAutomaton],
+        targets: &[Target],
     ) -> Result<Vec<Option<RegularExpression>>, EngineError> {
-        let eligible: Vec<usize> = (0..dfas.len())
-            .filter(|i| dfas[*i].number_of_states() <= self.model.max_states())
+        let eligible: Vec<usize> = (0..targets.len())
+            .filter(|i| targets[*i].dfa.number_of_states() <= self.model.max_states())
             .collect();
-        let mut proposals = vec![None; dfas.len()];
+        let mut proposals = vec![None; targets.len()];
         if eligible.is_empty() {
             return Ok(proposals);
         }
-        let inputs: Vec<&FastAutomaton> = eligible.iter().map(|i| &dfas[*i]).collect();
+        let inputs: Vec<&FastAutomaton> = eligible.iter().map(|i| targets[*i].dfa).collect();
         let candidates = match self.model.candidates(&inputs, &self.sampling) {
             Ok(candidates) => candidates,
             Err(err) => {
@@ -520,49 +550,78 @@ impl NeuralSynthesizer {
         // still outlast a short deadline.
         ExecutionProfile::get().assert_not_timed_out()?;
 
-        for (i, candidates) in eligible.into_iter().zip(candidates) {
-            proposals[i] = Self::check(&dfas[i], candidates);
+        // The DFAs' checks are independent.
+        let checks: Vec<(usize, Vec<RegularExpression>)> =
+            eligible.into_iter().zip(candidates).collect();
+        #[cfg(all(feature = "parallel", not(target_family = "wasm")))]
+        let checked: Vec<(usize, Option<RegularExpression>)> = {
+            use rayon::prelude::*;
+            let execution_profile = ExecutionProfile::get();
+            checks
+                .into_par_iter()
+                .map(|(i, candidates)| {
+                    let checked = execution_profile.apply(|| Self::check(&targets[i], candidates));
+                    (i, checked)
+                })
+                .collect()
+        };
+        #[cfg(any(not(feature = "parallel"), target_family = "wasm"))]
+        let checked: Vec<(usize, Option<RegularExpression>)> = checks
+            .into_iter()
+            .map(|(i, candidates)| (i, Self::check(&targets[i], candidates)))
+            .collect();
+        for (i, proposal) in checked {
+            proposals[i] = proposal;
         }
         Ok(proposals)
     }
 
-    /// A regex for `automaton`, which the model has no correct regex for,
-    /// cannot take or was not run on, from its minimal DFA split into pieces the model converts
-    /// (see the [module documentation](self)); `None` when decomposition is
-    /// disabled. The result describes exactly the automaton's language.
+    /// The model's proposal for the minimal DFA of `automaton`, unless its
+    /// success rate for it is below
+    /// [`with_min_success`](Self::with_min_success)'s; when there is none,
+    /// the composition of the regexes of its pieces (see the [module
+    /// documentation](self)), unless decomposition is disabled. Also returns
+    /// the state elimination regex of the minimal DFA, when computed on the
+    /// way.
     ///
     /// Fails if the execution profile's deadline passes.
-    pub(crate) fn propose_decomposed(
+    fn propose_or_decompose(
         &self,
         automaton: &FastAutomaton,
-    ) -> Result<Option<RegularExpression>, EngineError> {
+    ) -> Result<(Option<RegularExpression>, Option<RegularExpression>), EngineError> {
+        let dfa = minimal_dfa(automaton)?;
+        let form = canonical_form(&dfa)?;
+        let mut eliminated = None;
+        if dfa.number_of_states() <= self.model.max_states() {
+            if self.min_success > 0.0 && self.gate.as_ref().is_some_and(Gate::uses_complexity) {
+                eliminated = Some(dfa.to_regex()?);
+            }
+            if self.below_min_success(&dfa, eliminated.as_ref())? {
+                tracing::debug!(
+                    "{}: not run on the whole automaton (success rate)",
+                    self.name
+                );
+            } else {
+                // No ceiling: a correct proposal, however complex, is
+                // compared with state elimination rather than decomposed.
+                let target = Target {
+                    dfa: &dfa,
+                    form: &form,
+                    ceiling: None,
+                };
+                if let Some(proposed) = self.propose_targets(&[target])?.pop().flatten() {
+                    return Ok((Some(proposed), eliminated));
+                }
+            }
+        }
         if !self.decomposition {
-            return Ok(None);
+            return Ok((None, eliminated));
         }
         let mut decomposer = decompose::Decomposer::new(Some(self));
         decomposer.whole_tried = true;
-        let regex = decomposer.convert(automaton)?;
+        let (regex, eliminated) = decomposer.convert_minimal(dfa, form, eliminated)?;
         tracing::debug!(stats = ?decomposer.stats, "decomposed");
-        Ok(Some(regex))
-    }
-
-    /// The model's proposal for the whole of `automaton`, unless its success
-    /// rate for it is below [`with_min_success`](Self::with_min_success)'s.
-    fn propose_whole(
-        &self,
-        automaton: &FastAutomaton,
-    ) -> Result<Option<RegularExpression>, EngineError> {
-        let dfa = minimal_dfa(automaton)?;
-        if dfa.number_of_states() <= self.model.max_states()
-            && self.below_min_success(&dfa, None)?
-        {
-            tracing::debug!(
-                "{}: not run on the whole automaton (success rate)",
-                self.name
-            );
-            return Ok(None);
-        }
-        Ok(self.propose_minimal(&[dfa])?.pop().flatten())
+        Ok((Some(regex), Some(eliminated)))
     }
 
     /// Whether the model's success rate for `dfa`, a DFA from [`minimal_dfa`]
@@ -582,8 +641,9 @@ impl NeuralSynthesizer {
         }
     }
 
-    /// The simplest of `candidates` equivalent to `dfa`.
-    fn check(dfa: &FastAutomaton, candidates: Vec<RegularExpression>) -> Option<RegularExpression> {
+    /// The simplest of `candidates` describing the language of `target`, at
+    /// most as complex as its ceiling.
+    fn check(target: &Target, candidates: Vec<RegularExpression>) -> Option<RegularExpression> {
         let mut unique: Vec<RegularExpression> = Vec::with_capacity(candidates.len());
         for candidate in candidates {
             if !unique.contains(&candidate) {
@@ -598,14 +658,47 @@ impl NeuralSynthesizer {
         // The simplest first; ties keep the earliest (the greedy one first).
         ranked.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
 
-        for (_, _, regex) in ranked {
-            match regex.to_automaton().and_then(|a| a.equivalent(dfa)) {
+        // Built on the first candidate checked.
+        let mut complement = None;
+        for (complexity, _, regex) in ranked {
+            if target.ceiling.is_some_and(|ceiling| complexity > ceiling) {
+                break;
+            }
+            match Self::describes(&regex, target, &mut complement) {
                 Ok(true) => return Some(regex),
                 Ok(false) => {}
                 Err(err) => tracing::debug!("candidate {regex} not checked: {err}"),
             }
         }
         None
+    }
+
+    /// Whether `regex` describes exactly the language of `target`, whose
+    /// complement is `complement` once computed.
+    ///
+    /// Its strings must all be in the language, which a product with the
+    /// complement tells without determinizing `regex`; then its minimal DFA
+    /// must be `target`'s, as their canonical forms tell.
+    fn describes(
+        regex: &RegularExpression,
+        target: &Target,
+        complement: &mut Option<FastAutomaton>,
+    ) -> Result<bool, EngineError> {
+        let automaton = regex.to_automaton()?;
+        let complement = match complement {
+            Some(complement) => complement,
+            None => {
+                let mut dfa = target.dfa.clone();
+                dfa.complement()?;
+                complement.insert(dfa)
+            }
+        };
+        if automaton.has_intersection(complement)? {
+            return Ok(false);
+        }
+        let dfa = minimal_dfa(&automaton)?;
+        Ok(dfa.number_of_states() == target.dfa.number_of_states()
+            && canonical_form(&dfa)? == *target.form)
     }
 }
 
@@ -624,23 +717,23 @@ impl RegexSynthesizer for NeuralSynthesizer {
     /// deadline). The result always describes exactly the automaton's
     /// language.
     fn synthesize(&self, automaton: &FastAutomaton) -> Result<RegularExpression, EngineError> {
-        let proposed = self
-            .propose_whole(automaton)
-            .and_then(|proposed| match proposed {
-                Some(proposed) => Ok(Some(proposed)),
-                None => self.propose_decomposed(automaton),
-            });
-        let proposed = match proposed {
+        let (proposed, dfa_eliminated) = match self.propose_or_decompose(automaton) {
             Ok(proposed) => proposed,
             Err(err) => {
                 tracing::debug!("neural synthesis skipped: {err}");
-                None
+                (None, None)
             }
         };
-        let Some(proposed) = proposed else {
-            return automaton.to_regex();
+        // A minimal automaton is its own minimal DFA, whose state
+        // elimination regex may be known already.
+        let eliminated = match dfa_eliminated {
+            Some(eliminated) if automaton.is_minimal() => Ok(eliminated),
+            _ => automaton.to_regex(),
         };
-        match automaton.to_regex() {
+        let Some(proposed) = proposed else {
+            return eliminated;
+        };
+        match eliminated {
             Ok(eliminated) if eliminated.evaluate_complexity() < proposed.evaluate_complexity() => {
                 Ok(eliminated)
             }
@@ -651,6 +744,41 @@ impl RegexSynthesizer for NeuralSynthesizer {
     }
 }
 
+/// A minimal DFA's states numbered by BFS from the start, following
+/// transitions in the order of their characters: equal for isomorphic DFAs,
+/// hence for minimal DFAs of the same language.
+type CanonicalForm = Vec<(bool, Vec<(CharRange, usize)>)>;
+
+/// `dfa`'s canonical form (see [`CanonicalForm`]); `dfa` must be minimal.
+fn canonical_form(dfa: &FastAutomaton) -> Result<CanonicalForm, EngineError> {
+    let spanning_set = dfa.spanning_set();
+    let mut order = vec![dfa.start_state()];
+    let mut numbers: IntMap<State, usize> = IntMap::default();
+    numbers.insert(dfa.start_state(), 0);
+    let mut form = Vec::with_capacity(dfa.number_of_states());
+    let mut next = 0;
+    while let Some(&state) = order.get(next) {
+        next += 1;
+        let mut transitions = Vec::with_capacity(dfa.out_degree(state));
+        for (condition, to_state) in dfa.transitions_from(state) {
+            transitions.push((condition.to_range(spanning_set)?, *to_state));
+        }
+        transitions.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        let transitions = transitions
+            .into_iter()
+            .map(|(range, to_state)| {
+                let number = *numbers.entry(to_state).or_insert_with(|| {
+                    order.push(to_state);
+                    order.len() - 1
+                });
+                (range, number)
+            })
+            .collect();
+        form.push((dfa.is_accepted(state), transitions));
+    }
+    Ok(form)
+}
+
 /// Determinizes, minimizes, and shrinks the spanning set to the coarsest one
 /// the transitions allow, so the number of bases is a property of the
 /// language rather than of the construction.
@@ -658,6 +786,19 @@ fn minimal_dfa(automaton: &FastAutomaton) -> Result<FastAutomaton, EngineError> 
     let mut dfa = automaton.determinize()?.into_owned();
     dfa.minimize()?;
     Ok(dfa)
+}
+
+/// The patterns of the parity tests (`tests/data/kleene_patterns.txt`),
+/// which the benchmarks also use.
+#[cfg(test)]
+fn test_patterns() -> Vec<RegularExpression> {
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/kleene_patterns.txt"
+    ))
+    .lines()
+    .map(|pattern| RegularExpression::new(pattern).unwrap())
+    .collect()
 }
 
 #[cfg(test)]
