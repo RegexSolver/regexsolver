@@ -46,8 +46,9 @@ impl Linear {
                 bias: self.0.bias(),
                 gelu,
             }),
-            _ if gelu => self.0.forward(x)?.apply_op1_no_bwd(&Gelu),
-            _ => self.0.forward(x),
+            // With MKL, candle's gemm takes no strided `x` (a view).
+            _ if gelu => self.0.forward(&x.contiguous()?)?.apply_op1_no_bwd(&Gelu),
+            _ => self.0.forward(&x.contiguous()?),
         }
     }
 
@@ -410,8 +411,10 @@ mod tests {
             let ours = Linear::new(weight.clone(), bias.clone());
             let candle = candle_nn::Linear::new(weight.clone(), bias);
             for rows in [1, 3, FEW_ROWS, FEW_ROWS + 1] {
+                // A view too; candle with MKL needs it contiguous.
                 let x = random(&[rows, 30]).narrow(1, 4, 24).unwrap();
-                assert_close(&ours.forward(&x).unwrap(), &candle.forward(&x).unwrap());
+                let expected = candle.forward(&x.contiguous().unwrap()).unwrap();
+                assert_close(&ours.forward(&x).unwrap(), &expected);
             }
         }
     }
