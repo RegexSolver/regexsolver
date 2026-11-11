@@ -14,11 +14,22 @@ use regexsolver::fast_automaton::FastAutomaton;
 use regexsolver::neural_synthesis::{Device, NeuralSynthesizer};
 use regexsolver::regex::RegularExpression;
 
+/// The model on `KLEENE_DEVICE`: `cpu` (the default), `cuda` or `metal`, with
+/// an ordinal after a colon (`cuda:1`). Its backend's feature must be enabled.
 fn synthesizer() -> NeuralSynthesizer {
+    let device = std::env::var("KLEENE_DEVICE").unwrap_or_default();
+    let (name, ordinal) = device.split_once(':').unwrap_or((&device, "0"));
+    let ordinal = ordinal.parse().unwrap();
+    let device = match name {
+        "" | "cpu" => Device::Cpu,
+        "cuda" => Device::Cuda(ordinal),
+        "metal" => Device::Metal(ordinal),
+        _ => panic!("KLEENE_DEVICE={device}: cpu, cuda or metal"),
+    };
     NeuralSynthesizer::from_bytes(
         include_bytes!("data/kleene_tiny/config.json"),
         include_bytes!("data/kleene_tiny/model.safetensors").to_vec(),
-        Device::Cpu,
+        device,
     )
     .unwrap()
 }

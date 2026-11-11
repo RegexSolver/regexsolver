@@ -165,7 +165,7 @@ impl Model for Kleene {
 mod tests {
     use regex_charclass::CharacterClass;
 
-    use crate::neural_synthesis::{minimal_dfa, test_patterns};
+    use crate::neural_synthesis::{minimal_dfa, test_device, test_patterns};
 
     use super::*;
 
@@ -177,7 +177,8 @@ mod tests {
     /// minimal DFA.
     ///
     /// `KLEENE_MODEL_DIR=<release dir> cargo test --release --features neural-synthesis neural_synthesis -- --ignored`
-    /// (`KLEENE_PARITY=<json>` for other reference outputs).
+    /// (`KLEENE_PARITY=<json>` for other reference outputs, `KLEENE_DEVICE`
+    /// for another device than the CPU: see [`test_device`]).
     #[test]
     #[ignore = "needs the model weights (KLEENE_MODEL_DIR)"]
     fn parity() {
@@ -186,7 +187,8 @@ mod tests {
             serde_json::from_slice(&std::fs::read(dir.join("config.json")).unwrap()).unwrap();
         let weights = std::fs::read(dir.join("model.safetensors")).unwrap();
         let version = config["format_version"].as_u64().unwrap() as u32;
-        let kleene = Kleene::new(&config, version, weights, &candle_core::Device::Cpu).unwrap();
+        let device = test_device().to_candle().unwrap();
+        let kleene = Kleene::new(&config, version, weights, &device).unwrap();
 
         // The reference outputs depend on the weights: one file per release.
         let path = std::env::var("KLEENE_PARITY").unwrap_or_else(|_| {
@@ -250,7 +252,10 @@ mod tests {
             assert_eq!(as_u64(&g.edge_dst), ints(&r["edge_dst"]), "{pattern}");
             assert_eq!(as_u64(&g.edge_type), ints(&r["edge_type"]), "{pattern}");
 
-            let (tok, mask) = kleene.network.first_logits(&g).unwrap();
+            let (tok, mask, locations) = kleene.network.first_logits(&g).unwrap();
+            // On the device asked for: candle does not fall back to the CPU,
+            // but the network has CPU-only branches.
+            assert_eq!(locations, [device.location(); 2], "{pattern}: device");
             let expected: Vec<f32> = floats(&case["first_tok_logits"])
                 .into_iter()
                 .chain(floats(&case["first_mask_logits"]))
@@ -268,7 +273,11 @@ mod tests {
             );
             assert_eq!(masks, &ints(&case["masks"]), "{pattern}: masks");
         }
-        println!("{} cases, max logit difference {max_diff}", reference.len());
+        println!(
+            "{} cases on {:?}, max logit difference {max_diff}",
+            reference.len(),
+            device.location()
+        );
         assert!(max_diff < 1e-3, "max logit difference {max_diff}");
     }
 
@@ -395,7 +404,8 @@ mod tests {
             serde_json::from_slice(&std::fs::read(dir.join("config.json")).unwrap()).unwrap();
         let weights = std::fs::read(dir.join("model.safetensors")).unwrap();
         let version = config["format_version"].as_u64().unwrap() as u32;
-        let kleene = Kleene::new(&config, version, weights, &candle_core::Device::Cpu).unwrap();
+        let device = test_device().to_candle().unwrap();
+        let kleene = Kleene::new(&config, version, weights, &device).unwrap();
 
         let inputs: Vec<(graph::Graph, usize)> = test_patterns()
             .iter()

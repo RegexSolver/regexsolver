@@ -10,7 +10,7 @@ use std::{
 use super::*;
 use crate::{
     execution_profile::ExecutionProfileBuilder,
-    neural_synthesis::{Device, test_patterns},
+    neural_synthesis::{test_device, test_patterns},
 };
 
 /// DFAs per set operation.
@@ -20,7 +20,7 @@ const PER_OPERATION: usize = 10;
 #[ignore = "benchmark; needs the model weights (KLEENE_MODEL_DIR)"]
 fn bench_decompose() {
     let load = || {
-        NeuralSynthesizer::from_dir(std::env::var("KLEENE_MODEL_DIR").unwrap(), Device::Cpu)
+        NeuralSynthesizer::from_dir(std::env::var("KLEENE_MODEL_DIR").unwrap(), test_device())
             .unwrap()
     };
     let whole = load().with_decomposition(false);

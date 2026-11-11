@@ -773,22 +773,24 @@ impl Network {
         Tensor::cat(&encoded, 0)
     }
 
-    /// The logits after BOS, for comparison with the PyTorch model.
+    /// The logits after BOS, for comparison with the PyTorch model, and where
+    /// the encoder's output and the logits were computed.
     #[cfg(test)]
-    pub(super) fn first_logits(&self, graph: &Graph) -> Result<(Vec<f32>, Vec<f32>)> {
+    pub(super) fn first_logits(
+        &self,
+        graph: &Graph,
+    ) -> Result<(Vec<f32>, Vec<f32>, [candle_core::DeviceLocation; 2])> {
         let memory = self.encoder.forward(&[graph], &self.device)?;
         let mut cache = self.decoder.start_cache(&memory, &[graph.nodes], 1)?;
-        let mut tok = self
-            .decoder
-            .step(
-                &mut cache,
-                &Tensor::new(&[BOS], &self.device)?,
-                &Tensor::zeros((1, self.max_bases), DType::F32, &self.device)?,
-            )?
-            .squeeze(0)?
-            .to_vec1()?;
+        let logits = self.decoder.step(
+            &mut cache,
+            &Tensor::new(&[BOS], &self.device)?,
+            &Tensor::zeros((1, self.max_bases), DType::F32, &self.device)?,
+        )?;
+        let locations = [memory.device().location(), logits.device().location()];
+        let mut tok = logits.squeeze(0)?.to_vec1()?;
         let mask = tok.split_off(VOCAB_SIZE);
-        Ok((tok, mask))
+        Ok((tok, mask, locations))
     }
 
     /// `count` candidates for `graph`, a DFA with `bases` bases: see

@@ -801,15 +801,34 @@ fn test_patterns() -> Vec<RegularExpression> {
     .collect()
 }
 
+/// The device of the tests that run a model with weights: `KLEENE_DEVICE`,
+/// `cpu` (the default), `cuda` or `metal`, with an ordinal after a colon
+/// (`cuda:1`). Its backend's feature must be enabled.
+#[cfg(test)]
+fn test_device() -> Device {
+    let device = std::env::var("KLEENE_DEVICE").unwrap_or_default();
+    let (name, ordinal) = device.split_once(':').unwrap_or((&device, "0"));
+    let ordinal = ordinal
+        .parse()
+        .unwrap_or_else(|_| panic!("KLEENE_DEVICE={device}: invalid ordinal"));
+    match name {
+        "" | "cpu" => Device::Cpu,
+        "cuda" => Device::Cuda(ordinal),
+        "metal" => Device::Metal(ordinal),
+        _ => panic!("KLEENE_DEVICE={device}: cpu, cuda or metal"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The model under `KLEENE_MODEL_DIR`, for the tests that need weights:
+    /// The model under `KLEENE_MODEL_DIR`, for the tests that need weights,
+    /// on [`test_device`]:
     /// `KLEENE_MODEL_DIR=<release dir> cargo test --release --features neural-synthesis neural_synthesis -- --ignored`
     fn kleene() -> NeuralSynthesizer {
         let dir = std::env::var("KLEENE_MODEL_DIR").expect("KLEENE_MODEL_DIR");
-        NeuralSynthesizer::from_dir(dir, Device::Cpu).unwrap()
+        NeuralSynthesizer::from_dir(dir, test_device()).unwrap()
     }
 
     #[test]
