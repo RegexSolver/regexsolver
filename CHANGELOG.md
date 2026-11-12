@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [Unreleased]
 
 ### Security
-- Updated `rustls-webpki`, `webpki-roots` and `webpki-root-certs` in `Cargo.lock` for RUSTSEC-2026-0381, -0382 and -0383. The `zip` and `ocipkg` advisories are ignored in `.cargo/audit.toml`: this crate never calls the affected functions.
+- Updated `rustls-webpki`, `webpki-roots` and `webpki-root-certs` in `Cargo.lock` for RUSTSEC-2026-0381, -0382 and -0383. The `zip` and `ocipkg` advisories are ignored in `.cargo/audit.toml`: nothing in the dependency tree calls the affected functions.
 
 ## [1.1.0] - 2026-10-10
 
