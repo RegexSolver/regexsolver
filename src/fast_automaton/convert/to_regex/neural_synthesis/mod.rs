@@ -874,6 +874,7 @@ mod tests {
             ("(ab|cd)*", "(abcd)*"),
             ("[a-z]{2,6}", ".*q.*"),
             ("(a|b)*abb", "a.*"),
+            (".*", ".*test.*"),
         ] {
             let a = RegularExpression::new(a).unwrap().to_automaton().unwrap();
             let b = RegularExpression::new(b).unwrap().to_automaton().unwrap();
