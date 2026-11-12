@@ -14,7 +14,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Changed
 - Neural synthesis is faster, with the same results: the minimal DFA is converted by state elimination once rather than up to three times, pieces of a decomposition are not minimized again, candidates too complex to be kept are not checked, and the others are checked in parallel, against the canonical form of the minimal DFA rather than by a full equivalence test. The splits are found on dense state indices and bitsets, the canonical form of the model's input is computed without allocating per base order, and the model runs 2 to 3.5 times faster on the CPU (fused attention kernels, no copies of the attention caches per candidate). Converting set-operation results of 17 to 80 states takes 2.5 to 11 times less time on the CPU.
 - `NeuralSynthesizer` runs a beam search of width 4 by default (`DEFAULT_BEAM`) and checks its hypotheses alone (`DEFAULT_CANDIDATES` is 1), rather than the greedy decoding and 7 samples. On DFAs from set operations, the regexes are 4 to 7% simpler than with 4 or 8 samples, and conversions take about two thirds of the time of 8.
-
 - `NeuralSynthesizer::DEFAULT_HUB_MODEL` is Kleene 2, `alexvbrdn/kleene2-9m-b16-t128`, rather than Kleene 1.
 
 ### Security
