@@ -132,7 +132,9 @@ let regex = automaton.to_regex_with(&synthesizer)?;
 // to_regex_with: [a-egh]*hbh?
 ```
 
-Every pattern the model proposes is checked against the automaton, so the result is never wrong, and state elimination's pattern is kept when it is simpler. The model, [Kleene](https://huggingface.co/alexvbrdn/kleene1-9m-b16-t128), takes automata of up to 16 states; larger ones are split into pieces it can take. Conversions are slower than state elimination: on a CPU without MKL or Accelerate, expect a few hundred milliseconds for automata of up to 16 states (occasionally more than a second), and from about a second to tens of seconds for larger ones. Actual times vary with the CPU.
+Every pattern the model proposes is checked against the automaton, so the result is never wrong, and state elimination's pattern is kept when it is simpler. The default model, [Kleene 2](https://huggingface.co/alexvbrdn/kleene2-9m-b16-t128) (`kleene2-9m-b16-t128`; also [`kleene2-5m-b16-t128`](https://huggingface.co/alexvbrdn/kleene2-5m-b16-t128), smaller, and the previous generation, [`kleene1-9m-b16-t128`](https://huggingface.co/alexvbrdn/kleene1-9m-b16-t128)), takes automata of up to 16 states; larger ones are split into pieces it can take.
+
+By default, the model runs a beam search of width 4 and its up to 4 patterns are checked; it is not run on an automaton, or a piece of one, for which its success rate (given in its `config.json`) is below 5%. `with_beam` and `with_candidates` (samples added to the beam) trade time for simpler patterns, and `with_min_success` sets the threshold. Conversions are slower than state elimination: on an 8-core laptop CPU without MKL, expect about 0.1 s on average for automata of up to 16 states (up to about 0.6 s), and about half a second for automata of 17 to 40 states (up to about 1 to 2 s); larger ones take longer. Actual times vary with the CPU.
 
 | Feature | Adds |
 |---|---|
