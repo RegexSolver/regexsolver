@@ -175,6 +175,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      checks: write # audit-check reports its result as a check run (not on pull requests)
       issues: write # audit-check files an issue when a vulnerability is found
 
     steps:
