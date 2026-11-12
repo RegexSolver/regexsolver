@@ -14,11 +14,22 @@ use regexsolver::fast_automaton::FastAutomaton;
 use regexsolver::neural_synthesis::{Device, NeuralSynthesizer};
 use regexsolver::regex::RegularExpression;
 
+/// The model on `KLEENE_DEVICE`: `cpu` (the default), `cuda` or `metal`, with
+/// an ordinal after a colon (`cuda:1`). Its backend's feature must be enabled.
 fn synthesizer() -> NeuralSynthesizer {
+    let device = std::env::var("KLEENE_DEVICE").unwrap_or_default();
+    let (name, ordinal) = device.split_once(':').unwrap_or((&device, "0"));
+    let ordinal = ordinal.parse().unwrap();
+    let device = match name {
+        "" | "cpu" => Device::Cpu,
+        "cuda" => Device::Cuda(ordinal),
+        "metal" => Device::Metal(ordinal),
+        _ => panic!("KLEENE_DEVICE={device}: cpu, cuda or metal"),
+    };
     NeuralSynthesizer::from_bytes(
         include_bytes!("data/kleene_tiny/config.json"),
         include_bytes!("data/kleene_tiny/model.safetensors").to_vec(),
-        Device::Cpu,
+        device,
     )
     .unwrap()
 }
@@ -40,11 +51,12 @@ fn assert_keeps_the_language(regex: &RegularExpression, automaton: &FastAutomato
 #[test]
 fn proposes_for_automata_the_model_takes() {
     let sampled = synthesizer();
-    let greedy = synthesizer().with_candidates(1);
+    let greedy = synthesizer().with_candidates(1).with_beam(0);
+    let beam = synthesizer().with_beam(4);
     assert_eq!(sampled.model_name(), "kleene-tiny");
     for pattern in ["abc", "(ab|cd)*e", "[a-c]*d[e-g]*", "(a|b)*abb"] {
         let automaton = automaton(pattern);
-        for synthesizer in [&sampled, &greedy] {
+        for synthesizer in [&sampled, &greedy, &beam] {
             if let Some(proposed) = synthesizer.propose(&automaton).unwrap() {
                 assert_keeps_the_language(&proposed, &automaton);
             }
@@ -64,17 +76,18 @@ fn proposes_for_automata_the_model_takes() {
 
 #[test]
 fn decomposes_automata_beyond_the_model() {
-    let synthesizer = synthesizer();
     let mut intersection = automaton(".*abc.*");
     for other in [".*def.*", ".*gh.*"] {
         intersection = intersection.intersection(&automaton(other)).unwrap();
     }
     let mut dfa = intersection.determinize().unwrap().into_owned();
     dfa.minimize().unwrap();
-    assert!(dfa.number_of_states() > synthesizer.max_states());
+    assert!(dfa.number_of_states() > synthesizer().max_states());
 
-    let regex = dfa.to_regex_with(&synthesizer).unwrap();
-    assert_keeps_the_language(&regex, &dfa);
-    // State elimination's regex is a candidate, so the result is no worse.
-    assert!(regex.evaluate_complexity() <= dfa.to_regex().unwrap().evaluate_complexity());
+    for synthesizer in [synthesizer(), synthesizer().with_beam(4)] {
+        let regex = dfa.to_regex_with(&synthesizer).unwrap();
+        assert_keeps_the_language(&regex, &dfa);
+        // State elimination's regex is a candidate, so the result is no worse.
+        assert!(regex.evaluate_complexity() <= dfa.to_regex().unwrap().evaluate_complexity());
+    }
 }

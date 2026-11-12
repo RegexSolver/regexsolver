@@ -2,10 +2,17 @@
 //! and with state elimination, on DFAs beyond the model's limits:
 //! `KLEENE_MODEL_DIR=<release dir> cargo test --release --features neural-synthesis decompose::bench -- --ignored --nocapture`
 
-use std::time::{Duration, Instant};
+use std::{
+    hash::{DefaultHasher, Hash, Hasher},
+    ops::RangeInclusive,
+    time::{Duration, Instant},
+};
 
 use super::*;
-use crate::{execution_profile::ExecutionProfileBuilder, neural_synthesis::Device};
+use crate::{
+    execution_profile::ExecutionProfileBuilder,
+    neural_synthesis::{test_device, test_patterns},
+};
 
 /// DFAs per set operation.
 const PER_OPERATION: usize = 10;
@@ -14,26 +21,23 @@ const PER_OPERATION: usize = 10;
 #[ignore = "benchmark; needs the model weights (KLEENE_MODEL_DIR)"]
 fn bench_decompose() {
     let load = || {
-        NeuralSynthesizer::from_dir(std::env::var("KLEENE_MODEL_DIR").unwrap(), Device::Cpu)
+        NeuralSynthesizer::from_dir(std::env::var("KLEENE_MODEL_DIR").unwrap(), test_device())
             .unwrap()
     };
     let whole = load().with_decomposition(false);
     let decomposing = load();
 
-    let reference: Vec<serde_json::Value> = serde_json::from_slice(include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/data/kleene_parity.json"
-    )))
-    .unwrap();
-    let atoms: Vec<RegularExpression> = reference
-        .iter()
-        .map(|case| RegularExpression::new(case["pattern"].as_str().unwrap()).unwrap())
-        .collect();
+    let atoms = test_patterns();
 
     for (operation, dfas) in large_dfas(&atoms, whole.max_states()) {
         let mut ratios = (0.0, 0.0);
         let mut simpler = 0;
         let mut times = (Duration::ZERO, Duration::ZERO);
+        // Of the decomposition without the model: the splits, state
+        // elimination and the combination.
+        let mut alone = Duration::ZERO;
+        // Of the regexes, so an optimization can be checked not to change them.
+        let mut checksum = DefaultHasher::new();
         for dfa in &dfas {
             let eliminated = dfa.to_regex().unwrap().evaluate_complexity();
             let start = Instant::now();
@@ -42,10 +46,14 @@ fn bench_decompose() {
             let start = Instant::now();
             let with = dfa.to_regex_with(&decomposing).unwrap();
             times.1 += start.elapsed();
+            let start = Instant::now();
+            let _ = Decomposer::new(None).convert(dfa).unwrap();
+            alone += start.elapsed();
             assert!(
                 with.to_automaton().unwrap().equivalent(dfa).unwrap(),
                 "{with}"
             );
+            (without.to_string(), with.to_string()).hash(&mut checksum);
 
             ratios.0 += (without.evaluate_complexity() / eliminated).ln();
             ratios.1 += (with.evaluate_complexity() / eliminated).ln();
@@ -53,12 +61,136 @@ fn bench_decompose() {
         }
         let count = dfas.len();
         println!(
-            "{operation:<13} {count} DFAs: complexity vs state elimination (geometric mean) {:.3} without decomposition, {:.3} with; simpler for {simpler}; {:?} and {:?} per DFA",
+            "{operation:<13} {count} DFAs: complexity vs state elimination (geometric mean) {:.3} without decomposition, {:.3} with; simpler for {simpler}; {:?} and {:?} per DFA ({:?} without the model); checksum {:016x}",
             (ratios.0 / count as f64).exp(),
             (ratios.1 / count as f64).exp(),
             times.0 / count as u32,
             times.1 / count as u32,
+            alone / count as u32,
+            checksum.finish(),
         );
+    }
+}
+
+/// Quality and time of [`FastAutomaton::to_regex_with`] over the number of
+/// candidates and the minimum success rate:
+/// `KLEENE_MODEL_DIR=<release dir> cargo test --release --features neural-synthesis decompose::bench::bench_settings -- --ignored --nocapture`
+#[test]
+#[ignore = "benchmark; needs the model weights (KLEENE_MODEL_DIR)"]
+fn bench_settings() {
+    let settings: Vec<Setting> = [1, 2, 4, 8, 16]
+        .into_iter()
+        .flat_map(|candidates| {
+            [0.0, 0.05, 0.25, 0.5, 0.75, 0.95].map(|min_success| Setting {
+                candidates,
+                min_success,
+                beam: 0,
+            })
+        })
+        .collect();
+    sweep(&settings);
+}
+
+/// [`bench_settings`] for beam searches of several widths, which replace the
+/// greedy decoding, with samples or not, at the default minimum success
+/// rate:
+/// `KLEENE_MODEL_DIR=<release dir> cargo test --release --features neural-synthesis decompose::bench::bench_beam -- --ignored --nocapture`
+#[test]
+#[ignore = "benchmark; needs the model weights (KLEENE_MODEL_DIR)"]
+fn bench_beam() {
+    let settings: Vec<Setting> = [0, 2, 4, 8]
+        .into_iter()
+        .flat_map(|beam| {
+            [1, 2, 4, 8].map(|candidates| Setting {
+                candidates,
+                min_success: NeuralSynthesizer::DEFAULT_MIN_SUCCESS,
+                beam,
+            })
+        })
+        .collect();
+    sweep(&settings);
+}
+
+/// A setting of the model's decoding.
+struct Setting {
+    candidates: usize,
+    min_success: f64,
+    beam: usize,
+}
+
+/// Runs [`FastAutomaton::to_regex_with`] with each of `settings` on DFAs the
+/// model takes whole and on larger ones it takes in pieces. Per setting: the
+/// geometric mean of the complexity relative to state elimination's, the
+/// DFAs made simpler, and the mean and slowest time per DFA. Decomposition
+/// without the model is the reference the model improves on.
+fn sweep(settings: &[Setting]) {
+    let load = || {
+        NeuralSynthesizer::from_dir(std::env::var("KLEENE_MODEL_DIR").unwrap(), test_device())
+            .unwrap()
+    };
+    let max_states = load().max_states();
+    let atoms = test_patterns();
+    let corpora = [
+        ("whole", dfas(&atoms, 2..=max_states, 20)),
+        (
+            "decomposed",
+            dfas(&atoms, max_states + 1..=80, PER_OPERATION),
+        ),
+    ];
+    for (corpus, by_operation) in corpora {
+        let dfas: Vec<FastAutomaton> = by_operation.into_iter().flat_map(|(_, d)| d).collect();
+        let eliminated: Vec<f64> = dfas
+            .iter()
+            .map(|dfa| dfa.to_regex().unwrap().evaluate_complexity())
+            .collect();
+        let measure = |convert: &dyn Fn(&FastAutomaton) -> RegularExpression| {
+            let (mut log_ratio, mut simpler) = (0.0, 0);
+            let (mut total, mut slowest) = (Duration::ZERO, Duration::ZERO);
+            for (dfa, eliminated) in dfas.iter().zip(&eliminated) {
+                let start = Instant::now();
+                let regex = convert(dfa);
+                let elapsed = start.elapsed();
+                total += elapsed;
+                slowest = slowest.max(elapsed);
+                let complexity = regex.evaluate_complexity();
+                log_ratio += (complexity / eliminated).ln();
+                simpler += usize::from(complexity < *eliminated);
+            }
+            format!(
+                "{:>6.3} {:>4}/{:<3} {:>10.1?} {:>10.1?}",
+                (log_ratio / dfas.len() as f64).exp(),
+                simpler,
+                dfas.len(),
+                total / dfas.len() as u32,
+                slowest,
+            )
+        };
+        let states: Vec<usize> = dfas.iter().map(FastAutomaton::number_of_states).collect();
+        println!(
+            "\n{corpus}: {} DFAs of {} to {} states",
+            dfas.len(),
+            states.iter().min().unwrap(),
+            states.iter().max().unwrap()
+        );
+        println!("beam candidates min_success  ratio  simpler       mean    slowest");
+        println!(
+            "{:<27} {}",
+            "no model",
+            measure(&|dfa| Decomposer::new(None).convert(dfa).unwrap())
+        );
+        for setting in settings {
+            let synthesizer = load()
+                .with_candidates(setting.candidates)
+                .with_min_success(setting.min_success)
+                .with_beam(setting.beam);
+            println!(
+                "{:>4} {:>10} {:>11} {}",
+                setting.beam,
+                setting.candidates,
+                setting.min_success,
+                measure(&|dfa| dfa.to_regex_with(&synthesizer).unwrap())
+            );
+        }
     }
 }
 
@@ -101,6 +233,16 @@ fn large_dfas(
     atoms: &[RegularExpression],
     max_states: usize,
 ) -> Vec<(&'static str, Vec<FastAutomaton>)> {
+    dfas(atoms, max_states + 1..=80, PER_OPERATION)
+}
+
+/// Up to `per_operation` minimal DFAs of `states` states from each set
+/// operation on `atoms`, by operation.
+fn dfas(
+    atoms: &[RegularExpression],
+    states: RangeInclusive<usize>,
+    per_operation: usize,
+) -> Vec<(&'static str, Vec<FastAutomaton>)> {
     let profile = ExecutionProfileBuilder::new()
         .execution_timeout(300)
         .max_number_of_states(5000)
@@ -117,7 +259,7 @@ fn large_dfas(
         .map(|(name, operation)| {
             let mut dfas = vec![];
             for _ in 0..1000 {
-                if dfas.len() == PER_OPERATION {
+                if dfas.len() == per_operation {
                     break;
                 }
                 let operands = [0, 1, 2].map(|_| &atoms[random(atoms.len())]);
@@ -128,7 +270,7 @@ fn large_dfas(
                     Ok::<_, EngineError>(dfa)
                 });
                 if let Ok(dfa) = dfa
-                    && (max_states + 1..=80).contains(&dfa.number_of_states())
+                    && states.contains(&dfa.number_of_states())
                 {
                     dfas.push(dfa);
                 }

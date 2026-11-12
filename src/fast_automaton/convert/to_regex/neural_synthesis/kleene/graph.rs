@@ -142,7 +142,7 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
-        Graph::new(&canonicalize(&dfa), 16, 64)
+        Graph::new(&canonicalize(&dfa, true), 16, 64)
     }
 
     #[test]

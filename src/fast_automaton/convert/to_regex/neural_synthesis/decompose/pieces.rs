@@ -1,37 +1,6 @@
 //! The pieces of a split: sub-automata of a minimal DFA, each minimized.
 
 use super::*;
-use crate::IntMap;
-
-/// `dfa`'s canonical form (see [`CanonicalForm`]); `dfa` must be minimal.
-pub(super) fn canonical_form(dfa: &FastAutomaton) -> Result<CanonicalForm, EngineError> {
-    let spanning_set = dfa.spanning_set();
-    let mut order = vec![dfa.start_state()];
-    let mut numbers: IntMap<State, usize> = IntMap::default();
-    numbers.insert(dfa.start_state(), 0);
-    let mut form = Vec::with_capacity(dfa.number_of_states());
-    let mut next = 0;
-    while let Some(&state) = order.get(next) {
-        next += 1;
-        let mut transitions = Vec::with_capacity(dfa.out_degree(state));
-        for (condition, to_state) in dfa.transitions_from(state) {
-            transitions.push((condition.to_range(spanning_set)?, *to_state));
-        }
-        transitions.sort_unstable_by(|a, b| a.0.cmp(&b.0));
-        let transitions = transitions
-            .into_iter()
-            .map(|(range, to_state)| {
-                let number = *numbers.entry(to_state).or_insert_with(|| {
-                    order.push(to_state);
-                    order.len() - 1
-                });
-                (range, number)
-            })
-            .collect();
-        form.push((dfa.is_accepted(state), transitions));
-    }
-    Ok(form)
-}
 
 /// The strings leading from `state` back to it, without visiting it in
 /// between.
