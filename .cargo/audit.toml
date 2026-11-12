@@ -2,7 +2,24 @@
 [advisories]
 ignore = [
     # `paste` is unmaintained. It is a proc macro, used at build time only,
-    # pulled in through candle (`gemm`) by the `neural-synthesis` feature.
-    # Remove once candle moves off it.
+    # pulled in through candle (`gemm`, `tokenizers`) by the
+    # `neural-synthesis` feature. Remove once candle moves off it.
     "RUSTSEC-2024-0436",
+    # `ocipkg` 0.2 unpacks an OCI archive into a directory named after the
+    # archive's own `index.json` (`ocipkg::image::load`). It is a build
+    # dependency of `intel-mkl-src` (latest, 0.8.1), pulled in by the
+    # `neural-synthesis-mkl` feature only, whose build script calls
+    # `ocipkg::link_package` with a hard-coded image name: the destination
+    # never comes from the archive. Remove once `intel-mkl-src` moves to
+    # `ocipkg` >= 0.4.1.
+    "RUSTSEC-2026-0450",
+    # `zip` 8 extracts archives unsafely (`ZipArchive::extract`,
+    # `ZipStreamReader::extract`). It comes with candle 0.11.0, which only
+    # opens and writes `.npy`/`.pth` archives and never extracts one. The fixed
+    # `zip` 9 comes with candle 0.11.1, which needs Rust 1.89 (`avxvnni`
+    # target feature) above our MSRV. Remove once we move to it.
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
+    "RUSTSEC-2026-0429",
 ]
