@@ -4,6 +4,7 @@
 
 use std::{
     hash::{DefaultHasher, Hash, Hasher},
+    ops::RangeInclusive,
     time::{Duration, Instant},
 };
 
@@ -71,6 +72,85 @@ fn bench_decompose() {
     }
 }
 
+/// Quality and time of [`FastAutomaton::to_regex_with`] over the number of
+/// candidates and the minimum success rate, on DFAs the model takes whole and
+/// on larger ones it takes in pieces:
+/// `KLEENE_MODEL_DIR=<release dir> cargo test --release --features neural-synthesis decompose::bench::bench_settings -- --ignored --nocapture`
+///
+/// Per setting: the geometric mean of the complexity relative to state
+/// elimination's, the DFAs made simpler, and the mean and slowest time per
+/// DFA. Decomposition without the model is the reference the model improves
+/// on.
+#[test]
+#[ignore = "benchmark; needs the model weights (KLEENE_MODEL_DIR)"]
+fn bench_settings() {
+    let load = || {
+        NeuralSynthesizer::from_dir(std::env::var("KLEENE_MODEL_DIR").unwrap(), test_device())
+            .unwrap()
+    };
+    let max_states = load().max_states();
+    let atoms = test_patterns();
+    let corpora = [
+        ("whole", dfas(&atoms, 2..=max_states, 20)),
+        ("decomposed", dfas(&atoms, max_states + 1..=80, PER_OPERATION)),
+    ];
+    for (corpus, by_operation) in corpora {
+        let dfas: Vec<FastAutomaton> = by_operation.into_iter().flat_map(|(_, d)| d).collect();
+        let eliminated: Vec<f64> = dfas
+            .iter()
+            .map(|dfa| dfa.to_regex().unwrap().evaluate_complexity())
+            .collect();
+        // The geometric mean of the complexities relative to state
+        // elimination's, the DFAs made simpler, the mean and slowest times.
+        let measure = |convert: &dyn Fn(&FastAutomaton) -> RegularExpression| {
+            let (mut log_ratio, mut simpler) = (0.0, 0);
+            let (mut total, mut slowest) = (Duration::ZERO, Duration::ZERO);
+            for (dfa, eliminated) in dfas.iter().zip(&eliminated) {
+                let start = Instant::now();
+                let regex = convert(dfa);
+                let elapsed = start.elapsed();
+                total += elapsed;
+                slowest = slowest.max(elapsed);
+                let complexity = regex.evaluate_complexity();
+                log_ratio += (complexity / eliminated).ln();
+                simpler += usize::from(complexity < *eliminated);
+            }
+            format!(
+                "{:>6.3} {:>4}/{:<3} {:>10.1?} {:>10.1?}",
+                (log_ratio / dfas.len() as f64).exp(),
+                simpler,
+                dfas.len(),
+                total / dfas.len() as u32,
+                slowest,
+            )
+        };
+        let states: Vec<usize> = dfas.iter().map(FastAutomaton::number_of_states).collect();
+        println!(
+            "\n{corpus}: {} DFAs of {} to {} states",
+            dfas.len(),
+            states.iter().min().unwrap(),
+            states.iter().max().unwrap()
+        );
+        println!("candidates min_success  ratio  simpler       mean    slowest");
+        println!(
+            "{:<22} {}",
+            "no model",
+            measure(&|dfa| Decomposer::new(None).convert(dfa).unwrap())
+        );
+        for candidates in [1, 2, 4, 8, 16] {
+            for min_success in [0.0, 0.05, 0.25, 0.5, 0.75, 0.95] {
+                let synthesizer = load()
+                    .with_candidates(candidates)
+                    .with_min_success(min_success);
+                println!(
+                    "{candidates:>10} {min_success:>11} {}",
+                    measure(&|dfa| dfa.to_regex_with(&synthesizer).unwrap())
+                );
+            }
+        }
+    }
+}
+
 /// A set operation on three regexes.
 type Operation = fn(&[&RegularExpression; 3]) -> Result<FastAutomaton, EngineError>;
 
@@ -110,6 +190,16 @@ fn large_dfas(
     atoms: &[RegularExpression],
     max_states: usize,
 ) -> Vec<(&'static str, Vec<FastAutomaton>)> {
+    dfas(atoms, max_states + 1..=80, PER_OPERATION)
+}
+
+/// Up to `per_operation` minimal DFAs of `states` states from each set
+/// operation on `atoms`, by operation.
+fn dfas(
+    atoms: &[RegularExpression],
+    states: RangeInclusive<usize>,
+    per_operation: usize,
+) -> Vec<(&'static str, Vec<FastAutomaton>)> {
     let profile = ExecutionProfileBuilder::new()
         .execution_timeout(300)
         .max_number_of_states(5000)
@@ -126,7 +216,7 @@ fn large_dfas(
         .map(|(name, operation)| {
             let mut dfas = vec![];
             for _ in 0..1000 {
-                if dfas.len() == PER_OPERATION {
+                if dfas.len() == per_operation {
                     break;
                 }
                 let operands = [0, 1, 2].map(|_| &atoms[random(atoms.len())]);
@@ -137,7 +227,7 @@ fn large_dfas(
                     Ok::<_, EngineError>(dfa)
                 });
                 if let Ok(dfa) = dfa
-                    && (max_states + 1..=80).contains(&dfa.number_of_states())
+                    && states.contains(&dfa.number_of_states())
                 {
                     dfas.push(dfa);
                 }

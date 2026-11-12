@@ -330,12 +330,16 @@ impl fmt::Debug for NeuralSynthesizer {
 
 impl NeuralSynthesizer {
     /// Default number of candidates per automaton: the greedy decoding plus
-    /// seven samples.
-    pub const DEFAULT_CANDIDATES: usize = 8;
+    /// three samples. Each doubling roughly doubles the time; beyond four,
+    /// the regexes get only a little simpler.
+    pub const DEFAULT_CANDIDATES: usize = 4;
 
-    /// Default success rate below which the model is not run on a whole
-    /// automaton (see [`with_min_success`](Self::with_min_success)).
-    pub const DEFAULT_MIN_SUCCESS: f64 = 0.5;
+    /// Default success rate below which the model is not run on an automaton
+    /// or a piece of its decomposition (see
+    /// [`with_min_success`](Self::with_min_success)). Higher thresholds save
+    /// little time: an automaton the model is not run on is decomposed, and
+    /// the model runs on its pieces.
+    pub const DEFAULT_MIN_SUCCESS: f64 = 0.05;
 
     /// Loads a model from its `config.json` and `model.safetensors` files.
     pub fn from_files(
