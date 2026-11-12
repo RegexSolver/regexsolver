@@ -381,13 +381,18 @@ mod tests {
     /// by one does.
     #[test]
     fn beam_search_with_samples() {
-        let dir = std::path::Path::new(concat!(
+        // Embedded rather than read: under wasmtime the manifest directory's
+        // absolute path is not preopened.
+        let config: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/data/kleene_tiny"
-        ));
-        let config: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(dir.join("config.json")).unwrap()).unwrap();
-        let weights = std::fs::read(dir.join("model.safetensors")).unwrap();
+            "/tests/data/kleene_tiny/config.json"
+        )))
+        .unwrap();
+        let weights = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/data/kleene_tiny/model.safetensors"
+        ))
+        .to_vec();
         let kleene = Kleene::new(&config, 1, weights, &candle_core::Device::Cpu).unwrap();
         let canonicals: Vec<canonical::CanonicalDfa> = [
             "abc",
