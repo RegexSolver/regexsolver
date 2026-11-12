@@ -11,7 +11,7 @@ use super::{Device, NeuralSynthesisError, NeuralSynthesizer};
 
 impl NeuralSynthesizer {
     /// The model [`from_hub`](Self::from_hub) loads by default.
-    pub const DEFAULT_HUB_MODEL: &str = "alexvbrdn/kleene1-9m-b16-t128";
+    pub const DEFAULT_HUB_MODEL: &str = "alexvbrdn/kleene2-9m-b16-t128";
 
     /// Downloads a model from the Hugging Face Hub (its latest revision) and
     /// loads it. `repo_id` is `owner/name`, e.g.

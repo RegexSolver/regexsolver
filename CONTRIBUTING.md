@@ -24,7 +24,7 @@ cargo test --locked --features neural-synthesis-hub --doc
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --features neural-synthesis-hub --no-deps
 ```
 
-The tests of `neural_synthesis` that run a model are ignored by default, as the weights are not in the repository. With a model release directory (`config.json` and `model.safetensors`, e.g. from [the Hugging Face Hub](https://huggingface.co/alexvbrdn/kleene1-9m-b16-t128)):
+The tests of `neural_synthesis` that run a model are ignored by default, as the weights are not in the repository. With a model release directory (`config.json` and `model.safetensors`, e.g. from [the Hugging Face Hub](https://huggingface.co/alexvbrdn/kleene2-9m-b16-t128)):
 
 ```sh
 KLEENE_MODEL_DIR=<release dir> cargo test --release --features neural-synthesis neural_synthesis -- --ignored --skip bench

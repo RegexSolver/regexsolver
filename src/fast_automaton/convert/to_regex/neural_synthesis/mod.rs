@@ -29,7 +29,7 @@
 //! };
 //!
 //! // A model release directory: config.json and model.safetensors.
-//! let synthesizer = NeuralSynthesizer::from_dir("kleene1-9m-b16-t128", Device::Cpu)?;
+//! let synthesizer = NeuralSynthesizer::from_dir("kleene2-9m-b16-t128", Device::Cpu)?;
 //!
 //! let a: Term = ".*h(b|bh)".parse()?;
 //! let b: Term = ".*[fi-z].*".parse()?;
@@ -50,9 +50,10 @@
 //! `config.json`; the formats supported so far:
 //!
 //! - `kleene` v1 and v2, the Kleene models (`kleene1-9m-b16-t128`,
-//!   `kleene2-9m-b16-t128`): a graph transformer over the DFA and a
-//!   transformer decoder over the regex, for minimal DFAs of at most 16 states
-//!   and 16 bases (the disjoint character ranges labelling the transitions).
+//!   `kleene2-9m-b16-t128`, `kleene2-5m-b16-t128`): a graph transformer over
+//!   the DFA and a transformer decoder over the regex, for minimal DFAs of at
+//!   most 16 states and 16 bases (the disjoint character ranges labelling the
+//!   transitions).
 //!
 //! `config.json` may give the model's success rate (`gate`): for each cell of
 //! a grid over features of a minimal DFA, the share of the DFAs of a
@@ -494,7 +495,7 @@ impl NeuralSynthesizer {
         }
     }
 
-    /// The model's name, from its `config.json` (e.g. `kleene1-9m-b16-t128`).
+    /// The model's name, from its `config.json` (e.g. `kleene2-9m-b16-t128`).
     pub fn model_name(&self) -> &str {
         &self.name
     }
