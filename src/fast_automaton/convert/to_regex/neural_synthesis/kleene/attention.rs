@@ -262,9 +262,10 @@ fn with_cpu_values<R>(tensor: &Tensor, f: impl FnOnce(&[f32], &Layout) -> Result
 }
 
 /// The decoder's self-attention keys and values on the CPU, written in place
-/// at each step. Rows that finished keep their slot until fewer than half
-/// the slots are in use, then the buffers are compacted: the cost of
-/// dropping rows is amortized.
+/// at each step. A row that finished leaves its slot free, until fewer than
+/// half the slots are in use and the buffers are compacted: the cost of
+/// dropping rows is amortized. A row forked into several (beam search)
+/// keeps its slot for its first copy; the others take free slots.
 pub(super) struct PastCpu {
     heads: usize,
     hd: usize,
@@ -272,8 +273,10 @@ pub(super) struct PastCpu {
     initial_capacity: usize,
     /// Slots in each buffer.
     slots: usize,
-    /// Each row's slot, increasing.
+    /// Each row's slot.
     slot_of_row: Vec<u32>,
+    /// The slots of no row.
+    free: Vec<u32>,
     layers: Vec<PastLayer>,
 }
 
@@ -300,6 +303,7 @@ impl PastCpu {
             initial_capacity,
             slots: rows,
             slot_of_row: (0..rows as u32).collect(),
+            free: vec![],
             layers: (0..layers).map(|_| PastLayer::default()).collect(),
         }
     }
@@ -352,31 +356,79 @@ impl PastCpu {
         Tensor::from_vec(attended, (rows, d), &Device::Cpu)
     }
 
-    /// Keeps only the rows `keep` (indices into the current rows, increasing).
-    pub(super) fn retain(&mut self, keep: &[u32]) {
-        self.slot_of_row = keep
-            .iter()
-            .map(|row| self.slot_of_row[*row as usize])
-            .collect();
-        if 2 * self.slot_of_row.len() >= self.slots {
-            return;
+    /// Row `i` becomes a copy of row `parents[i]` (indices into the current
+    /// rows, in any order): rows are dropped, kept or forked. A row's first
+    /// copy keeps its slot; each other copy gets a free slot (or a new one)
+    /// and its keys and values so far.
+    pub(super) fn reorder(&mut self, parents: &[u32]) {
+        let old = std::mem::take(&mut self.slot_of_row);
+        let mut copies = vec![0u32; old.len()];
+        for parent in parents {
+            copies[*parent as usize] += 1;
         }
-        // Row `i` moves to slot `i`: as the slots are increasing, each block
-        // moves towards the front, over blocks already moved or unused.
+        self.free.extend(
+            old.iter()
+                .zip(&copies)
+                .filter(|(_, copies)| **copies == 0)
+                .map(|(slot, _)| *slot),
+        );
+        let mut kept = vec![false; old.len()];
+        self.slot_of_row = Vec::with_capacity(parents.len());
+        for parent in parents {
+            let (parent, from) = (*parent as usize, old[*parent as usize] as usize);
+            if !std::mem::replace(&mut kept[parent], true) {
+                self.slot_of_row.push(from as u32);
+                continue;
+            }
+            let to = match self.free.pop() {
+                Some(slot) => slot as usize,
+                None => {
+                    self.slots += 1;
+                    for past in &mut self.layers {
+                        let block = self.heads * past.capacity * self.hd;
+                        past.keys.resize(self.slots * block, 0.0);
+                        past.values.resize(self.slots * block, 0.0);
+                    }
+                    self.slots - 1
+                }
+            };
+            for past in &mut self.layers {
+                let block = self.heads * past.capacity * self.hd;
+                past.keys
+                    .copy_within(from * block..(from + 1) * block, to * block);
+                past.values
+                    .copy_within(from * block..(from + 1) * block, to * block);
+            }
+            self.slot_of_row.push(to as u32);
+        }
+        if 2 * self.slot_of_row.len() < self.slots {
+            self.compact();
+        }
+    }
+
+    /// Moves the rows to the first slots, in the order of their slots, so
+    /// that each block moves towards the front, over blocks already moved or
+    /// unused.
+    fn compact(&mut self) {
+        let mut by_slot: Vec<usize> = (0..self.slot_of_row.len()).collect();
+        by_slot.sort_unstable_by_key(|row| self.slot_of_row[*row]);
         for past in &mut self.layers {
             let block = self.heads * past.capacity * self.hd;
             for buffer in [&mut past.keys, &mut past.values] {
-                for (row, slot) in self.slot_of_row.iter().enumerate() {
-                    let slot = *slot as usize;
-                    if slot != row && block > 0 {
-                        buffer.copy_within(slot * block..(slot + 1) * block, row * block);
+                for (to, row) in by_slot.iter().enumerate() {
+                    let from = self.slot_of_row[*row] as usize;
+                    if from != to && block > 0 {
+                        buffer.copy_within(from * block..(from + 1) * block, to * block);
                     }
                 }
-                buffer.truncate(self.slot_of_row.len() * block);
+                buffer.truncate(by_slot.len() * block);
             }
         }
+        for (to, row) in by_slot.into_iter().enumerate() {
+            self.slot_of_row[row] = to as u32;
+        }
         self.slots = self.slot_of_row.len();
-        self.slot_of_row = (0..self.slots as u32).collect();
+        self.free.clear();
     }
 }
 
@@ -640,12 +692,23 @@ pub(super) mod tests {
                     assert_close(&fused.narrow(0, i, 1).unwrap(), &unfused);
                 }
             }
-            // Drop a row now and then: the second compacts.
-            if t % 3 == 1 {
-                let keep: Vec<u32> = (0..alive.len() as u32).filter(|i| i % 3 != 1).collect();
-                alive = keep.iter().map(|i| alive[*i as usize]).collect();
-                past.retain(&keep);
+            // Fork, reorder and drop rows (8, 5, 6, 4, 4, 6, 4, 3, 2 rows):
+            // a forked row's copy gets the history so far, rows that finished
+            // free their slots, and the last drops compact.
+            let parents: Vec<u32> = match t {
+                0 => vec![0, 0, 1, 2, 3, 4, 5, 5],
+                2 => vec![4, 3, 3, 3, 0, 1],
+                4 => vec![3, 1, 0, 2],
+                5 => vec![3, 3, 1, 0, 2, 2],
+                _ => (0..alive.len() as u32).filter(|i| i % 3 != 1).collect(),
+            };
+            for history in &mut history {
+                *history = (parents.iter())
+                    .map(|parent| history[alive[*parent as usize]].clone())
+                    .collect();
             }
+            alive = (0..parents.len()).collect();
+            past.reorder(&parents);
         }
         assert!(past.slots < rows);
     }

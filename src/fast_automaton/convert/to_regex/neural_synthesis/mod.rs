@@ -176,10 +176,14 @@ impl From<std::io::Error> for NeuralSynthesisError {
 /// How a model draws its candidates.
 #[derive(Clone, Copy, Debug)]
 struct Sampling {
-    /// At least 1: the greedy decoding, then samples.
+    /// At least 1: the greedy decoding (or the beam's hypotheses), then
+    /// samples.
     candidates: usize,
     temperature: f64,
     seed: u64,
+    /// The width of a beam search replacing the greedy decoding; 0 or 1:
+    /// none.
+    beam: usize,
 }
 
 /// A model format: turns a minimal DFA into candidate regexes, which the
@@ -329,10 +333,15 @@ impl fmt::Debug for NeuralSynthesizer {
 }
 
 impl NeuralSynthesizer {
-    /// Default number of candidates per automaton: the greedy decoding plus
-    /// three samples. Each doubling roughly doubles the time; beyond four,
-    /// the regexes get only a little simpler.
-    pub const DEFAULT_CANDIDATES: usize = 4;
+    /// Default number of candidates per automaton: the hypotheses of the
+    /// beam search ([`DEFAULT_BEAM`](Self::DEFAULT_BEAM)) alone, as samples
+    /// added to a beam make the regexes hardly simpler.
+    pub const DEFAULT_CANDIDATES: usize = 1;
+
+    /// Default width of the beam search replacing the greedy decoding: four
+    /// hypotheses find simpler regexes than four samples, in about the same
+    /// time. Each doubling of the width roughly doubles the time.
+    pub const DEFAULT_BEAM: usize = 4;
 
     /// Default success rate below which the model is not run on an automaton
     /// or a piece of its decomposition (see
@@ -401,6 +410,7 @@ impl NeuralSynthesizer {
                 candidates: Self::DEFAULT_CANDIDATES,
                 temperature: 1.0,
                 seed: 0,
+                beam: Self::DEFAULT_BEAM,
             },
             decomposition: true,
             gate,
@@ -409,8 +419,10 @@ impl NeuralSynthesizer {
     }
 
     /// Sets how many candidates are decoded per automaton (at least 1): the
-    /// greedy decoding, then samples. More candidates find a correct regex
-    /// more often, at the cost of decoding and checking them.
+    /// greedy decoding, or the hypotheses of the beam search
+    /// ([`with_beam`](Self::with_beam)), then samples (default
+    /// [`DEFAULT_CANDIDATES`](Self::DEFAULT_CANDIDATES)). More candidates find
+    /// a correct regex more often, at the cost of decoding and checking them.
     pub fn with_candidates(mut self, candidates: usize) -> Self {
         self.sampling.candidates = candidates.max(1);
         self
@@ -428,6 +440,17 @@ impl NeuralSynthesizer {
     /// deterministic for a given seed and device.
     pub fn with_seed(mut self, seed: u64) -> Self {
         self.sampling.seed = seed;
+        self
+    }
+
+    /// Sets the width of a beam search that replaces the greedy decoding
+    /// (default [`DEFAULT_BEAM`](Self::DEFAULT_BEAM); 0 or 1 decodes
+    /// greedily). Its hypotheses, up to `beam` of the most likely regexes, are
+    /// checked with the [`with_candidates`](Self::with_candidates) `- 1`
+    /// samples. A beam of width `w` decodes up to `w` sequences per automaton,
+    /// about the cost of `w` candidates.
+    pub fn with_beam(mut self, beam: usize) -> Self {
+        self.sampling.beam = beam;
         self
     }
 
@@ -919,8 +942,10 @@ mod tests {
         .unwrap()
         .to_automaton()
         .unwrap();
+        // The greedy decoding, as on the model card.
         let regex = kleene()
             .with_candidates(1)
+            .with_beam(0)
             .propose(&automaton)
             .unwrap()
             .unwrap();

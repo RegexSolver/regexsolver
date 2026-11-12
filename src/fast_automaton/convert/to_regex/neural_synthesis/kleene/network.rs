@@ -480,21 +480,26 @@ fn append(
 }
 
 impl Cache {
-    /// Keeps only the sequences `keep` (indices into the current rows,
-    /// increasing).
-    fn retain(&mut self, keep: &[u32]) -> Result<()> {
+    /// Row `i` becomes a copy of row `parents[i]` (indices into the current
+    /// rows, in any order): sequences are dropped, kept or forked.
+    fn reorder(&mut self, parents: &[u32]) -> Result<()> {
         if let Some(owners) = &mut self.owners {
-            owners.dfa = keep.iter().map(|row| owners.dfa[*row as usize]).collect();
-            owners.lengths = (keep.iter())
+            owners.dfa = (parents.iter())
+                .map(|row| owners.dfa[*row as usize])
+                .collect();
+            owners.lengths = (parents.iter())
                 .map(|row| owners.lengths[*row as usize])
                 .collect();
         }
         match &mut self.past {
-            Past::Cpu(past) => past.retain(keep),
+            Past::Cpu(past) => past.reorder(parents),
             Past::Tensors(past) => {
-                let keep = &Tensor::new(keep, self.start.device())?;
+                let parents = &Tensor::new(parents, self.start.device())?;
                 for past in past.iter_mut().flatten() {
-                    *past = (past.0.index_select(keep, 0)?, past.1.index_select(keep, 0)?);
+                    *past = (
+                        past.0.index_select(parents, 0)?,
+                        past.1.index_select(parents, 0)?,
+                    );
                 }
             }
         }
@@ -803,40 +808,59 @@ impl Network {
         count: usize,
         temperature: f64,
         seed: u64,
+        beam: usize,
     ) -> Result<Vec<Candidate>> {
         Ok(self
-            .generate_batch(&[(graph, bases)], count, temperature, seed)?
+            .generate_batch(&[(graph, bases)], count, temperature, seed, beam)?
             .pop()
             .unwrap())
     }
 
-    /// `count` candidates for each of `inputs`, DFAs as graphs with their
-    /// number of bases, decoded together. For each DFA, the first candidate
-    /// is the greedy decoding, the others are sampled at `temperature`
+    /// Candidates for each of `inputs`, DFAs as graphs with their number of
+    /// bases, decoded together. For each DFA, first the greedy decoding or,
+    /// with a `beam` width above 1, the hypotheses of a beam search of that
+    /// width, most likely first; then `count - 1` samples at `temperature`
     /// (greedy too when it is not positive; tokens from the softmax, each
     /// base-mask bit from its sigmoid), each from its own generator seeded
     /// from `seed` and its index, so a DFA's candidates do not depend on the
     /// other DFAs. Only well-formed trees within `max_len` are produced,
     /// masks only use the DFA's bases, and the empty class `[]` appears only
     /// as the whole regex. Candidates may repeat.
+    ///
+    /// The beam search is the PyTorch model's: a hypothesis scores the sum of
+    /// its tokens' log-probabilities, with no length normalization (shorter
+    /// regexes are not penalized); a `CHAR`'s base mask is the greedy one,
+    /// and its bits' log-probabilities count in the `CHAR`'s. Every row, the
+    /// beams' and the samples', is decoded in the same steps; a finished
+    /// hypothesis leaves the decoding, and a hypothesis extended several ways
+    /// is forked in the cache.
     pub(super) fn generate_batch(
         &self,
         inputs: &[(&Graph, usize)],
         count: usize,
         temperature: f64,
         seed: u64,
+        beam: usize,
     ) -> Result<Vec<Vec<Candidate>>> {
         if inputs.is_empty() || count == 0 {
             return Ok(vec![vec![]; inputs.len()]);
         }
         let nb = self.max_bases;
-        // Without sampling, a DFA's candidates are all its greedy decoding:
-        // it is decoded once.
+        let beam = (beam > 1).then_some(beam);
+        // Without sampling, the samples are all the greedy decoding: it is
+        // decoded once.
         let greedy_only = temperature.is_nan() || temperature <= 0.0;
-        let per_dfa = if greedy_only { 1 } else { count };
+        // Per DFA, the candidates the beam does not give, by index: the
+        // greedy decoding (without a beam) and the samples.
+        let first = usize::from(beam.is_some());
+        let drawn = if greedy_only {
+            (count - first).min(1)
+        } else {
+            count - first
+        };
         let memory = self.encode(inputs.iter().map(|(graph, _)| *graph))?;
         let nodes: Vec<usize> = inputs.iter().map(|(graph, _)| graph.nodes).collect();
-        let mut cache = self.decoder.start_cache(&memory, &nodes, per_dfa)?;
+        let mut cache = self.decoder.start_cache(&memory, &nodes, first + drawn)?;
         let present: Vec<u64> = inputs
             .iter()
             .map(|(_, bases)| {
@@ -848,102 +872,375 @@ impl Network {
             })
             .collect();
 
-        let rows = inputs.len() * per_dfa;
-        let mut grammars = vec![PrefixGrammar::new(self.max_len); rows];
-        let mut rngs: Vec<Rng> = (0..rows)
-            .map(|r| Rng::for_candidate(seed, r % per_dfa))
-            .collect();
-        let mut tokens: Vec<Vec<u32>> = vec![vec![BOS]; rows];
-        let mut masks: Vec<Vec<u64>> = vec![vec![0]; rows];
-        // The rows still decoding, in the order of the cache's rows.
-        let mut active: Vec<usize> = (0..rows).collect();
+        // The rows being decoded, in the order of the cache's rows: per DFA,
+        // its beam's first hypothesis, then its drawn candidates.
+        let mut tree = Tree::new();
+        let mut rows: Vec<Row> = Vec::with_capacity(inputs.len() * (first + drawn));
+        let mut beams: Vec<Vec<Hypothesis>> = vec![vec![]; inputs.len()];
+        for (input, hypotheses) in beams.iter_mut().enumerate() {
+            if beam.is_some() {
+                hypotheses.push(Hypothesis {
+                    score: 0.0,
+                    node: Tree::ROOT,
+                    row: Some(rows.len() as u32),
+                });
+                rows.push(Row::new(input, Draw::Beam, self.max_len));
+            }
+            for index in first..first + drawn {
+                let draw = if index == 0 || greedy_only {
+                    Draw::Greedy(index)
+                } else {
+                    Draw::Sample(index, Rng::for_candidate(seed, index))
+                };
+                rows.push(Row::new(input, draw, self.max_len));
+            }
+        }
+        // The last node of each drawn candidate, by DFA and index.
+        let mut ends: Vec<Vec<u32>> = vec![vec![Tree::ROOT; first + drawn]; inputs.len()];
+
         let width = VOCAB_SIZE + nb;
-        let mut last_masks: Vec<f32> = Vec::with_capacity(rows * nb);
+        let mut last_tokens: Vec<u32> = Vec::with_capacity(rows.len());
+        let mut last_masks: Vec<f32> = Vec::with_capacity(rows.len() * nb);
         let mut weights: Vec<f64> = Vec::with_capacity(VOCAB_SIZE);
-        for _ in 0..self.max_len - 1 {
-            let last_tokens: Vec<u32> =
-                active.iter().map(|r| *tokens[*r].last().unwrap()).collect();
+        // Per beam row: each token's log-probability, the mask of a `CHAR`.
+        let mut log_probs: Vec<f64> = vec![];
+        let mut char_masks: Vec<u64> = vec![];
+        let mut keep: Vec<bool> = vec![];
+        let mut expansions: Vec<Expansion> = vec![];
+        for t in 0..self.max_len - 1 {
+            if rows.is_empty() {
+                break;
+            }
+            last_tokens.clear();
+            last_tokens.extend(rows.iter().map(|row| tree.token(row.node)));
             last_masks.clear();
-            last_masks.extend(active.iter().flat_map(|r| {
-                let m = *masks[*r].last().unwrap();
+            last_masks.extend(rows.iter().flat_map(|row| {
+                let m = tree.mask(row.node);
                 (0..nb).map(move |i| (m >> i & 1) as f32)
             }));
             let mut logits = self
                 .decoder
                 .step(
                     &mut cache,
-                    &Tensor::from_vec(last_tokens, active.len(), &self.device)?,
-                    &Tensor::from_slice(&last_masks, (active.len(), nb), &self.device)?,
+                    &Tensor::from_slice(&last_tokens, rows.len(), &self.device)?,
+                    &Tensor::from_slice(&last_masks, (rows.len(), nb), &self.device)?,
                 )?
                 .flatten_all()?
                 .to_vec1::<f32>()?;
 
-            for (&row, logits) in active.iter().zip(logits.chunks_exact_mut(width)) {
-                let (input, index) = (row / per_dfa, row % per_dfa);
-                let bases = inputs[input].1;
-                let greedy = index == 0 || greedy_only;
-                let rng = &mut rngs[row];
+            log_probs.resize(rows.len() * VOCAB_SIZE, f64::NEG_INFINITY);
+            char_masks.resize(rows.len(), 0);
+            keep.clear();
+            keep.resize(rows.len(), false);
+            for (i, (row, logits)) in rows
+                .iter_mut()
+                .zip(logits.chunks_exact_mut(width))
+                .enumerate()
+            {
                 let (tok, ml) = logits.split_at_mut(VOCAB_SIZE);
-                for (t, l) in tok.iter_mut().enumerate() {
-                    if !grammars[row].allows(t as u32) {
+                for (token, l) in tok.iter_mut().enumerate() {
+                    if !row.grammar.allows(token as u32) {
                         *l = f32::NEG_INFINITY;
                     }
                 }
-                let next = if greedy {
-                    argmax(tok)
-                } else {
-                    sample(tok, temperature, rng, &mut weights)
-                } as u32;
-
-                let mut mask = 0u64;
-                if next == CHAR {
-                    for (i, l) in ml.iter().enumerate() {
-                        let set = if greedy {
-                            *l > 0.0
-                        } else {
-                            rng.next_f64() < sigmoid(*l as f64 / temperature)
-                        };
-                        mask |= (set as u64) << i;
+                let bases = inputs[row.input].1.min(nb);
+                // A `CHAR`'s mask: its bits drawn, then only the DFA's bases,
+                // and empty only as the whole regex (the empty language): an
+                // empty mask gets its most likely base.
+                let char_mask = |rng: Option<&mut Rng>| {
+                    let mut mask = 0u64;
+                    match rng {
+                        Some(rng) => {
+                            for (bit, l) in ml.iter().enumerate() {
+                                let set = rng.next_f64() < sigmoid(*l as f64 / temperature);
+                                mask |= (set as u64) << bit;
+                            }
+                        }
+                        None => {
+                            for (bit, l) in ml.iter().enumerate() {
+                                mask |= ((*l > 0.0) as u64) << bit;
+                            }
+                        }
                     }
-                    mask &= present[input];
-                    // No empty class [] except as the whole regex (the empty
-                    // language): an empty mask gets its most likely base.
-                    if mask == 0 && tokens[row].len() > 1 {
-                        let likely = (0..nb.min(bases))
+                    mask &= present[row.input];
+                    if mask == 0 && t > 0 {
+                        let likely = (0..bases)
                             .max_by(|a, b| ml[*a].total_cmp(&ml[*b]).then(b.cmp(a)))
                             .unwrap_or(0);
                         mask = 1 << likely;
                     }
+                    mask
+                };
+                let (index, next, mask) = match &mut row.draw {
+                    Draw::Beam => {
+                        let mask = char_mask(None);
+                        char_masks[i] = mask;
+                        let log_probs = &mut log_probs[i * VOCAB_SIZE..(i + 1) * VOCAB_SIZE];
+                        log_softmax(tok, log_probs);
+                        let char_log_prob = &mut log_probs[CHAR as usize];
+                        if char_log_prob.is_finite() {
+                            for (bit, l) in ml[..bases].iter().enumerate() {
+                                let l = *l as f64;
+                                *char_log_prob +=
+                                    log_sigmoid(if mask >> bit & 1 == 1 { l } else { -l });
+                            }
+                        }
+                        continue;
+                    }
+                    Draw::Greedy(index) => {
+                        let next = argmax(tok) as u32;
+                        (*index, next, if next == CHAR { char_mask(None) } else { 0 })
+                    }
+                    Draw::Sample(index, rng) => {
+                        let next = sample(tok, temperature, rng, &mut weights) as u32;
+                        let mask = if next == CHAR {
+                            char_mask(Some(rng))
+                        } else {
+                            0
+                        };
+                        (*index, next, mask)
+                    }
+                };
+                if next == EOS {
+                    ends[row.input][index] = row.node;
+                } else {
+                    row.grammar.step(next);
+                    row.node = tree.push(row.node, next, mask);
+                    keep[i] = true;
                 }
-
-                grammars[row].step(next);
-                tokens[row].push(next);
-                masks[row].push(mask);
             }
 
-            let keep: Vec<u32> = (0..active.len() as u32)
-                .filter(|i| *tokens[active[*i as usize]].last().unwrap() != EOS)
-                .collect();
-            if keep.is_empty() {
+            // The next rows: the drawn ones still decoding, then the beams'.
+            let mut parents: Vec<u32> = Vec::with_capacity(rows.len());
+            let mut children: Vec<Row> = vec![];
+            let continuing = keep.iter().filter(|keep| **keep).count();
+            if let Some(width) = beam {
+                for hypotheses in &mut beams {
+                    // The most likely of the finished hypotheses and of the
+                    // extensions of the others; ties keep the earlier, as the
+                    // PyTorch model's top-k over (rank, token).
+                    expansions.clear();
+                    for (rank, hypothesis) in hypotheses.iter().enumerate() {
+                        match hypothesis.row {
+                            None => expansions.push(Expansion {
+                                score: hypothesis.score,
+                                rank,
+                                token: EOS,
+                            }),
+                            Some(row) => {
+                                let row = row as usize;
+                                let log_probs =
+                                    &log_probs[row * VOCAB_SIZE..(row + 1) * VOCAB_SIZE];
+                                expansions.extend(
+                                    (log_probs.iter().enumerate())
+                                        .filter(|(_, log_prob)| log_prob.is_finite())
+                                        .map(|(token, log_prob)| Expansion {
+                                            score: hypothesis.score + log_prob,
+                                            rank,
+                                            token: token as u32,
+                                        }),
+                                );
+                            }
+                        }
+                    }
+                    let order = |a: &Expansion, b: &Expansion| {
+                        (b.score.total_cmp(&a.score))
+                            .then(a.rank.cmp(&b.rank))
+                            .then(a.token.cmp(&b.token))
+                    };
+                    if expansions.len() > width {
+                        expansions.select_nth_unstable_by(width - 1, order);
+                        expansions.truncate(width);
+                    }
+                    expansions.sort_unstable_by(order);
+
+                    let previous = std::mem::take(hypotheses);
+                    for expansion in &expansions {
+                        let parent = &previous[expansion.rank];
+                        let Some(parent_row) = parent.row else {
+                            hypotheses.push(parent.clone());
+                            continue;
+                        };
+                        let row = &rows[parent_row as usize];
+                        if expansion.token == EOS {
+                            hypotheses.push(Hypothesis {
+                                score: expansion.score,
+                                node: row.node,
+                                row: None,
+                            });
+                            continue;
+                        }
+                        let mask = if expansion.token == CHAR {
+                            char_masks[parent_row as usize]
+                        } else {
+                            0
+                        };
+                        let node = tree.push(row.node, expansion.token, mask);
+                        hypotheses.push(Hypothesis {
+                            score: expansion.score,
+                            node,
+                            row: Some((continuing + children.len()) as u32),
+                        });
+                        let mut grammar = row.grammar.clone();
+                        grammar.step(expansion.token);
+                        children.push(Row {
+                            input: row.input,
+                            draw: Draw::Beam,
+                            grammar,
+                            node,
+                        });
+                        parents.push(parent_row);
+                    }
+                }
+            }
+            // The drawn rows' parents go first.
+            let beam_parents = std::mem::take(&mut parents);
+            parents.extend((0..rows.len() as u32).filter(|i| keep[*i as usize]));
+            parents.extend(beam_parents);
+            let mut kept = keep.iter();
+            rows.retain(|_| *kept.next().unwrap());
+            rows.extend(children);
+            if rows.is_empty() {
                 break;
             }
-            if keep.len() < active.len() {
-                active = keep.iter().map(|i| active[*i as usize]).collect();
-                cache.retain(&keep)?;
+            cache.reorder(&parents)?;
+        }
+        // Grammar-constrained sequences end within `max_len`; any row left
+        // is cut there.
+        for row in &rows {
+            match row.draw {
+                Draw::Greedy(index) | Draw::Sample(index, _) => ends[row.input][index] = row.node,
+                Draw::Beam => {}
             }
         }
 
-        let mut candidates: Vec<Vec<Candidate>> = vec![Vec::with_capacity(count); inputs.len()];
-        for (row, (tokens, masks)) in tokens.into_iter().zip(masks).enumerate() {
-            let end = tokens
-                .iter()
-                .position(|t| *t == EOS)
-                .unwrap_or(tokens.len());
-            let candidate = (tokens[1..end].to_vec(), masks[1..end].to_vec());
-            let copies = if greedy_only { count } else { 1 };
-            candidates[row / per_dfa].extend(std::iter::repeat_n(candidate, copies));
+        let copies = if greedy_only { count - first } else { 1 };
+        Ok(beams
+            .into_iter()
+            .zip(ends)
+            .map(|(hypotheses, ends)| {
+                let mut candidates = Vec::with_capacity(hypotheses.len() + count);
+                candidates.extend(
+                    hypotheses
+                        .iter()
+                        .map(|hypothesis| tree.sequence(hypothesis.node)),
+                );
+                for end in &ends[first..] {
+                    let candidate = tree.sequence(*end);
+                    candidates.extend(std::iter::repeat_n(candidate, copies));
+                }
+                candidates
+            })
+            .collect())
+    }
+}
+
+/// How a row draws its tokens; drawn candidates have an index (0, the
+/// greedy decoding, then the samples).
+enum Draw {
+    Greedy(usize),
+    Sample(usize, Rng),
+    Beam,
+}
+
+/// A sequence being decoded.
+struct Row {
+    /// Its DFA.
+    input: usize,
+    draw: Draw,
+    grammar: PrefixGrammar,
+    /// Its last token, in the [`Tree`].
+    node: u32,
+}
+
+impl Row {
+    fn new(input: usize, draw: Draw, max_len: usize) -> Self {
+        Self {
+            input,
+            draw,
+            grammar: PrefixGrammar::new(max_len),
+            node: Tree::ROOT,
         }
-        Ok(candidates)
+    }
+}
+
+/// A hypothesis of a beam: its score, its last token in the [`Tree`], and
+/// its row while it is decoded.
+#[derive(Clone, Debug)]
+struct Hypothesis {
+    score: f64,
+    node: u32,
+    row: Option<u32>,
+}
+
+/// A way to extend the hypothesis of rank `rank` of a beam (`EOS` for a
+/// finished one, at no cost).
+struct Expansion {
+    score: f64,
+    rank: usize,
+    token: u32,
+}
+
+/// The tokens of all sequences, each with its base mask and its parent:
+/// sequences share their prefixes.
+struct Tree(Vec<(u32, u64, u32)>);
+
+impl Tree {
+    /// BOS, the first token of every sequence.
+    const ROOT: u32 = 0;
+
+    fn new() -> Self {
+        Self(vec![(BOS, 0, u32::MAX)])
+    }
+
+    fn push(&mut self, parent: u32, token: u32, mask: u64) -> u32 {
+        self.0.push((token, mask, parent));
+        (self.0.len() - 1) as u32
+    }
+
+    fn token(&self, node: u32) -> u32 {
+        self.0[node as usize].0
+    }
+
+    fn mask(&self, node: u32) -> u64 {
+        self.0[node as usize].1
+    }
+
+    /// The sequence ending at `node`, BOS left out.
+    fn sequence(&self, mut node: u32) -> Candidate {
+        let (mut tokens, mut masks) = (vec![], vec![]);
+        while node != Self::ROOT {
+            let (token, mask, parent) = self.0[node as usize];
+            tokens.push(token);
+            masks.push(mask);
+            node = parent;
+        }
+        tokens.reverse();
+        masks.reverse();
+        (tokens, masks)
+    }
+}
+
+/// `log_probs` the log-softmax of `logits` (-∞ for -∞), in `f64`.
+fn log_softmax(logits: &[f32], log_probs: &mut [f64]) {
+    let max = logits.iter().fold(f32::NEG_INFINITY, |m, l| m.max(*l)) as f64;
+    if max == f64::NEG_INFINITY {
+        log_probs.fill(f64::NEG_INFINITY);
+        return;
+    }
+    let sum: f64 = logits.iter().map(|l| (*l as f64 - max).exp()).sum();
+    let log_sum = max + sum.ln();
+    for (log_prob, l) in log_probs.iter_mut().zip(logits) {
+        *log_prob = *l as f64 - log_sum;
+    }
+}
+
+/// `ln(sigmoid(x))`, without overflow.
+fn log_sigmoid(x: f64) -> f64 {
+    if x >= 0.0 {
+        -(-x).exp().ln_1p()
+    } else {
+        x - x.exp().ln_1p()
     }
 }
 

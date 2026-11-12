@@ -73,17 +73,57 @@ fn bench_decompose() {
 }
 
 /// Quality and time of [`FastAutomaton::to_regex_with`] over the number of
-/// candidates and the minimum success rate, on DFAs the model takes whole and
-/// on larger ones it takes in pieces:
+/// candidates and the minimum success rate:
 /// `KLEENE_MODEL_DIR=<release dir> cargo test --release --features neural-synthesis decompose::bench::bench_settings -- --ignored --nocapture`
-///
-/// Per setting: the geometric mean of the complexity relative to state
-/// elimination's, the DFAs made simpler, and the mean and slowest time per
-/// DFA. Decomposition without the model is the reference the model improves
-/// on.
 #[test]
 #[ignore = "benchmark; needs the model weights (KLEENE_MODEL_DIR)"]
 fn bench_settings() {
+    let settings: Vec<Setting> = [1, 2, 4, 8, 16]
+        .into_iter()
+        .flat_map(|candidates| {
+            [0.0, 0.05, 0.25, 0.5, 0.75, 0.95].map(|min_success| Setting {
+                candidates,
+                min_success,
+                beam: 0,
+            })
+        })
+        .collect();
+    sweep(&settings);
+}
+
+/// [`bench_settings`] for beam searches of several widths, which replace the
+/// greedy decoding, with samples or not, at the default minimum success
+/// rate:
+/// `KLEENE_MODEL_DIR=<release dir> cargo test --release --features neural-synthesis decompose::bench::bench_beam -- --ignored --nocapture`
+#[test]
+#[ignore = "benchmark; needs the model weights (KLEENE_MODEL_DIR)"]
+fn bench_beam() {
+    let settings: Vec<Setting> = [0, 2, 4, 8]
+        .into_iter()
+        .flat_map(|beam| {
+            [1, 2, 4, 8].map(|candidates| Setting {
+                candidates,
+                min_success: NeuralSynthesizer::DEFAULT_MIN_SUCCESS,
+                beam,
+            })
+        })
+        .collect();
+    sweep(&settings);
+}
+
+/// A setting of the model's decoding.
+struct Setting {
+    candidates: usize,
+    min_success: f64,
+    beam: usize,
+}
+
+/// Runs [`FastAutomaton::to_regex_with`] with each of `settings` on DFAs the
+/// model takes whole and on larger ones it takes in pieces. Per setting: the
+/// geometric mean of the complexity relative to state elimination's, the
+/// DFAs made simpler, and the mean and slowest time per DFA. Decomposition
+/// without the model is the reference the model improves on.
+fn sweep(settings: &[Setting]) {
     let load = || {
         NeuralSynthesizer::from_dir(std::env::var("KLEENE_MODEL_DIR").unwrap(), test_device())
             .unwrap()
@@ -92,7 +132,10 @@ fn bench_settings() {
     let atoms = test_patterns();
     let corpora = [
         ("whole", dfas(&atoms, 2..=max_states, 20)),
-        ("decomposed", dfas(&atoms, max_states + 1..=80, PER_OPERATION)),
+        (
+            "decomposed",
+            dfas(&atoms, max_states + 1..=80, PER_OPERATION),
+        ),
     ];
     for (corpus, by_operation) in corpora {
         let dfas: Vec<FastAutomaton> = by_operation.into_iter().flat_map(|(_, d)| d).collect();
@@ -100,8 +143,6 @@ fn bench_settings() {
             .iter()
             .map(|dfa| dfa.to_regex().unwrap().evaluate_complexity())
             .collect();
-        // The geometric mean of the complexities relative to state
-        // elimination's, the DFAs made simpler, the mean and slowest times.
         let measure = |convert: &dyn Fn(&FastAutomaton) -> RegularExpression| {
             let (mut log_ratio, mut simpler) = (0.0, 0);
             let (mut total, mut slowest) = (Duration::ZERO, Duration::ZERO);
@@ -131,22 +172,24 @@ fn bench_settings() {
             states.iter().min().unwrap(),
             states.iter().max().unwrap()
         );
-        println!("candidates min_success  ratio  simpler       mean    slowest");
+        println!("beam candidates min_success  ratio  simpler       mean    slowest");
         println!(
-            "{:<22} {}",
+            "{:<27} {}",
             "no model",
             measure(&|dfa| Decomposer::new(None).convert(dfa).unwrap())
         );
-        for candidates in [1, 2, 4, 8, 16] {
-            for min_success in [0.0, 0.05, 0.25, 0.5, 0.75, 0.95] {
-                let synthesizer = load()
-                    .with_candidates(candidates)
-                    .with_min_success(min_success);
-                println!(
-                    "{candidates:>10} {min_success:>11} {}",
-                    measure(&|dfa| dfa.to_regex_with(&synthesizer).unwrap())
-                );
-            }
+        for setting in settings {
+            let synthesizer = load()
+                .with_candidates(setting.candidates)
+                .with_min_success(setting.min_success)
+                .with_beam(setting.beam);
+            println!(
+                "{:>4} {:>10} {:>11} {}",
+                setting.beam,
+                setting.candidates,
+                setting.min_success,
+                measure(&|dfa| dfa.to_regex_with(&synthesizer).unwrap())
+            );
         }
     }
 }

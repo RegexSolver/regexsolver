@@ -149,6 +149,7 @@ impl Model for Kleene {
                 sampling.candidates,
                 sampling.temperature,
                 sampling.seed,
+                sampling.beam,
             )
             .map_err(|err| err.to_string())?;
         for (((i, _, _), candidates), bases) in inputs.iter().zip(candidates).zip(&bases) {
@@ -264,7 +265,10 @@ mod tests {
                 max_diff = max_diff.max((a - b).abs());
             }
 
-            let greedy = kleene.network.generate(&g, canonical.k, 1, 1.0, 0).unwrap();
+            let greedy = kleene
+                .network
+                .generate(&g, canonical.k, 1, 1.0, 0, 0)
+                .unwrap();
             let (tokens, masks) = &greedy[0];
             assert_eq!(
                 tokens.iter().map(|t| *t as u64).collect::<Vec<_>>(),
@@ -279,6 +283,158 @@ mod tests {
             device.location()
         );
         assert!(max_diff < 1e-3, "max logit difference {max_diff}");
+    }
+
+    /// Compares the beam search with the PyTorch model's
+    /// (`Graph2Seq.beam_search`): for each pattern of
+    /// `tests/data/kleene_beam-<name>-<release>.json` and each width, the
+    /// same hypotheses in the same order. Without that file, nothing is
+    /// checked.
+    ///
+    /// `KLEENE_MODEL_DIR=<release dir> cargo test --release --features neural-synthesis kleene::tests::beam_parity -- --ignored`
+    /// (`KLEENE_BEAM_PARITY=<json>` for other reference outputs).
+    #[test]
+    #[ignore = "needs the model weights (KLEENE_MODEL_DIR)"]
+    fn beam_parity() {
+        let dir = std::path::PathBuf::from(std::env::var("KLEENE_MODEL_DIR").unwrap());
+        let config: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.join("config.json")).unwrap()).unwrap();
+        let weights = std::fs::read(dir.join("model.safetensors")).unwrap();
+        let version = config["format_version"].as_u64().unwrap() as u32;
+        let device = test_device().to_candle().unwrap();
+        let kleene = Kleene::new(&config, version, weights, &device).unwrap();
+
+        // A release may have no reference beams (dfa2regex writes them only
+        // for format v2): the test then checks nothing.
+        let path = match std::env::var("KLEENE_BEAM_PARITY") {
+            Ok(path) => path,
+            Err(_) => {
+                let path = format!(
+                    "{}/tests/data/kleene_beam-{}-{}.json",
+                    env!("CARGO_MANIFEST_DIR"),
+                    config["name"].as_str().unwrap(),
+                    config["release"].as_str().unwrap_or("unreleased"),
+                );
+                if !std::path::Path::new(&path).exists() {
+                    println!("{path}: no reference beams, nothing checked");
+                    return;
+                }
+                path
+            }
+        };
+        let reference = std::fs::read(&path).unwrap();
+        let reference: Vec<serde_json::Value> = serde_json::from_slice(&reference).unwrap();
+        let (mut hypotheses, mut different) = (0, vec![]);
+        for case in &reference {
+            let pattern = case["pattern"].as_str().unwrap();
+            let dfa = minimal_dfa(
+                &RegularExpression::new(pattern)
+                    .unwrap()
+                    .to_automaton()
+                    .unwrap(),
+            )
+            .unwrap();
+            let canonical = canonical::canonicalize(&dfa, kleene.rest_is_base);
+            let g = graph::Graph::new(
+                &canonical,
+                kleene.network.max_bases(),
+                kleene.network.max_depth(),
+            );
+            for (key, expected) in case.as_object().unwrap() {
+                let Some(width) = key.strip_prefix("beam") else {
+                    continue;
+                };
+                let width: usize = width.parse().unwrap();
+                let expected: Vec<(Vec<u32>, Vec<u64>)> = (expected.as_array().unwrap().iter())
+                    .map(|h| {
+                        let ints = |v: &serde_json::Value| -> Vec<u64> {
+                            v.as_array()
+                                .unwrap()
+                                .iter()
+                                .map(|x| x.as_u64().unwrap())
+                                .collect()
+                        };
+                        let tokens = ints(&h[0]).into_iter().map(|t| t as u32).collect();
+                        (tokens, ints(&h[1]))
+                    })
+                    .collect();
+                let beam = kleene
+                    .network
+                    .generate(&g, canonical.k, 1, 1.0, 0, width)
+                    .unwrap();
+                hypotheses += expected.len();
+                if beam != expected {
+                    different.push(format!("{pattern} (width {width})"));
+                }
+            }
+        }
+        println!(
+            "{} patterns, {hypotheses} hypotheses; different beams: {different:?}",
+            reference.len()
+        );
+        assert!(different.is_empty(), "{} different beams", different.len());
+    }
+
+    /// With the tiny model: a beam gives at most its width of distinct,
+    /// well-formed hypotheses, before the samples, which are those decoded
+    /// without a beam; decoding DFAs together gives what decoding them one
+    /// by one does.
+    #[test]
+    fn beam_search_with_samples() {
+        let dir = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/data/kleene_tiny"
+        ));
+        let config: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.join("config.json")).unwrap()).unwrap();
+        let weights = std::fs::read(dir.join("model.safetensors")).unwrap();
+        let kleene = Kleene::new(&config, 1, weights, &candle_core::Device::Cpu).unwrap();
+        let canonicals: Vec<canonical::CanonicalDfa> = [
+            "abc",
+            "(ab|cd)*e",
+            "[a-c]*d[e-g]*",
+            "(a|b)*abb",
+            "x|yz",
+            "a*",
+        ]
+        .iter()
+        .map(|pattern| {
+            let automaton = RegularExpression::new(pattern).unwrap().to_automaton();
+            canonical::canonicalize(&minimal_dfa(&automaton.unwrap()).unwrap(), true)
+        })
+        .collect();
+        let graphs: Vec<graph::Graph> = (canonicals.iter())
+            .map(|c| graph::Graph::new(c, kleene.network.max_bases(), kleene.network.max_depth()))
+            .collect();
+        let inputs: Vec<(&graph::Graph, usize)> = graphs
+            .iter()
+            .zip(&canonicals)
+            .map(|(g, c)| (g, c.k))
+            .collect();
+        let (count, seed) = (4, 7);
+        let drawn = kleene
+            .network
+            .generate_batch(&inputs, count, 1.0, seed, 0)
+            .unwrap();
+        for width in [2, 3, 8] {
+            let batch = (kleene.network)
+                .generate_batch(&inputs, count, 1.0, seed, width)
+                .unwrap();
+            for (i, candidates) in batch.iter().enumerate() {
+                let (beam, samples) = candidates.split_at(candidates.len() - (count - 1));
+                assert_eq!(samples, &drawn[i][1..], "width {width}, DFA {i}");
+                assert!((1..=width).contains(&beam.len()), "width {width}, DFA {i}");
+                for (j, (tokens, masks)) in beam.iter().enumerate() {
+                    assert!(!beam[..j].contains(&(tokens.clone(), masks.clone())));
+                    assert!(tokens::decode(tokens, masks, &canonicals[i].bases).is_some());
+                }
+                let (graph, bases) = inputs[i];
+                let alone = (kleene.network)
+                    .generate(graph, bases, count, 1.0, seed, width)
+                    .unwrap();
+                assert_eq!(&alone, candidates, "width {width}, DFA {i}");
+            }
+        }
     }
 
     /// Writes `tests/data/kleene_tiny`, a model of the format with tiny
@@ -422,12 +578,18 @@ mod tests {
             .collect();
 
         const RUNS: usize = 10;
-        for count in [1, 8] {
+        // Candidates, and beam widths (0: greedy decoding).
+        for (count, beam) in [(1, 0), (8, 0), (1, 4), (1, 8), (4, 4)] {
+            let setting = if beam == 0 {
+                format!("{count} candidate(s)")
+            } else {
+                format!("beam {beam} + {} sample(s)", count - 1)
+            };
             let mut checksum = DefaultHasher::new();
             let mut pass = || {
                 let start = Instant::now();
                 for (g, k) in &inputs {
-                    let candidates = kleene.network.generate(g, *k, count, 1.0, 0).unwrap();
+                    let candidates = kleene.network.generate(g, *k, count, 1.0, 0, beam).unwrap();
                     candidates.hash(&mut checksum);
                 }
                 start.elapsed()
@@ -437,7 +599,7 @@ mod tests {
             times.sort();
             let per_dfa = |t: std::time::Duration| t / inputs.len() as u32;
             println!(
-                "{count} candidate(s): {:?} per DFA (median of {RUNS}; min {:?}, max {:?}), checksum {:016x}",
+                "{setting}: {:?} per DFA (median of {RUNS}; min {:?}, max {:?}), checksum {:016x}",
                 per_dfa(times[RUNS / 2]),
                 per_dfa(times[0]),
                 per_dfa(times[RUNS - 1]),
@@ -448,12 +610,12 @@ mod tests {
             // rounding (counted), in less time.
             let one_by_one: Vec<_> = inputs
                 .iter()
-                .map(|(g, k)| kleene.network.generate(g, *k, count, 1.0, 0).unwrap())
+                .map(|(g, k)| kleene.network.generate(g, *k, count, 1.0, 0, beam).unwrap())
                 .collect();
             let batch: Vec<(&graph::Graph, usize)> = inputs.iter().map(|(g, k)| (g, *k)).collect();
             let batched = kleene
                 .network
-                .generate_batch(&batch, count, 1.0, 0)
+                .generate_batch(&batch, count, 1.0, 0, beam)
                 .unwrap();
             let same = one_by_one
                 .iter()
@@ -466,16 +628,16 @@ mod tests {
                     let start = Instant::now();
                     kleene
                         .network
-                        .generate_batch(&batch, count, 1.0, 0)
+                        .generate_batch(&batch, count, 1.0, 0, beam)
                         .unwrap();
                     start.elapsed()
                 })
                 .collect();
             times.sort();
             println!(
-                "{count} candidate(s), batched: {:?} per DFA (median of {RUNS}); {same}/{} candidates as one by one",
+                "{setting}, batched: {:?} per DFA (median of {RUNS}); {same}/{} candidates as one by one",
                 per_dfa(times[RUNS / 2]),
-                inputs.len() * count
+                batched.iter().map(Vec::len).sum::<usize>()
             );
         }
     }
