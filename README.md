@@ -4,7 +4,7 @@
 [![docs.rs](https://img.shields.io/docsrs/regexsolver)](https://docs.rs/regexsolver)
 [![CI](https://github.com/RegexSolver/regexsolver/actions/workflows/rust.yml/badge.svg)](https://github.com/RegexSolver/regexsolver/actions/workflows/rust.yml)
 [![License: MIT](https://img.shields.io/crates/l/regexsolver)](LICENSE)
-[![MSRV](https://img.shields.io/crates/msrv/regexsolver)](#minimum-supported-rust-version)
+[![MSRV](https://img.shields.io/crates/msrv/regexsolver)](#install)
 
 The `regex` crate tells you whether a *string* matches a pattern. **RegexSolver treats patterns as the sets of strings they match**, so you can intersect, subtract, compare, complement and enumerate them, and get the result back as a regex.
 
@@ -27,17 +27,12 @@ assert_eq!(both.generate_strings(2, 0, PathOrder::Sweep).unwrap(), ["xyxy", "abx
 
 ## Use cases
 
-- **Safe migrations** - `old_rule.subset(&new_rule)?`: does the new validation pattern accept *everything* the old one did?
-- **Test-data generation** - `term.generate_strings(100, 0, (PathOrder::Shuffled, CharacterOrder::Shuffled))?`: realistic-looking strings matching any pattern, spread over the cases the pattern allows, reproducible by seed and pageable.
-- **Rule analysis**: find shadowed or overlapping routes, firewall rules, and validators with `intersection` / `difference`.
-- **Equivalence proofs** - `a.equivalent(&b)?`: show that two differently-written patterns match exactly the same strings.
-- **Input bounds** - `term.length()`: the shortest and longest string a pattern can match, for instance to size a database column.
-- **Pattern simplification**: every operation returns a `Term` you can turn back into a regex pattern with `to_pattern()`.
-
-Under the hood, every pattern compiles to a finite automaton:
-
-<p align="center"><img src="https://raw.githubusercontent.com/RegexSolver/regexsolver/refs/heads/main/assets/automaton.svg" alt="the minimal automaton for text containing abc then def"/></p>
-<p align="center"><sub>The minimal automaton for <code>.*abc.*def.*</code> (text containing <code>abc</code> then <code>def</code>), rendered from this library's <code>to_dot()</code>.</sub></p>
+- **Safe migrations**: `old.subset(&new)?` tells you whether a new validation pattern accepts *everything* the old one did.
+- **Equivalence proofs**: `a.equivalent(&b)?` shows that two patterns match the same strings.
+- **Rule analysis**: `intersection` and `difference` find shadowed or overlapping routes, firewall rules and validators.
+- **Test data**: `generate_strings` produces strings that match a pattern, spread over the cases it allows, reproducible and pageable.
+- **Input bounds**: `length()` gives the shortest and longest string a pattern matches, to size a database column.
+- **Readable regexes**: every result converts back to a pattern, and [neural synthesis](#neural-synthesis) can make it simpler.
 
 ## Install
 
@@ -45,13 +40,17 @@ Under the hood, every pattern compiles to a finite automaton:
 cargo add regexsolver
 ```
 
-The default `parallel` feature runs unions and intersections of more than 3 operands, and parts of the automaton-to-regex conversion, on [rayon](https://crates.io/crates/rayon). It is a no-op on `wasm`, which has no threads and does not depend on rayon at all. Turn it off for a leaner dependency tree on single-threaded workloads:
+| Feature | Adds |
+|---|---|
+| `parallel` (default) | Runs large unions and intersections, and neural synthesis inference, on [rayon](https://crates.io/crates/rayon). No effect on `wasm` targets. |
+| `neural-synthesis` | [Neural synthesis](#neural-synthesis), with models loaded from their files. |
+| `neural-synthesis-hub` | Model downloads from the Hugging Face Hub. Needs Rust 1.95, not available on `wasm` targets. |
+| `neural-synthesis-cuda`, `-cudnn`, `-metal` | GPU inference. Needs the CUDA toolkit (and cuDNN) or Metal. |
+| `neural-synthesis-mkl`, `-accelerate` | Faster CPU inference. Needs oneAPI MKL's static libraries or Apple Accelerate. |
 
-```toml
-regexsolver = { version = "1", default-features = false }
-```
+`regexsolver` builds with Rust 1.88 and later, verified in CI. Raising this version is a breaking change.
 
-Two runnable examples ship with the crate:
+## Examples
 
 ```bash
 git clone https://github.com/RegexSolver/regexsolver && cd regexsolver
@@ -59,115 +58,76 @@ git clone https://github.com/RegexSolver/regexsolver && cd regexsolver
 # How do two patterns relate? (equivalence, subsets, intersection, differences)
 cargo run --example relate -- "(ab|xy){2}" ".*xy"
 
-# Generate n sample strings matching a pattern
+# Generate 20 strings matching a pattern
 cargo run --example generate -- "[a-z]{2}[0-9]" 20
+
+# Compare state elimination and neural synthesis
+cargo run --release --features neural-synthesis-hub --example neural_synthesis
 ```
 
 ## Semantics
 
-RegexSolver implements **pure regular languages**, which differs from typical regex engines in two ways:
+RegexSolver works on **regular languages**, and differs from typical regex engines in two ways:
 
-- **Everything is anchored**: `abc` matches the string "abc", not "xabc" or "abcx". Patterns describe *whole strings*.
+- **Everything is anchored**: `abc` matches the string "abc", not "xabc" or "abcx". A pattern describes *whole strings*.
 - **`.` matches any character**, including line feed (`\n`).
 
-Patterns are parsed with [regex-syntax](https://docs.rs/regex-syntax/latest/regex_syntax/). Constructs that don't change the language as a set of strings, such as ungreedy markers and redundant `^`/`$` anchors, are accepted and ignored. Constructs a regular language can't express (backreferences, lookaround, inline flags, word boundaries) return an `EngineError` instead of silently changing what the pattern means. The [crate documentation](https://docs.rs/regexsolver) covers each case, and the Unicode version in force.
+Constructs a regular language can't express, such as backreferences, lookaround, inline flags and word boundaries, return an `EngineError` instead of changing what the pattern means. The [crate documentation](https://docs.rs/regexsolver/latest/regexsolver/#semantics) covers each case.
 
-## API overview
+## API
 
-[`Term`](https://docs.rs/regexsolver/latest/regexsolver/enum.Term.html) is the type you'll interact with: it wraps either a regular expression or an automaton and picks the best representation for each operation. The essentials:
+[`Term`](https://docs.rs/regexsolver/latest/regexsolver/enum.Term.html) is the type you work with: it holds a regular expression or an automaton, and picks the representation each operation needs.
 
-| Method | Description |
-| -------- | ------- |
-| `Term::from_pattern(pattern)` | Parses a pattern into a term. |
-| `intersection(&self, terms)` / `union(&self, terms)` | Set operations over any number of terms. |
-| `difference(&self, other)` / `complement(&self)` | What `self` matches and `other` doesn't / everything `self` doesn't match. |
-| `concat(&self, terms)` / `repeat(&self, range)` | Sequence and repeat languages; `range` is any Rust range expression (`2..=5`, `1..`, `..3`, ...). |
-| `equivalent(&self, other)` / `subset(&self, other)` | Compare languages. |
-| `is_empty()` / `is_total()` / `length()` / `cardinality()` | Analyze a language: matches nothing? everything? string lengths? how many strings? |
-| `generate_strings(limit, offset, options)` | Enumerate matching strings eagerly (call `determinize()` or `minimize()` once first when paginating). |
-| `iter_strings(options)` | Lazy iterator equivalent; computes the deterministic automaton once and yields strings in batches. `options.with_min_length(n)`/`.with_max_length(n)` confine the walk to a band of lengths; with a max, even an infinite language yields a finite iterator. |
-| `to_pattern()` / `to_automaton()` / `to_regex()` | Convert back out. |
+| | Methods |
+|---|---|
+| Build | `from_pattern`, `parse`, `concat`, `repeat` |
+| Combine | `union`, `intersection`, `difference`, `complement` |
+| Compare | `equivalent`, `subset`, `matches` |
+| Analyze | `is_empty`, `is_total`, `length`, `cardinality` |
+| Generate | `generate_strings`, `iter_strings` |
+| Convert | `to_pattern`, `to_regex`, `to_automaton`, `determinize`, `minimize` |
 
-All fallible operations return `Result<_, EngineError>`.
+For lower-level work, [`FastAutomaton`](https://docs.rs/regexsolver/latest/regexsolver/fast_automaton/struct.FastAutomaton.html) builds and inspects automata state by state, and [`RegularExpression`](https://docs.rs/regexsolver/latest/regexsolver/regex/enum.RegularExpression.html) exposes the parsed pattern as an AST.
 
-`Term` is a thin layer over two public types you can drop down to whenever you need them:
+Automaton operations can blow up on adversarial patterns. To run untrusted input, set limits on run time and number of states with an [`ExecutionProfile`](https://docs.rs/regexsolver/latest/regexsolver/execution_profile/struct.ExecutionProfile.html): hitting one returns an `EngineError` instead of hanging.
 
-- [`FastAutomaton`](https://docs.rs/regexsolver/latest/regexsolver/fast_automaton/struct.FastAutomaton.html) builds, manipulates and analyzes automata directly. Everything `Term` does is available on it, plus low-level construction (`new_state`, `accept`, `add_transition_from_range`, `add_epsilon_transition`, ...) and inspection (`states`, `transitions_from`, `to_dot`, ...).
-- [`RegularExpression`](https://docs.rs/regexsolver/latest/regexsolver/regex/enum.RegularExpression.html) is the parsed pattern itself: a plain AST enum (`Character` / `Repetition` / `Concat` / `Alternation`) you can walk to lint or analyze patterns, alongside the simplifying combinators and the analyses.
+## Neural synthesis
 
-## Execution limits
-
-Automaton operations can blow up on adversarial inputs, so the engine is built to run untrusted patterns safely: a thread-local `ExecutionProfile` caps runtime and state explosion, and controls when the engine may determinize on its own. Hitting a limit returns a specific `EngineError` instead of hanging or panicking.
-
-```rust
-use regexsolver::{Term, execution_profile::ExecutionProfileBuilder, error::EngineError, fast_automaton::GenerationOptions};
-
-let term = Term::from_pattern(".*abc.*cdef.*sqdsqf.*").unwrap();
-
-let execution_profile = ExecutionProfileBuilder::new()
-	.execution_timeout(50) // limit in milliseconds
-	.build();
-
-// Asking for 100 million strings cannot finish within the budget, so the
-// generation aborts instead of running to completion.
-execution_profile.run(|| {
-	assert_eq!(EngineError::OperationTimeOutError, term.generate_strings(100_000_000, 0, GenerationOptions::new()).unwrap_err());
-});
-```
-
-The same profile caps how many states an automaton may hold (`max_number_of_states`, failing with `EngineError::AutomatonHasTooManyStates`), and can refuse implicit determinization outright (`implicit_determinization(false)`), so the potentially exponential subset construction only ever runs through an explicit `determinize()` call. Both are documented with examples on [`ExecutionProfile`](https://docs.rs/regexsolver/latest/regexsolver/execution_profile/struct.ExecutionProfile.html).
-
-## Simpler regexes with neural synthesis (optional)
-
-`to_regex` turns an automaton back into a pattern using state elimination. The result is always correct, but it is often hard to read. The `neural-synthesis` feature adds `to_regex_with`, which asks a learned model for a simpler pattern:
+`to_pattern` converts an automaton back to a pattern by state elimination. The result is always correct, but often hard to read. With the optional `neural-synthesis` feature, `to_regex_with` asks a learned model for a simpler pattern:
 
 ```rust,ignore
-use regexsolver::neural_synthesis::{Device, NeuralSynthesizer};
+use regexsolver::{Term, neural_synthesis::{Device, NeuralSynthesizer}};
 
-// From the Hugging Face Hub (`neural-synthesis-hub` feature), or from local model files with `from_files`.
+// Downloads the default model from the Hugging Face Hub (`neural-synthesis-hub` feature).
 let synthesizer = NeuralSynthesizer::from_hub(NeuralSynthesizer::DEFAULT_HUB_MODEL, Device::best_available())?;
+// With `neural-synthesis` alone, load the model files (config.json, model.safetensors) from a directory:
+// let synthesizer = NeuralSynthesizer::from_dir("kleene2-9m-b16-t128", Device::best_available())?;
 
-let regex = automaton.to_regex_with(&synthesizer)?;
-// to_regex:      [a-eg]*h(b(hb)*(h{2}|([a-eg]|h[ac-eg])[a-eg]*h)|([ac-eg][a-eg]*)?h)*b(hb)*h?
-// to_regex_with: [a-egh]*hbh?
+// Words ending in "ing", except those ending in "ring":
+let ing: Term = "[a-z]*ing".parse()?;
+let ring: Term = "[a-z]*ring".parse()?;
+let words = ing.difference(&ring)?;
+
+words.to_pattern()?;                 // [a-qs-z]*(i|r((i?|ing?|([a-hj-qs-z]|i[a-mo-qs-z]|in([a-fh-qs-z]|g[a-qs-z]))[a-qs-z]*)r)*(i{2}|ing?i|([a-hj-qs-z]|i[a-mo-qs-z]|in([a-fh-qs-z]|g[a-qs-z]))[a-qs-z]*i))ng
+words.to_regex_with(&synthesizer)?;  // ([a-z]*[a-qs-z])?ing
 ```
 
-Every pattern the model proposes is checked against the automaton, so the result is never wrong. If none of them is simpler than the state-elimination pattern, that pattern is returned instead.
+Every pattern the model proposes is checked against the automaton, so the result is never wrong. If none is simpler, the state-elimination pattern is returned.
 
-Three models are available:
+The models are on Hugging Face: [`kleene2-9m-b16-t128`](https://huggingface.co/alexvbrdn/kleene2-9m-b16-t128) (default), [`kleene2-5m-b16-t128`](https://huggingface.co/alexvbrdn/kleene2-5m-b16-t128) and [`kleene1-9m-b16-t128`](https://huggingface.co/alexvbrdn/kleene1-9m-b16-t128). The [`neural_synthesis` documentation](https://docs.rs/regexsolver/latest/regexsolver/neural_synthesis/index.html) covers the models, devices and performance.
 
-- [`kleene2-9m-b16-t128`](https://huggingface.co/alexvbrdn/kleene2-9m-b16-t128): Kleene 2, 9M parameters (default)
-- [`kleene2-5m-b16-t128`](https://huggingface.co/alexvbrdn/kleene2-5m-b16-t128): Kleene 2, 5M parameters
-- [`kleene1-9m-b16-t128`](https://huggingface.co/alexvbrdn/kleene1-9m-b16-t128): Kleene 1 (previous generation), 9M parameters
+## How it works
 
-All three take automata of up to 16 states. Larger automata are broken into smaller pieces.
+<p align="center"><img src="https://raw.githubusercontent.com/RegexSolver/regexsolver/refs/heads/main/assets/automaton.svg" alt="the minimal automaton for text containing abc then def"/></p>
+<p align="center"><sub>The minimal automaton for <code>.*abc.*def.*</code> (text containing <code>abc</code> then <code>def</code>), rendered from this library's <code>to_dot()</code>.</sub></p>
 
-Neural synthesis is split across several Cargo features:
-
-| Feature | Adds |
-|---|---|
-| `neural-synthesis` | `NeuralSynthesizer`, loading models from their files |
-| `neural-synthesis-hub` | downloads from the Hugging Face Hub (needs Rust 1.95, not available on `wasm` targets) |
-| `neural-synthesis-cuda`, `-cudnn`, `-metal` | GPU devices (need the CUDA toolkit or Metal) |
-| `neural-synthesis-mkl`, `-accelerate` | faster CPU inference with Intel MKL (needs oneAPI MKL's static libraries) or Apple Accelerate |
-
-Neural synthesis is slower than state elimination. On an 8-core laptop CPU without MKL, a conversion takes about 0.1 s on average for automata of up to 16 states (0.6 s at most). For 17 to 40 states, it takes about 0.5 s on average (1 to 2 s at most). Larger automata take longer, and times vary with the CPU.
-
-To compile for `wasm32-unknown-unknown`, set `RUSTFLAGS='--cfg getrandom_backend="unsupported"'`. One of the dependencies requires a source of randomness, which this target does not have. This is safe because neural synthesis never uses it.
-
-## Implementation
-
-- Patterns are parsed with [regex-syntax](https://docs.rs/regex-syntax/latest/regex_syntax/) and simplified into a small regular-expression AST; set operations run on finite automata; results convert back to patterns via state elimination.
-- Transition labels are bitvectors over a per-automaton "spanning set" of disjoint character ranges, making label union/intersection/complement O(1): see [Optimizing Automaton Representation with Transition Conditions](https://alexvbrdn.me/post/optimizing-transition-conditions-automaton-representation).
-- Correctness is cross-validated against the `regex` crate and exercised by property-based tests over randomly generated automata and expressions, with brute-force oracles for the analyses.
-
-## Minimum supported Rust version
-
-`regexsolver` builds with Rust 1.88 and later, verified in CI. Raising this version is a breaking change.
+- Patterns are parsed with [regex-syntax](https://docs.rs/regex-syntax/latest/regex_syntax/) into a small regular-expression AST, set operations run on finite automata like the one above, and results convert back to patterns by state elimination.
+- Transition labels are bitvectors over a per-automaton set of disjoint character ranges, making label union, intersection and complement O(1): see [Optimizing Automaton Representation with Transition Conditions](https://alexvbrdn.me/post/optimizing-transition-conditions-automaton-representation).
+- Correctness is cross-validated against the `regex` crate, and checked by property-based tests over random automata and expressions with brute-force oracles.
 
 ## Contributing
 
-Bug reports and pull requests are welcome, see [CONTRIBUTING.md](CONTRIBUTING.md). Notable changes are recorded in [CHANGELOG.md](CHANGELOG.md), and the security policy is in [SECURITY.md](SECURITY.md).
+Bug reports and pull requests are welcome, see [CONTRIBUTING.md](CONTRIBUTING.md). Changes are recorded in [CHANGELOG.md](CHANGELOG.md), and the security policy is in [SECURITY.md](SECURITY.md).
 
 ## License
 
