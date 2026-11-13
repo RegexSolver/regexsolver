@@ -119,12 +119,12 @@ The same profile caps how many states an automaton may hold (`max_number_of_stat
 
 ## Simpler regexes with neural synthesis (optional)
 
-`to_regex` converts an automaton back to a pattern by state elimination, which is always correct but often hard to read. With the `neural-synthesis` feature, `to_regex_with` can ask a learned model instead:
+`to_regex` turns an automaton back into a pattern using state elimination. The result is always correct, but it is often hard to read. The `neural-synthesis` feature adds `to_regex_with`, which asks a learned model for a simpler pattern:
 
 ```rust,ignore
 use regexsolver::neural_synthesis::{Device, NeuralSynthesizer};
 
-// From the Hugging Face Hub (`neural-synthesis-hub` feature), or from its files with `from_files`.
+// From the Hugging Face Hub (`neural-synthesis-hub` feature), or from local model files with `from_files`.
 let synthesizer = NeuralSynthesizer::from_hub(NeuralSynthesizer::DEFAULT_HUB_MODEL, Device::best_available())?;
 
 let regex = automaton.to_regex_with(&synthesizer)?;
@@ -132,34 +132,34 @@ let regex = automaton.to_regex_with(&synthesizer)?;
 // to_regex_with: [a-egh]*hbh?
 ```
 
-Every pattern the model proposes is checked against the automaton, so the result is never wrong, and state elimination's pattern is kept when it is simpler. The default model, [Kleene 2](https://huggingface.co/alexvbrdn/kleene2-9m-b16-t128) (`kleene2-9m-b16-t128`; also [`kleene2-5m-b16-t128`](https://huggingface.co/alexvbrdn/kleene2-5m-b16-t128), smaller, and the previous generation, [`kleene1-9m-b16-t128`](https://huggingface.co/alexvbrdn/kleene1-9m-b16-t128)), takes automata of up to 16 states; larger ones are split into pieces it can take.
+Every pattern the model proposes is checked against the automaton, so the result is never wrong. If none of them is simpler than the state-elimination pattern, that pattern is returned instead.
 
-By default, the model runs a beam search of width 4 and its up to 4 patterns are checked; it is not run on an automaton, or a piece of one, for which its success rate (given in its `config.json`) is below 5%. `with_beam` and `with_candidates` (samples added to the beam) trade time for simpler patterns, and `with_min_success` sets the threshold. Conversions are slower than state elimination: on an 8-core laptop CPU without MKL, expect about 0.1 s on average for automata of up to 16 states (up to about 0.6 s), and about half a second for automata of 17 to 40 states (up to about 1 to 2 s); larger ones take longer. Actual times vary with the CPU.
+Three models are available:
+
+- [`kleene2-9m-b16-t128`](https://huggingface.co/alexvbrdn/kleene2-9m-b16-t128): Kleene 2, 9M parameters (default)
+- [`kleene2-5m-b16-t128`](https://huggingface.co/alexvbrdn/kleene2-5m-b16-t128): Kleene 2, 5M parameters
+- [`kleene1-9m-b16-t128`](https://huggingface.co/alexvbrdn/kleene1-9m-b16-t128): Kleene 1 (previous generation), 9M parameters
+
+All three take automata of up to 16 states. Larger automata are broken into smaller pieces.
+
+Neural synthesis is split across several Cargo features:
 
 | Feature | Adds |
 |---|---|
 | `neural-synthesis` | `NeuralSynthesizer`, loading models from their files |
-| `neural-synthesis-hub` | downloads from the Hugging Face Hub; needs Rust 1.95, not available on `wasm` |
-| `neural-synthesis-cuda`, `-cudnn`, `-metal` | GPU devices; need the CUDA toolkit or Metal |
+| `neural-synthesis-hub` | downloads from the Hugging Face Hub (needs Rust 1.95, not available on `wasm` targets) |
+| `neural-synthesis-cuda`, `-cudnn`, `-metal` | GPU devices (need the CUDA toolkit or Metal) |
 | `neural-synthesis-mkl`, `-accelerate` | faster CPU inference with Intel MKL (needs oneAPI MKL's static libraries) or Apple Accelerate |
 
-On `wasm32-unknown-unknown`, build with `RUSTFLAGS='--cfg getrandom_backend="unsupported"'`: `getrandom`, which candle depends on, only compiles there with a backend chosen, and neural synthesis never asks it for randomness.
+Neural synthesis is slower than state elimination. On an 8-core laptop CPU without MKL, a conversion takes about 0.1 s on average for automata of up to 16 states (0.6 s at most). For 17 to 40 states, it takes about 0.5 s on average (1 to 2 s at most). Larger automata take longer, and times vary with the CPU.
+
+To compile for `wasm32-unknown-unknown`, set `RUSTFLAGS='--cfg getrandom_backend="unsupported"'`. One of the dependencies requires a source of randomness, which this target does not have. This is safe because neural synthesis never uses it.
 
 ## Implementation
 
 - Patterns are parsed with [regex-syntax](https://docs.rs/regex-syntax/latest/regex_syntax/) and simplified into a small regular-expression AST; set operations run on finite automata; results convert back to patterns via state elimination.
 - Transition labels are bitvectors over a per-automaton "spanning set" of disjoint character ranges, making label union/intersection/complement O(1): see [Optimizing Automaton Representation with Transition Conditions](https://alexvbrdn.me/post/optimizing-transition-conditions-automaton-representation).
 - Correctness is cross-validated against the `regex` crate and exercised by property-based tests over randomly generated automata and expressions, with brute-force oracles for the analyses.
-
-## Other languages
-
-This engine also backs a hosted API, with clients for other languages. They call that service rather than embedding the crate, so they need an API token from the [developer console](https://console.regexsolver.com/):
-
-- [regexsolver-java](https://github.com/RegexSolver/regexsolver-java)
-- [regexsolver-js](https://github.com/RegexSolver/regexsolver-js)
-- [regexsolver-python](https://github.com/RegexSolver/regexsolver-python)
-
-Our [guide](https://docs.regexsolver.com/) covers getting started with them.
 
 ## Minimum supported Rust version
 
