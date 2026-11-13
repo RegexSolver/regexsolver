@@ -203,8 +203,8 @@ fn both_representations_give_the_same_answers() {
         automaton_backed.is_finite().unwrap()
     );
     assert_eq!(
-        regex_backed.matches("abxy").unwrap(),
-        automaton_backed.matches("abxy").unwrap()
+        regex_backed.is_match("abxy").unwrap(),
+        automaton_backed.is_match("abxy").unwrap()
     );
     assert!(regex_backed.equivalent(&automaton_backed).unwrap());
 }
@@ -382,19 +382,28 @@ fn the_empty_language_is_not_the_empty_string() {
     assert_eq!("[]", empty.to_pattern().unwrap());
     assert_eq!("", empty_string.to_pattern().unwrap());
 
-    assert!(!empty.matches("").unwrap());
-    assert!(empty_string.matches("").unwrap());
+    assert!(!empty.is_match("").unwrap());
+    assert!(empty_string.is_match("").unwrap());
 }
 
 /// Matching is anchored: a pattern describes whole strings.
 #[test]
 fn matching_is_anchored_and_dot_matches_a_line_feed() {
     let abc = term("abc");
-    assert!(abc.matches("abc").unwrap());
-    assert!(!abc.matches("xabc").unwrap());
-    assert!(!abc.matches("abcx").unwrap());
+    assert!(abc.is_match("abc").unwrap());
+    assert!(!abc.is_match("xabc").unwrap());
+    assert!(!abc.is_match("abcx").unwrap());
 
-    assert!(term(".").matches("\n").unwrap());
+    assert!(term(".").is_match("\n").unwrap());
+}
+
+/// `matches` stays available, deprecated, until 2.0.
+#[test]
+#[allow(deprecated)]
+fn matches_is_a_deprecated_alias_of_is_match() {
+    let abc = term("abc");
+    assert!(abc.matches("abc").unwrap());
+    assert!(!abc.matches("abcx").unwrap());
 }
 
 /// Constructs a regular language cannot express are refused rather than applied

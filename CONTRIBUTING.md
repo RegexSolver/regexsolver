@@ -54,7 +54,7 @@ Patterns are parsed by `regex-syntax`, whose Unicode tables are compiled in, and
 
 ## Benchmarks
 
-`cargo bench` measures the operation families over named inputs: realistic patterns at three sizes, plus the `(a|b)*a(a|b){N}` family whose minimal DFA has 2^N states, which is the worst case of subset construction. Numbers move a lot with machine load, so compare runs on an otherwise idle machine before claiming a change is faster.
+`cargo bench` measures the operation families over named inputs: realistic patterns at three sizes, plus the `(a|b)*a(a|b){N}` family whose minimal DFA has 2^(N+1) states, which is the worst case of subset construction. Numbers move a lot with machine load, so compare runs on an otherwise idle machine before claiming a change is faster.
 
 `cargo test --test state_elimination_quality -- --ignored --nocapture` reports how large the patterns produced by automaton-to-regex conversion are over a corpus, which is the number to watch when changing a state-elimination heuristic.
 

@@ -31,10 +31,14 @@
 //! // A model release directory: config.json and model.safetensors.
 //! let synthesizer = NeuralSynthesizer::from_dir("kleene2-9m-b16-t128", Device::Cpu)?;
 //!
-//! let a: Term = ".*h(b|bh)".parse()?;
-//! let b: Term = ".*[fi-z].*".parse()?;
-//! let difference = a.difference(&b)?;
-//! println!("{}", difference.to_regex_with(&synthesizer)?);
+//! // Words ending in "ing", except those ending in "ring":
+//! let ing: Term = "[a-z]*ing".parse()?;
+//! let ring: Term = "[a-z]*ring".parse()?;
+//! let words = ing.difference(&ring)?;
+//!
+//! // ([a-z]*[a-qs-z])?ing, where state elimination writes
+//! // [a-qs-z]*(i|r((i?|ing?|([a-hj-qs-z]|i[a-mo-qs-z]|in([a-fh-qs-z]|g[a-qs-z]))[a-qs-z]*)r)*(i{2}|ing?i|([a-hj-qs-z]|i[a-mo-qs-z]|in([a-fh-qs-z]|g[a-qs-z]))[a-qs-z]*i))ng
+//! println!("{}", words.to_regex_with(&synthesizer)?);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
@@ -66,9 +70,34 @@
 //! # Devices
 //!
 //! Models run with [candle](https://github.com/huggingface/candle) on the CPU
-//! by default. The `neural-synthesis-cuda`, `-cudnn`, `-metal`, `-mkl` and
-//! `-accelerate` features enable candle's backends; pick the device with
-//! [`Device`].
+//! by default. These features enable candle's other backends; pick the device
+//! with [`Device`]:
+//!
+//! | Feature | Backend | Needs |
+//! |---|---|---|
+//! | `neural-synthesis-cuda` | CUDA GPU | the CUDA toolkit |
+//! | `neural-synthesis-cudnn` | CUDA GPU with cuDNN | the CUDA toolkit and cuDNN |
+//! | `neural-synthesis-metal` | Metal GPU | Metal (macOS) |
+//! | `neural-synthesis-mkl` | faster CPU inference | oneAPI MKL's static libraries |
+//! | `neural-synthesis-accelerate` | faster CPU inference | Apple Accelerate (macOS) |
+//!
+//! # Performance
+//!
+//! Neural synthesis is slower than state elimination. On an 8-core laptop CPU
+//! without MKL, a conversion takes about 0.1 s on average for automata of up
+//! to 16 states (0.6 s at most), and about 0.5 s on average for 17 to 40
+//! states (1 to 2 s at most). Larger automata take longer, and times vary with
+//! the CPU.
+//!
+//! # Building
+//!
+//! The `neural-synthesis-hub` feature needs Rust 1.95, above the crate's
+//! minimum supported version, and is not available on `wasm` targets.
+//!
+//! To compile `neural-synthesis` for `wasm32-unknown-unknown`, set
+//! `RUSTFLAGS='--cfg getrandom_backend="unsupported"'`. One of its
+//! dependencies requires a source of randomness, which this target does not
+//! have. This is safe because neural synthesis never uses it.
 
 use std::{fmt, path::Path};
 
@@ -890,6 +919,8 @@ mod tests {
                 "{regex}"
             );
             let eliminated = automaton.to_regex().unwrap();
+            //println!("ns => {regex}");
+            //println!("se => {eliminated}");
             assert!(
                 regex.evaluate_complexity() <= eliminated.evaluate_complexity(),
                 "{regex} vs {eliminated}"
@@ -918,6 +949,8 @@ mod tests {
         let eliminated = automaton.to_regex().unwrap();
 
         let regex = automaton.to_regex_with(&synthesizer).unwrap();
+        //println!("ns => {regex}");
+        //println!("se => {eliminated}");
         assert!(
             regex
                 .to_automaton()

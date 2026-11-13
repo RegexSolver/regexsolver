@@ -4,7 +4,7 @@
 //!
 //! * `small` / `medium` / `large`: realistic patterns of increasing size.
 //! * `blowup_N`: the classic `(a|b)*a(a|b){N}` family whose minimal DFA has
-//!   2^N states: the worst case of subset construction.
+//!   2^(N+1) states: the worst case of subset construction.
 //!
 //! Mutating operations (`minimize`, `complement`) are measured with
 //! `iter_batched` on a fresh clone per iteration, so flag short-circuits

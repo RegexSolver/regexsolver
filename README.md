@@ -19,7 +19,7 @@ let both = a.intersection([&b]).unwrap();
 assert_eq!(both.to_pattern().unwrap(), "(ab|xy)xy");
 
 // Test a concrete string against the result (matching is anchored):
-assert!(both.matches("abxy").unwrap());
+assert!(both.is_match("abxy").unwrap());
 
 // ...and sample them:
 assert_eq!(both.generate_strings(2, 0, PathOrder::Sweep).unwrap(), ["xyxy", "abxy"]);
@@ -82,7 +82,7 @@ Constructs a regular language can't express, such as backreferences, lookaround,
 |---|---|
 | Build | `from_pattern`, `parse`, `concat`, `repeat` |
 | Combine | `union`, `intersection`, `difference`, `complement` |
-| Compare | `equivalent`, `subset`, `matches` |
+| Compare | `equivalent`, `subset`, `is_match` |
 | Analyze | `is_empty`, `is_total`, `length`, `cardinality` |
 | Generate | `generate_strings`, `iter_strings` |
 | Convert | `to_pattern`, `to_regex`, `to_automaton`, `determinize`, `minimize` |

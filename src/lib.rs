@@ -19,7 +19,7 @@
 //! assert_eq!(both.to_pattern()?, "(ab|xy)xy");
 //!
 //! // Matching is anchored (whole-string):
-//! assert!(both.matches("abxy")?);
+//! assert!(both.is_match("abxy")?);
 //! # Ok::<(), regexsolver::error::EngineError>(())
 //! ```
 //!
@@ -848,12 +848,19 @@ impl Term {
     ///
     /// let term = Term::from_pattern("abc.*").unwrap();
     ///
-    /// assert!(term.matches("abcdef").unwrap());
-    /// assert!(!term.matches("xyzabc").unwrap());
+    /// assert!(term.is_match("abcdef").unwrap());
+    /// assert!(!term.is_match("xyzabc").unwrap());
     /// ```
     #[tracing::instrument(level = "debug", skip(self, input), fields(self_deterministic = self.is_deterministic(), input_len = input.len()))]
-    pub fn matches(&self, input: &str) -> Result<bool, EngineError> {
+    pub fn is_match(&self, input: &str) -> Result<bool, EngineError> {
         Ok(self.to_automaton()?.is_match(input))
+    }
+
+    /// Returns `true` if the term matches the given string: see
+    /// [`is_match`](Self::is_match).
+    #[deprecated(since = "1.2.0", note = "renamed to `is_match`")]
+    pub fn matches(&self, input: &str) -> Result<bool, EngineError> {
+        self.is_match(input)
     }
 
     /// Returns `true` if the term matches the empty language (no strings at all).
@@ -1344,25 +1351,25 @@ mod tests {
     #[test]
     fn test_matches_is_anchored() {
         let term = Term::from_pattern("abc.*").unwrap();
-        assert!(term.matches("abc").unwrap());
-        assert!(term.matches("abcdef").unwrap());
+        assert!(term.is_match("abc").unwrap());
+        assert!(term.is_match("abcdef").unwrap());
         // Anchored: a prefix/suffix match is not enough.
-        assert!(!term.matches("xyzabc").unwrap());
+        assert!(!term.is_match("xyzabc").unwrap());
 
         let exact = Term::from_pattern("abc").unwrap();
-        assert!(exact.matches("abc").unwrap());
-        assert!(!exact.matches("abcd").unwrap());
+        assert!(exact.is_match("abc").unwrap());
+        assert!(!exact.is_match("abcd").unwrap());
 
         // Works on an automaton-backed term too.
         let automaton_backed = exact.intersection([&term]).unwrap();
         assert!(matches!(automaton_backed, Term::Automaton(_)));
-        assert!(automaton_backed.matches("abc").unwrap());
-        assert!(!automaton_backed.matches("abcd").unwrap());
+        assert!(automaton_backed.is_match("abc").unwrap());
+        assert!(!automaton_backed.is_match("abcd").unwrap());
 
         // The empty language matches nothing; the empty string matches only "".
-        assert!(!Term::new_empty().matches("").unwrap());
-        assert!(Term::new_empty_string().matches("").unwrap());
-        assert!(!Term::new_empty_string().matches("a").unwrap());
+        assert!(!Term::new_empty().is_match("").unwrap());
+        assert!(Term::new_empty_string().is_match("").unwrap());
+        assert!(!Term::new_empty_string().is_match("a").unwrap());
     }
 
     #[test]

@@ -10,11 +10,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Neural synthesis runs the Kleene 2 models (`kleene` format v2), whose input leaves out the characters no transition uses, so that `a*` and `.*` are the same input. Kleene 1 models (v1) still load.
 - A model's `config.json` can give its success rate over a grid of features of the minimal DFA (states, bases, state elimination complexity). `to_regex_with` no longer runs the model on an automaton, or a piece of its decomposition, whose rate is below `NeuralSynthesizer::with_min_success` (default 5%): the automaton goes straight to its decomposition, a piece is split further or converted by state elimination; `NeuralSynthesizer::success_rate` returns the rate.
 - `NeuralSynthesizer::with_beam` replaces the greedy decoding by a beam search of the given width, the PyTorch model's: its hypotheses, most likely first, are checked with the samples.
+- `Term::is_match`, consistent with `FastAutomaton::is_match`, the `regex` crate, and the `is_` prefix of the other predicates of `Term`.
 
 ### Changed
 - Neural synthesis is faster, with the same results: the minimal DFA is converted by state elimination once rather than up to three times, pieces of a decomposition are not minimized again, candidates too complex to be kept are not checked, and the others are checked in parallel, against the canonical form of the minimal DFA rather than by a full equivalence test. The splits are found on dense state indices and bitsets, the canonical form of the model's input is computed without allocating per base order, and the model runs 2 to 3.5 times faster on the CPU (fused attention kernels, no copies of the attention caches per candidate). Converting set-operation results of 17 to 80 states takes 2.5 to 11 times less time on the CPU.
 - `NeuralSynthesizer` runs a beam search of width 4 by default (`DEFAULT_BEAM`) and checks its hypotheses alone (`DEFAULT_CANDIDATES` is 1), rather than the greedy decoding and 7 samples. On DFAs from set operations, the regexes are 4 to 7% simpler than with 4 or 8 samples, and conversions take about two thirds of the time of 8.
 - `NeuralSynthesizer::DEFAULT_HUB_MODEL` is Kleene 2, `alexvbrdn/kleene2-9m-b16-t128`, rather than Kleene 1.
+
+### Deprecated
+- `Term::matches`, renamed to `Term::is_match`. It will be removed in 2.0.
 
 ### Security
 - Updated `rustls-webpki`, `webpki-roots` and `webpki-root-certs` in `Cargo.lock` for RUSTSEC-2026-0381, -0382 and -0383. The `zip` and `ocipkg` advisories are ignored in `.cargo/audit.toml`: nothing in the dependency tree calls the affected functions.
