@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-14
+
 ### Added
 - Support for the Kleene 2 models (`kleene` format v2), whose input leaves out the characters no transition uses, so that `a*` and `.*` are the same input. Kleene 1 models still load.
 - A model's `config.json` can give its success rate by size and complexity of the minimal DFA. `to_regex_with` does not run the model where the rate is below `NeuralSynthesizer::with_min_success` (default 5%): the automaton is decomposed, and a piece is split further or converted by state elimination. `NeuralSynthesizer::success_rate` returns the rate.
@@ -107,7 +109,8 @@ This is a major redesign of the public API around the `Term` enum (wrapping eith
 
 Releases prior to 1.0.0 (`v0.1.0` through `v0.3.1`) predate this changelog; see the [GitHub tags](https://github.com/RegexSolver/regexsolver/tags) and commit history for details.
 
-[Unreleased]: https://github.com/RegexSolver/regexsolver/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/RegexSolver/regexsolver/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/RegexSolver/regexsolver/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/RegexSolver/regexsolver/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/RegexSolver/regexsolver/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/RegexSolver/regexsolver/compare/v1.0.0...v1.0.1
