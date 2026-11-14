@@ -52,6 +52,15 @@ jobs:
       - name: Docs
         run: cargo doc --locked --features neural-synthesis-hub --no-deps
 
+      # The version bump must match the API changes since the latest release
+      # (a deprecation needs a minor release, a removal a major one). Features
+      # as in CI: the GPU backends need their toolkits, and add no API.
+      - name: Semver
+        uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2.9
+        with:
+          feature-group: only-explicit-features
+          features: parallel,neural-synthesis-hub
+
       # Also verify the declared MSRV before publishing, like CI does.
       - name: Read MSRV from Cargo.toml
         id: msrv

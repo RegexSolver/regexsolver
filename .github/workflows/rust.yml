@@ -170,6 +170,21 @@ jobs:
       - name: Dry-run publish
         run: cargo publish --locked --dry-run
 
+  # Compares the public API with the latest release on crates.io: a change
+  # that needs a new minor or major version fails until Cargo.toml has it.
+  semver:
+    name: Semver
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      # Not the default feature group, which enables the GPU backends: they
+      # need their toolkits to build, and add no API.
+      - uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2.9
+        with:
+          feature-group: only-explicit-features
+          features: parallel,neural-synthesis-hub
+
   audit:
     name: Audit
     runs-on: ubuntu-latest
