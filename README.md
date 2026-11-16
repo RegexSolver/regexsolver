@@ -85,7 +85,7 @@ Constructs a regular language can't express, such as backreferences, lookaround,
 | Compare | `equivalent`, `subset`, `is_match` |
 | Analyze | `is_empty`, `is_total`, `length`, `cardinality` |
 | Generate | `generate_strings`, `iter_strings` |
-| Convert | `to_pattern`, `to_regex`, `to_automaton`, `determinize`, `minimize` |
+| Convert | `to_pattern`, `to_pattern_with`, `to_regex`, `to_regex_with`, `to_automaton`, `determinize`, `minimize` |
 
 For lower-level work, [`FastAutomaton`](https://docs.rs/regexsolver/latest/regexsolver/fast_automaton/struct.FastAutomaton.html) builds and inspects automata state by state, and [`RegularExpression`](https://docs.rs/regexsolver/latest/regexsolver/regex/enum.RegularExpression.html) exposes the parsed pattern as an AST.
 
@@ -93,7 +93,7 @@ Automaton operations can blow up on adversarial patterns. To run untrusted input
 
 ## Neural synthesis
 
-`to_pattern` converts an automaton back to a pattern by state elimination. The result is always correct, but often hard to read. With the optional `neural-synthesis` feature, `to_regex_with` asks a learned model for a simpler pattern:
+`to_pattern` converts an automaton back to a pattern by state elimination. The result is always correct, but often hard to read. With the optional `neural-synthesis` feature, `to_pattern_with` (or `to_regex_with`) asks a learned model for a simpler pattern:
 
 ```rust,ignore
 use regexsolver::{Term, neural_synthesis::{Device, NeuralSynthesizer}};
@@ -108,8 +108,8 @@ let ing: Term = "[a-z]*ing".parse()?;
 let ring: Term = "[a-z]*ring".parse()?;
 let words = ing.difference(&ring)?;
 
-words.to_pattern()?;                 // [a-qs-z]*(i|r((i?|ing?|([a-hj-qs-z]|i[a-mo-qs-z]|in([a-fh-qs-z]|g[a-qs-z]))[a-qs-z]*)r)*(i{2}|ing?i|([a-hj-qs-z]|i[a-mo-qs-z]|in([a-fh-qs-z]|g[a-qs-z]))[a-qs-z]*i))ng
-words.to_regex_with(&synthesizer)?;  // ([a-z]*[a-qs-z])?ing
+words.to_pattern()?;                  // [a-qs-z]*(i|r((i?|ing?|([a-hj-qs-z]|i[a-mo-qs-z]|in([a-fh-qs-z]|g[a-qs-z]))[a-qs-z]*)r)*(i{2}|ing?i|([a-hj-qs-z]|i[a-mo-qs-z]|in([a-fh-qs-z]|g[a-qs-z]))[a-qs-z]*i))ng
+words.to_pattern_with(&synthesizer)?; // ([a-z]*[a-qs-z])?ing
 ```
 
 Every pattern the model proposes is checked against the automaton, so the result is never wrong. If none is simpler, the state-elimination pattern is returned.

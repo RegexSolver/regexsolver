@@ -1042,6 +1042,15 @@ impl Term {
         Ok(self.to_regex()?.to_string())
     }
 
+    /// Converts the term to a regular expression pattern with `synthesizer`
+    /// when it is automaton-backed: see [`Term::to_regex_with`].
+    pub fn to_pattern_with<S: fast_automaton::RegexSynthesizer + ?Sized>(
+        &self,
+        synthesizer: &S,
+    ) -> Result<String, EngineError> {
+        Ok(self.to_regex_with(synthesizer)?.to_string())
+    }
+
     fn get_automata<'a>(
         &'a self,
         terms: &[&'a Term],
