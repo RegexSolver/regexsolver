@@ -22,4 +22,13 @@ ignore = [
     "RUSTSEC-2026-0368",
     "RUSTSEC-2026-0369",
     "RUSTSEC-2026-0429",
+    # Same `zip` 8, same fix. Two more `extract` flaws (symlink targets,
+    # `ZipStreamReader` entry names), and two in decoders candle does not
+    # compile: it depends on `zip` without default features, so neither
+    # `aes-crypto` (unauthenticated AES entries) nor `legacy-zip` (Shrink,
+    # Reduce and Implode preallocation) is built.
+    "RUSTSEC-2026-0545",
+    "RUSTSEC-2026-0546",
+    "RUSTSEC-2026-0547",
+    "RUSTSEC-2026-0548",
 ]
