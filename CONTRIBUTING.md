@@ -1,4 +1,4 @@
-# Contributing to regexsolver
+# Contributing to RegexSolver
 
 Bug reports, questions and pull requests are all welcome.
 
