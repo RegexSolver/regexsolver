@@ -30,7 +30,7 @@ include = [
 tracing = "0.1"
 regex-syntax = "0.8.11"
 # The feature flag (ucd-*) has to match the Unicode version `regex-syntax` uses.
-regex-charclass = { version = "1.2.0", features = ["ucd-16"] }
+regex-charclass = { version = "1.3.0", features = ["ucd-16"] }
 bit-set = "0.11.1"
 indexmap = "2.13.0"
 # `neural-synthesis`: learned DFA -> regex models, run with candle.

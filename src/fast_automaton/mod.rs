@@ -29,34 +29,6 @@ pub mod spanning_set;
 pub use convert::to_regex::{RegexSynthesizer, StateElimination};
 pub use generate::{CharacterOrder, GenerationOptions, PathOrder};
 
-/// The block of code points `char` cannot hold: [`regex_charclass::char::Char`]
-/// values skip it, so scalar values have to be shifted down past it to be
-/// counted.
-const SURROGATES: std::ops::Range<u32> = 0xD800..0xE000;
-
-/// The index of `ch` among all the characters, the surrogate block excluded.
-/// Consecutive scalars are consecutive `Char`s, so `+ 1` arithmetic in scalar
-/// space cannot land inside the surrogate hole.
-#[inline]
-fn scalar(ch: regex_charclass::char::Char) -> u32 {
-    let code = ch.to_u32();
-    if code >= SURROGATES.end {
-        code - (SURROGATES.end - SURROGATES.start)
-    } else {
-        code
-    }
-}
-
-/// The inverse of [`scalar`].
-#[inline]
-fn from_scalar(index: u32) -> Option<regex_charclass::char::Char> {
-    regex_charclass::char::Char::from_u32(if index >= SURROGATES.start {
-        index + (SURROGATES.end - SURROGATES.start)
-    } else {
-        index
-    })
-}
-
 /// Represents a finite-state automaton.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[must_use = "non-`_mut` operations return a new automaton"]
