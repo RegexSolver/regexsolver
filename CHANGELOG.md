@@ -9,6 +9,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 - `Term::to_pattern_with`, the pattern of `Term::to_regex_with`.
 
+### Changed
+- Updated `regex-charclass` to 1.3, which makes `Char::index` and `Char::from_index` public: the mapping of a `char` to its position among all `char` values, the surrogate block skipped. They replace the crate's own copy of that mapping, and since `regex_charclass` is re-exported they are usable through it.
+
 ## [1.2.0] - 2026-11-14
 
 ### Added

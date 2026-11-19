@@ -1,20 +1,20 @@
 use std::slice::Iter;
 
 use ahash::AHashMap;
+use regex_charclass::char::Char;
 use regex_charclass::irange::RangeSet;
 
-use super::{from_scalar, scalar};
 use crate::CharRange;
 
-/// Converts merged, ascending scalar segments (see [`scalar`](super::scalar))
-/// back into a [`CharRange`]. The segments are disjoint and non-adjacent, so
+/// Converts merged, ascending index segments (see [`Char::index`]) back
+/// into a [`CharRange`]. The segments are disjoint and non-adjacent, so
 /// the flat bound list is already the canonical representation the set
 /// operations produce.
 fn segments_to_range(segments: &[(u32, u32)]) -> CharRange {
     let mut bounds = Vec::with_capacity(segments.len() * 2);
     for &(start, end) in segments {
-        bounds.push(from_scalar(start).expect("segment bounds are valid scalars"));
-        bounds.push(from_scalar(end).expect("segment bounds are valid scalars"));
+        bounds.push(Char::from_index(start).expect("segment bounds are valid indices"));
+        bounds.push(Char::from_index(end).expect("segment bounds are valid indices"));
     }
     RangeSet(bounds)
 }
@@ -103,7 +103,7 @@ impl SpanningSet {
     ///
     /// The bases are the *atoms* of the inputs: the classes of characters
     /// covered by exactly the same subset of input ranges. They are computed
-    /// with one endpoint sweep over the surrogate-free scalar space,
+    /// with one endpoint sweep over the surrogate-free index space,
     /// O(E log E) in the total number of input intervals.
     pub fn compute_spanning_set(ranges: &[CharRange]) -> Self {
         let mut inputs: Vec<&CharRange> = ranges.iter().filter(|r| !r.is_empty()).collect();
@@ -118,18 +118,18 @@ impl SpanningSet {
             _ => {}
         }
 
-        // Interval [lo, hi] becomes the half-open [scalar(lo), scalar(hi)+1).
+        // Interval [lo, hi] becomes the half-open [lo.index(), hi.index()+1).
         let interval_count: usize = inputs.iter().map(|input| input.0.len() / 2).sum();
         let mut events: Vec<Event> = Vec::with_capacity(interval_count * 2);
         for (input_index, input) in inputs.iter().enumerate() {
             for pair in input.0.as_chunks::<2>().0 {
                 events.push(Event {
-                    position: scalar(pair[0]),
+                    position: pair[0].index(),
                     input_index: input_index as u32,
                     is_start: true,
                 });
                 events.push(Event {
-                    position: scalar(pair[1]) + 1,
+                    position: pair[1].index() + 1,
                     input_index: input_index as u32,
                     is_start: false,
                 });
@@ -314,7 +314,7 @@ mod tests {
             for (a, b) in pairs {
                 let (low, high) = if a <= b { (a, b) } else { (b, a) };
                 let interval = CharRange::new_from_range(
-                    from_scalar(low).unwrap()..=from_scalar(high).unwrap(),
+                    Char::from_index(low).unwrap()..=Char::from_index(high).unwrap(),
                 );
                 range = range.union(&interval);
             }
@@ -340,7 +340,9 @@ mod tests {
     #[test]
     fn sweep_wide_matches_the_reference() {
         let single = |low: u32, high: u32| {
-            CharRange::new_from_range(from_scalar(low).unwrap()..=from_scalar(high).unwrap())
+            CharRange::new_from_range(
+                Char::from_index(low).unwrap()..=Char::from_index(high).unwrap(),
+            )
         };
 
         let mut inputs = Vec::new();

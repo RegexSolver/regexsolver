@@ -1067,8 +1067,8 @@ struct RangeCursor<'a> {
     bounds: &'a [Char],
     /// Index of the current pair's low bound; past `bounds` once exhausted.
     pair: usize,
-    /// [`scalar`] of the next character to hand out.
-    next_scalar: u32,
+    /// [`Char::index`] of the next character to hand out.
+    next_index: u32,
 }
 
 impl<'a> RangeCursor<'a> {
@@ -1077,13 +1077,13 @@ impl<'a> RangeCursor<'a> {
     fn new(range: &'a CharRange, mut ordinal: u32) -> Self {
         let bounds = range.0.as_slice();
         let mut pair = 0;
-        let mut next_scalar = 0;
+        let mut next_index = 0;
 
         while pair < bounds.len() {
-            let (low, high) = (scalar(bounds[pair]), scalar(bounds[pair + 1]));
+            let (low, high) = (bounds[pair].index(), bounds[pair + 1].index());
             let length = high - low + 1;
             if ordinal < length {
-                next_scalar = low + ordinal;
+                next_index = low + ordinal;
                 break;
             }
             ordinal -= length;
@@ -1093,7 +1093,7 @@ impl<'a> RangeCursor<'a> {
         RangeCursor {
             bounds,
             pair,
-            next_scalar,
+            next_index,
         }
     }
 
@@ -1102,15 +1102,15 @@ impl<'a> RangeCursor<'a> {
             return None;
         }
 
-        let ch = from_scalar(self.next_scalar);
-        if self.next_scalar == scalar(self.bounds[self.pair + 1]) {
+        let ch = Char::from_index(self.next_index);
+        if self.next_index == self.bounds[self.pair + 1].index() {
             // Past the current interval: on to the next one.
             self.pair += 2;
             if self.pair < self.bounds.len() {
-                self.next_scalar = scalar(self.bounds[self.pair]);
+                self.next_index = self.bounds[self.pair].index();
             }
         } else {
-            self.next_scalar += 1;
+            self.next_index += 1;
         }
 
         ch
