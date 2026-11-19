@@ -340,7 +340,7 @@ impl FastAutomaton {
         }
         self.minimal = false;
         self.accept_states.remove(&state);
-        self.transitions_in.remove(&state);
+        self.unlink_state(state);
         if self.transitions.len() - 1 == state {
             self.transitions.remove(state);
 
@@ -354,12 +354,20 @@ impl FastAutomaton {
             self.transitions[state].clear();
             self.removed_states.insert(state);
         }
+    }
 
-        for transitions in self.transitions.iter_mut() {
-            transitions.remove(&state);
+    /// Removes every transition from or to `state`, in time proportional to
+    /// their number.
+    fn unlink_state(&mut self, state: State) {
+        if let Some(predecessors) = self.transitions_in.remove(&state) {
+            for predecessor in predecessors {
+                self.transitions[predecessor].remove(&state);
+            }
         }
-        for transitions in self.transitions_in.values_mut() {
-            transitions.remove(&state);
+        for (successor, _) in std::mem::take(&mut self.transitions[state]) {
+            if let Some(predecessors) = self.transitions_in.get_mut(&successor) {
+                predecessors.remove(&state);
+            }
         }
     }
 
@@ -382,6 +390,9 @@ impl FastAutomaton {
         self.minimal = false;
 
         for &state in states {
+            self.unlink_state(state);
+        }
+        for &state in states {
             if self.transitions.len() - 1 == state {
                 self.transitions.remove(state);
 
@@ -394,25 +405,6 @@ impl FastAutomaton {
             } else {
                 self.transitions[state].clear();
                 self.removed_states.insert(state);
-            }
-        }
-
-        for transitions in self.transitions.iter_mut() {
-            for state in states {
-                if transitions.is_empty() {
-                    break;
-                }
-
-                transitions.remove(state);
-            }
-        }
-
-        for state in states {
-            self.transitions_in.remove(state);
-        }
-        for predecessors in self.transitions_in.values_mut() {
-            for state in states {
-                predecessors.remove(state);
             }
         }
     }

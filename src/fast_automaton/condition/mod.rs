@@ -88,6 +88,12 @@ impl Condition {
         cond
     }
 
+    /// Adds base `i` to the condition (see [`single_base`](Self::single_base)).
+    #[inline]
+    pub(crate) fn insert_base(&mut self, i: usize) {
+        self.0.set(i, true);
+    }
+
     /// Converts this `Condition` back to the [`CharRange`] it represents,
     /// evaluated against `spanning_set`.
     ///
@@ -154,6 +160,19 @@ impl Condition {
         let mut new_cond = self.clone();
         new_cond.0.difference(&other.0);
         new_cond
+    }
+
+    /// Returns `true` if every character of `self` is in `other`. Both must
+    /// share the same spanning set.
+    #[inline]
+    pub(crate) fn is_subset_of(&self, other: &Condition) -> bool {
+        self.0.is_subset(&other.0)
+    }
+
+    /// Makes the condition match no character.
+    #[inline]
+    pub(crate) fn clear(&mut self) {
+        self.0.clear();
     }
 
     /// Returns `true` if `self` and `other` share at least one character (their

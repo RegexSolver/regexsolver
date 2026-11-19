@@ -435,7 +435,6 @@ fn assert_set_ops_membership(
             );
         }
     }
-    // `difference` determinizes the subtrahend itself.
     if let Some(diff) = bounded(|| a.difference(b)) {
         for s in probes {
             prop_assert_eq!(

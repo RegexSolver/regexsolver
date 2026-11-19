@@ -1,30 +1,107 @@
-use crate::error::EngineError;
+use crate::{error::EngineError, execution_profile::ExecutionProfile};
 
+use super::state_sets::{Marks, Operand, SetTrie};
 use super::*;
 
 impl FastAutomaton {
     /// Returns `true` if all strings accepted by `self` are also accepted by `other`.
     ///
-    /// A non-deterministic `other` is determinized internally, unless the
-    /// execution profile disables implicit determinization, in which case
-    /// [`EngineError::DeterministicAutomatonRequired`] is returned.
+    /// Non-deterministic operands are not determinized: each state of `self`
+    /// is walked together with the set of states of `other` that the same
+    /// word reaches, and a pair is skipped when the same state was already
+    /// met with a subset of that set (antichains). The walk is still
+    /// exponential in `other` in the worst case; the execution profile's
+    /// timeout applies, and its `max_number_of_states` caps the number of
+    /// pairs walked.
     #[tracing::instrument(level = "debug", skip_all, fields(self_states = self.number_of_states(), self_deterministic = self.is_deterministic(), other_states = other.number_of_states(), other_deterministic = other.is_deterministic()))]
     pub fn subset(&self, other: &FastAutomaton) -> Result<bool, EngineError> {
         if self.is_empty() || other.is_total() || self == other {
             return Ok(true);
         } else if other.is_empty() {
             return Ok(false);
-        } else if self.is_total() {
-            // self ⊆ other iff Σ* ⊆ other iff other = Σ*. We already failed
-            // the cheap `other.is_total()` check above; that check is sound
-            // but conservative on NFAs, so retry on the determinized form.
-            return Ok(other.determinize_implicit()?.is_total());
+        }
+        self.subset_over_state_sets(other)
+    }
+
+    /// The antichain algorithm of De Wulf, Doyen, Henzinger & Raskin,
+    /// *Antichains: A New Algorithm for Checking Universality of Finite
+    /// Automata* (CAV 2006, section 5), in the forward form that Bonchi & Pous
+    /// describe (section 4).
+    ///
+    /// The walk visits the pairs `(x, Y)` of a state of `self` and the set of
+    /// `other`'s states that one word reaches. A pair is a counterexample
+    /// when `x` accepts and `Y` does not, or when `Y` is empty (`x` is live).
+    /// It is skipped when `(x, Y')` was met for some `Y' ⊆ Y`. The pairs
+    /// kept are not a strict antichain: a pair met earlier with a superset
+    /// of `Y` is not removed, which costs memory but skips the same pairs.
+    ///
+    /// Inclusion is also the equivalence `self ∪ other ≡ other`, but
+    /// [`equivalent_over_state_sets`](Self::equivalent_over_state_sets)
+    /// would skip no more pairs: between two automata with no state in
+    /// common, the two criteria match (Bonchi & Pous, section 4.2.2).
+    pub(super) fn subset_over_state_sets(
+        &self,
+        other: &FastAutomaton,
+    ) -> Result<bool, EngineError> {
+        let execution_profile = ExecutionProfile::get();
+
+        let (left, right, bases) = Operand::pair(self, 0, other, 0)?;
+
+        let Some(start) = left.start else {
+            return Ok(true);
+        };
+        let Some(right_start) = right.start else {
+            return Ok(false);
+        };
+        if left.accepts(start) && !right.accepts(right_start) {
+            return Ok(false);
         }
 
-        let mut other = other.determinize_implicit()?.into_owned();
-        other.complement()?;
+        // The sets each state of `self` was met with, one collection per
+        // state, created on first use.
+        let mut visited = SetTrie::new();
+        let mut roots: Vec<Option<usize>> = vec![None; self.transitions.len()];
+        let mut worklist = VecDeque::new();
+        let root = visited.new_root();
+        roots[start as usize] = Some(root);
+        visited.insert(root, &[right_start], ());
+        // The sets of the queued pairs, back to back.
+        let mut sets = vec![right_start];
+        worklist.push_back((start, 0..1));
 
-        Ok(!self.has_intersection(&other)?)
+        let mut successors = vec![Vec::new(); bases];
+        let mut query = Marks::new(other.transitions.len());
+        let mut pairs = 1;
+
+        while let Some((state, set)) = worklist.pop_front() {
+            execution_profile.assert_not_timed_out()?;
+            execution_profile.assert_max_number_of_states(pairs)?;
+
+            right.successors(&sets[set], &mut successors);
+
+            for (condition, to_state) in left.transitions_from(state) {
+                for base in condition.iter_set_bits() {
+                    let set = &successors[base];
+                    if set.is_empty() || (left.accepts(*to_state) && !right.is_accepting(set)) {
+                        return Ok(false);
+                    }
+                    let root = *roots[*to_state as usize].get_or_insert_with(|| visited.new_root());
+                    set.iter().for_each(|&id| {
+                        query.insert(id);
+                    });
+                    let met = visited.has_subset_of(root, &query);
+                    query.clear();
+                    if met {
+                        continue;
+                    }
+                    visited.insert(root, set, ());
+                    worklist.push_back((*to_state, sets.len()..sets.len() + set.len()));
+                    sets.extend_from_slice(set);
+                    pairs += 1;
+                }
+            }
+        }
+        Ok(true)
     }
 }
 

@@ -1,6 +1,8 @@
 use std::borrow::Cow;
 
-use condition::converter::ConditionConverter;
+use ahash::AHashSet;
+
+use condition::converter::{ConditionConverter, SharedSpanningSet};
 
 use crate::{error::EngineError, execution_profile::ExecutionProfile};
 
@@ -72,31 +74,9 @@ impl FastAutomaton {
         }
         let execution_profile = ExecutionProfile::get();
 
-        // Equal spanning sets (the dominant case in operation chains) need no
-        // merge and no condition projection at all.
-        let same_spanning_set = self.spanning_set == other.spanning_set;
-        let new_spanning_set = if same_spanning_set {
-            self.spanning_set.clone()
-        } else {
-            self.spanning_set.merge(&other.spanning_set)
-        };
-
-        let condition_converter_self_to_new = if same_spanning_set {
-            None
-        } else {
-            Some(ConditionConverter::new(
-                &self.spanning_set,
-                &new_spanning_set,
-            )?)
-        };
-        let condition_converter_other_to_new = if same_spanning_set {
-            None
-        } else {
-            Some(ConditionConverter::new(
-                &other.spanning_set,
-                &new_spanning_set,
-            )?)
-        };
+        let shared = SharedSpanningSet::new(&self.spanning_set, &other.spanning_set);
+        let (condition_converter_self_to_new, condition_converter_other_to_new) =
+            shared.converters()?;
 
         let mut projected_self: IntMap<State, Vec<(Condition, State)>> = IntMap::default();
         let mut projected_other: IntMap<State, Vec<(Condition, State)>> = IntMap::default();
@@ -154,12 +134,17 @@ impl FastAutomaton {
                 }
             }
         }
-        new_automaton.spanning_set = new_spanning_set;
+        new_automaton.spanning_set = shared.into_spanning_set();
         new_automaton.remove_dead_states();
         Ok(Cow::Owned(new_automaton))
     }
 
     /// Returns `true` if the two automata have a non-empty intersection.
+    ///
+    /// The intersection is not built: the pairs of states the two automata
+    /// reach together are visited until one has both states accepting. The
+    /// execution profile's timeout applies, and its `max_number_of_states`
+    /// caps the number of pairs visited.
     #[tracing::instrument(level = "debug", skip_all, fields(self_states = self.number_of_states(), other_states = other.number_of_states()))]
     pub fn has_intersection(&self, other: &FastAutomaton) -> Result<bool, EngineError> {
         if self.is_empty() || other.is_empty() {
@@ -169,83 +154,44 @@ impl FastAutomaton {
         }
         let execution_profile = ExecutionProfile::get();
 
-        let same_spanning_set = self.spanning_set == other.spanning_set;
-        let new_spanning_set = if same_spanning_set {
-            self.spanning_set.clone()
-        } else {
-            self.spanning_set.merge(&other.spanning_set)
-        };
-
-        let condition_converter_self_to_new = if same_spanning_set {
-            None
-        } else {
-            Some(ConditionConverter::new(
-                &self.spanning_set,
-                &new_spanning_set,
-            )?)
-        };
-        let condition_converter_other_to_new = if same_spanning_set {
-            None
-        } else {
-            Some(ConditionConverter::new(
-                &other.spanning_set,
-                &new_spanning_set,
-            )?)
-        };
+        let shared = SharedSpanningSet::new(&self.spanning_set, &other.spanning_set);
+        let (condition_converter_self_to_new, condition_converter_other_to_new) =
+            shared.converters()?;
 
         let mut projected_self: IntMap<State, Vec<(Condition, State)>> = IntMap::default();
         let mut projected_other: IntMap<State, Vec<(Condition, State)>> = IntMap::default();
 
-        let mut new_automaton = FastAutomaton::new_empty();
         let mut worklist =
             VecDeque::with_capacity(self.number_of_states() + other.number_of_states());
-        let mut new_states: AHashMap<(usize, usize), (usize, usize, usize), _> =
-            AHashMap::with_capacity(self.number_of_states() + other.number_of_states());
+        let mut visited: AHashSet<(usize, usize)> =
+            AHashSet::with_capacity(self.number_of_states() + other.number_of_states());
 
-        let initial_pair = (
-            new_automaton.start_state,
-            self.start_state,
-            other.start_state,
-        );
+        worklist.push_back((self.start_state, other.start_state));
+        visited.insert((self.start_state, other.start_state));
 
-        worklist.push_back(initial_pair);
-        new_states.insert((self.start_state, other.start_state), initial_pair);
-
-        while let Some(p) = worklist.pop_front() {
+        while let Some((state, other_state)) = worklist.pop_front() {
             execution_profile.assert_not_timed_out()?;
-            execution_profile.assert_max_number_of_states(new_states.len())?;
-            if self.accept_states.contains(&p.1) && other.accept_states.contains(&p.2) {
+            execution_profile.assert_max_number_of_states(visited.len())?;
+            if self.accept_states.contains(&state) && other.accept_states.contains(&other_state) {
                 return Ok(true);
             }
 
             let transitions_1 = self.projected_transitions(
                 &mut projected_self,
-                p.1,
+                state,
                 condition_converter_self_to_new.as_ref(),
             )?;
             let transitions_2 = other.projected_transitions(
                 &mut projected_other,
-                p.2,
+                other_state,
                 condition_converter_other_to_new.as_ref(),
             )?;
 
             for (condition_1, n1) in transitions_1 {
                 for (condition_2, n2) in transitions_2 {
-                    let intersection = condition_1.intersection(condition_2);
-                    if intersection.is_empty() {
-                        continue;
+                    if condition_1.has_intersection(condition_2) && visited.insert((*n1, *n2)) {
+                        worklist.push_back((*n1, *n2));
                     }
-                    let k = (*n1, *n2);
-                    let r = match new_states.get(&k) {
-                        Some(new_r) => *new_r,
-                        None => {
-                            let new_r = (new_automaton.new_state(), *n1, *n2);
-                            worklist.push_back(new_r);
-                            new_states.insert(k, new_r);
-                            new_r
-                        }
-                    };
-                    new_automaton.add_transition(p.0, r.0, &intersection);
                 }
             }
         }

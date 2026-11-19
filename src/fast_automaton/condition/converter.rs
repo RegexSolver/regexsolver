@@ -96,6 +96,56 @@ impl<'a, 'b> ConditionConverter<'a, 'b> {
     }
 }
 
+/// The spanning set two automata have to be projected on before they can be
+/// walked together: their own when they already share it, the merge of the
+/// two otherwise.
+pub(crate) struct SharedSpanningSet<'a> {
+    left: &'a SpanningSet,
+    right: &'a SpanningSet,
+    /// `None` when `left` and `right` are equal (the dominant case in
+    /// operation chains), which needs no merge and no projection at all.
+    merged: Option<SpanningSet>,
+}
+
+impl<'a> SharedSpanningSet<'a> {
+    pub(crate) fn new(left: &'a SpanningSet, right: &'a SpanningSet) -> Self {
+        SharedSpanningSet {
+            left,
+            right,
+            merged: (left != right).then(|| left.merge(right)),
+        }
+    }
+
+    pub(crate) fn spanning_set(&self) -> &SpanningSet {
+        self.merged.as_ref().unwrap_or(self.left)
+    }
+
+    pub(crate) fn into_spanning_set(self) -> SpanningSet {
+        self.merged.unwrap_or_else(|| self.left.clone())
+    }
+
+    /// The converters projecting the conditions of the left and of the right
+    /// automaton on the shared spanning set, or `None` for both when their
+    /// conditions are already expressed over it.
+    pub(crate) fn converters(
+        &self,
+    ) -> Result<
+        (
+            Option<ConditionConverter<'a, '_>>,
+            Option<ConditionConverter<'a, '_>>,
+        ),
+        EngineError,
+    > {
+        let Some(merged) = &self.merged else {
+            return Ok((None, None));
+        };
+        Ok((
+            Some(ConditionConverter::new(self.left, merged)?),
+            Some(ConditionConverter::new(self.right, merged)?),
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::CharRange;

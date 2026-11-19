@@ -5,6 +5,9 @@ use super::*;
 mod cardinality;
 mod equivalence;
 mod length;
+#[cfg(test)]
+mod reference_tests;
+pub(super) mod state_sets;
 mod subset;
 
 impl FastAutomaton {

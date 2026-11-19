@@ -180,7 +180,10 @@ impl FastAutomaton {
     /// Returns an iterator over transitions from the given state.
     /// Returns an empty iterator if the state does not exist.
     #[inline]
-    pub fn transitions_from(&self, state: State) -> impl Iterator<Item = (&Condition, &State)> {
+    pub fn transitions_from(
+        &self,
+        state: State,
+    ) -> impl Iterator<Item = (&Condition, &State)> + Clone {
         self.transitions.get(state).into_iter().flat_map(move |t| {
             t.iter()
                 .map(|(s, c)| (c, s))

@@ -206,7 +206,7 @@ impl GenerationOptions {
     /// generates nothing.
     ///
     /// A [`CharRange`] is built from bounds, or out of a character class
-    /// pattern through [`RegularExpression`](crate::regex::RegularExpression):
+    /// pattern through [`RegularExpression`]:
     ///
     /// ```
     /// use regexsolver::{CharRange, regex::RegularExpression};

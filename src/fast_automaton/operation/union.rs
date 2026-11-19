@@ -298,8 +298,8 @@ impl FastAutomaton {
         self.union_state_count_nondegenerate(other)
     }
 
-    /// [`union_state_count_heuristic`](Self::union_state_count_heuristic) for
-    /// operands already known to be non-degenerate: no emptiness walks.
+    /// The test-only `union_state_count_heuristic` for operands already known
+    /// to be non-degenerate: no emptiness walks.
     fn union_state_count_nondegenerate(&self, other: &FastAutomaton) -> usize {
         let v1 = self.number_of_states();
         let v2 = other.number_of_states();

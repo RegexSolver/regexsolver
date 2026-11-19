@@ -122,15 +122,50 @@ fn bench_set_operations(c: &mut Criterion) {
         b.iter(|| black_box(&a).union(black_box(&b_op)).unwrap())
     });
 
-    let minuend = automaton(".*abc.*");
-    let subtrahend = automaton(".*def.*");
-    group.bench_function("difference", |b| {
-        b.iter(|| {
-            black_box(&minuend)
-                .difference(black_box(&subtrahend))
+    // `via_complement` is the intersection with the complement of the
+    // determinized subtrahend, which is what `difference` used to do.
+    let mut bench_difference = |name: &str, minuend: &FastAutomaton, subtrahend: &FastAutomaton| {
+        let via_complement = || {
+            let mut complement = subtrahend.determinize().unwrap().into_owned();
+            complement.complement().unwrap();
+            black_box(minuend).intersection(&complement).unwrap()
+        };
+        assert!(
+            minuend
+                .difference(subtrahend)
                 .unwrap()
-        })
-    });
+                .equivalent(&via_complement())
+                .unwrap()
+        );
+        group.bench_function(name, |b| {
+            b.iter(|| {
+                black_box(minuend)
+                    .difference(black_box(subtrahend))
+                    .unwrap()
+            })
+        });
+        group.bench_function(format!("{name}/via_complement"), |b| b.iter(via_complement));
+    };
+
+    bench_difference("difference", &automaton(".*abc.*"), &automaton(".*def.*"));
+    bench_difference("difference/dfa", &dfa(".*abc.*"), &dfa(".*def.*"));
+    bench_difference(
+        "difference/large",
+        &automaton(LARGE.1),
+        &automaton(".*abc.*def.*ksd"),
+    );
+    // Every set of states of the subtrahend is reached.
+    bench_difference(
+        "difference/blowup_8",
+        &automaton("(a|b)*"),
+        &automaton(&blowup_pattern(8)),
+    );
+    // The minuend reaches a few of the 2^13 sets of the subtrahend.
+    bench_difference(
+        "difference/blowup_12_short_minuend",
+        &automaton("(a|b){0,6}"),
+        &automaton(&blowup_pattern(12)),
+    );
 
     let complement_input = dfa(".*abc.*");
     group.bench_function("complement", |b| {
@@ -170,9 +205,89 @@ fn bench_decision(c: &mut Criterion) {
         b.iter(|| black_box(&smaller).subset(black_box(&bigger)).unwrap())
     });
 
+    // The cases below are sized after what `equivalent` and `subset` have to
+    // walk rather than after the operands: each pair is given to both.
+    let mut bench_pair = |name: &str, left: &FastAutomaton, right: &FastAutomaton| {
+        group.bench_function(format!("equivalent/{name}"), |b| {
+            b.iter(|| black_box(left).equivalent(black_box(right)).unwrap())
+        });
+        group.bench_function(format!("subset/{name}"), |b| {
+            b.iter(|| black_box(left).subset(black_box(right)).unwrap())
+        });
+    };
+
+    // Nothing to skip: the 2^(N+1) reachable sets of states all accept
+    // different languages, so the walk is as long as determinization.
+    for n in [8, 12] {
+        let left = automaton(&blowup_pattern(n));
+        let right = automaton(&format!("(a*b*)*a(a|b){{{n}}}"));
+        assert!(left.equivalent(&right).unwrap());
+        bench_pair(&format!("blowup_{n}"), &left, &right);
+    }
+
+    // Same family once determinized: thousands of states a side, which
+    // `equivalent` compares state by state.
+    let left = dfa(&blowup_pattern(12));
+    let right = dfa("(a*b*)*a(a|b){12}");
+    assert!(left.equivalent(&right).unwrap());
+    bench_pair("blowup_12_dfa", &left, &right);
+
+    // Two deterministic automata of a realistic size: a determinized
+    // pattern and its minimal automaton.
+    let left = dfa(LARGE.1);
+    let mut right = left.clone();
+    right.minimize().unwrap();
+    assert_ne!(left, right);
+    assert!(left.equivalent(&right).unwrap());
+    bench_pair("dfa", &left, &right);
+
+    // Almost everything to skip: determinizing the right operand takes 512
+    // states and the left one far more, the walk fewer than 30 pairs. The
+    // left operand is united as automata, since as a pattern it would be
+    // simplified into the right one.
+    let left = FastAutomaton::union_all(&[
+        automaton(".*a.{8}"),
+        automaton(".*b.{8}"),
+        automaton(".*c.{8}"),
+    ])
+    .unwrap();
+    let right = automaton(".*[abc].{8}");
+    assert_ne!(left, right);
+    assert!(left.equivalent(&right).unwrap());
+    bench_pair("pruned", &left, &right);
+
+    // Unicode classes cut differently on each side: the operands do not
+    // share a spanning set, so every condition is projected first.
+    let left = automaton(r"\w+@\w+\.\w{2,6}");
+    let right = automaton(r"(\d+|[^\d\W]+)+@(\d+|[^\d\W]+)+\.\w{2,6}");
+    assert!(left.spanning_set() != right.spanning_set());
+    assert!(left.equivalent(&right).unwrap());
+    bench_pair("spanning_sets", &left, &right);
+
+    // Different languages: the walk stops at the first counterexample, which
+    // here is a dozen letters in, so part of the blow-up is still walked.
+    let left = automaton(&blowup_pattern(12));
+    let right = automaton(&blowup_pattern(11));
+    assert!(!left.equivalent(&right).unwrap());
+    assert!(!left.subset(&right).unwrap());
+    bench_pair("counterexample", &left, &right);
+
     let left = automaton(".*abc.*");
     let right = automaton(".*cba.*");
     group.bench_function("has_intersection", |b| {
+        b.iter(|| {
+            black_box(&left)
+                .has_intersection(black_box(&right))
+                .unwrap()
+        })
+    });
+
+    // No string in common: every pair of states the operands reach together
+    // is visited.
+    let left = automaton(&blowup_pattern(10));
+    let right = automaton("(a|b)*b(a|b){10}c");
+    assert!(!left.has_intersection(&right).unwrap());
+    group.bench_function("has_intersection/disjoint", |b| {
         b.iter(|| {
             black_box(&left)
                 .has_intersection(black_box(&right))
@@ -191,6 +306,54 @@ fn bench_analyze(c: &mut Criterion) {
     group.bench_function("cardinality/finite", |b| {
         b.iter(|| black_box(&finite).cardinality().unwrap())
     });
+
+    // Finiteness only depends on the cycles, however many sets of states
+    // counting the strings takes (a few thousand for `blowup_12`).
+    for (name, pattern) in [
+        ("words", "(foo|foobar|bar)(baz)?"),
+        ("blowup_12", "(a|b){0,12}a(a|b){12}"),
+    ] {
+        let term = Term::from_automaton(automaton(pattern));
+        assert!(term.is_finite().unwrap());
+        group.bench_function(format!("is_finite/nfa/{name}"), |b| {
+            b.iter(|| black_box(&term).is_finite().unwrap())
+        });
+    }
+
+    // Finite languages of non-deterministic automata, where several paths
+    // spell the same string. `via_determinize` is the count on the
+    // determinized automaton, which is what `cardinality` used to do.
+    for (name, pattern) in [
+        ("words", "(foo|foobar|bar)(baz)?"),
+        ("overlaps", "(a|b|ab|ba){6}"),
+        (
+            "ipv4",
+            r"((25[0-5]|2[0-4]\d|[01]?\d?\d)\.){3}(25[0-5]|2[0-4]\d|[01]?\d?\d)",
+        ),
+        // About a thousand sets to count.
+        ("blowup_8", "(a|b){0,8}a(a|b){8}"),
+        // The count overflows after a few dozen of more than 100,000 sets.
+        ("overflow", "(a|b){0,12}a(a|b){40}"),
+    ] {
+        let nfa = automaton(pattern);
+        assert!(!nfa.is_deterministic(), "{pattern}");
+        assert_eq!(
+            nfa.cardinality().unwrap(),
+            nfa.determinize().unwrap().cardinality().unwrap()
+        );
+        group.bench_function(format!("cardinality/nfa/{name}"), |b| {
+            b.iter(|| black_box(&nfa).cardinality().unwrap())
+        });
+        group.bench_function(format!("cardinality/nfa/{name}/via_determinize"), |b| {
+            b.iter(|| {
+                black_box(&nfa)
+                    .determinize()
+                    .unwrap()
+                    .cardinality()
+                    .unwrap()
+            })
+        });
+    }
 
     let infinite = automaton(LARGE.1);
     group.bench_function("length/large", |b| b.iter(|| black_box(&infinite).length()));

@@ -502,14 +502,12 @@ impl Term {
     /// ```
     #[tracing::instrument(level = "debug", skip_all, fields(self_deterministic = self.is_deterministic(), other_deterministic = other.is_deterministic()))]
     pub fn difference(&self, other: &Term) -> Result<Term, EngineError> {
-        Self::run_with_implicit_determinization(|| {
-            let minuend_automaton = self.to_automaton()?;
-            let subtrahend_automaton = other.to_automaton()?;
-            // `FastAutomaton::difference` determinizes the subtrahend itself.
-            let return_automaton = minuend_automaton.difference(&subtrahend_automaton)?;
+        let minuend_automaton = self.to_automaton()?;
+        let subtrahend_automaton = other.to_automaton()?;
 
-            Ok(Term::Automaton(return_automaton))
-        })
+        Ok(Term::Automaton(
+            minuend_automaton.difference(&subtrahend_automaton)?,
+        ))
     }
 
     /// Computes the complement of `self`.
@@ -804,11 +802,9 @@ impl Term {
             return Ok(true);
         }
 
-        Self::run_with_implicit_determinization(|| {
-            let automaton_1 = self.to_automaton()?;
-            let automaton_2 = other.to_automaton()?;
-            automaton_1.equivalent(&automaton_2)
-        })
+        let automaton_1 = self.to_automaton()?;
+        let automaton_2 = other.to_automaton()?;
+        automaton_1.equivalent(&automaton_2)
     }
 
     /// Returns `true` if all strings matched by the current term are also matched by the given term.
@@ -829,11 +825,9 @@ impl Term {
             return Ok(true);
         }
 
-        Self::run_with_implicit_determinization(|| {
-            let automaton_1 = self.to_automaton()?;
-            let automaton_2 = other.to_automaton()?;
-            automaton_1.subset(&automaton_2)
-        })
+        let automaton_1 = self.to_automaton()?;
+        let automaton_2 = other.to_automaton()?;
+        automaton_1.subset(&automaton_2)
     }
 
     /// Returns `true` if the term matches the given string.
@@ -898,7 +892,10 @@ impl Term {
         } else if automaton.is_deterministic() {
             Ok(false)
         } else {
-            Ok(automaton.determinize()?.is_total())
+            // `FastAutomaton::is_total` is conservative on a
+            // non-deterministic automaton; inclusion of every string is exact
+            // and does not determinize it.
+            FastAutomaton::new_total().subset(&automaton)
         }
     }
 
@@ -968,7 +965,7 @@ impl Term {
     /// truncated value. Infinite languages return `Cardinality::Infinite`.
     #[tracing::instrument(level = "debug", skip_all, fields(self_deterministic = self.is_deterministic()))]
     pub fn cardinality(&self) -> Result<Cardinality<u32>, EngineError> {
-        Self::run_with_implicit_determinization(|| self.to_automaton()?.cardinality())
+        self.to_automaton()?.cardinality()
     }
 
     /// Returns `true` if the term matches a finite number of strings.
@@ -986,7 +983,10 @@ impl Term {
     /// assert!(!Term::from_pattern("a+").unwrap().is_finite().unwrap());
     /// ```
     pub fn is_finite(&self) -> Result<bool, EngineError> {
-        Ok(!matches!(self.cardinality()?, Cardinality::Infinite))
+        // Finiteness only depends on the cycles of the accepting paths, which
+        // `length` looks for; counting the strings can be far more work.
+        let automaton = self.to_automaton()?;
+        Ok(automaton.is_empty() || automaton.length().1.is_some())
     }
 
     /// Converts the term to a [`FastAutomaton`].
@@ -1355,6 +1355,29 @@ mod tests {
                 .unwrap()
         );
         assert!(!Term::from_pattern("a+").unwrap().is_finite().unwrap());
+
+        for pattern in [
+            "",
+            "a",
+            "a*",
+            ".*",
+            "(ab|a)(bc|c)?",
+            "(a|b){0,4}a(a|b){3}",
+            "[]",
+            "(a|b)*a(a|b){3}",
+            "abc.*",
+            "x{2,5}",
+        ] {
+            let term = Term::from_pattern(pattern).unwrap();
+            for term in [term.determinize().unwrap(), term] {
+                assert_eq!(
+                    term.is_finite().unwrap(),
+                    !matches!(term.cardinality().unwrap(), Cardinality::Infinite),
+                    "{pattern}"
+                );
+            }
+        }
+        assert!(Term::new_empty().is_finite().unwrap());
     }
 
     #[test]

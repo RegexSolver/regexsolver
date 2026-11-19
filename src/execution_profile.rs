@@ -100,8 +100,7 @@ const DEFAULT_CLOCK: Option<Clock> = None;
 /// ## Disabling implicit determinization
 ///
 /// [`FastAutomaton`](crate::fast_automaton::FastAutomaton) operations that
-/// require a deterministic automaton (`minimize`, `complement`,
-/// `difference`, `equivalent`, `subset`, `cardinality`, ...)
+/// require a deterministic automaton (`minimize` and `complement`)
 /// determinize a non-deterministic input on their own by default. Since
 /// subset construction can blow up exponentially, this can be disabled;
 /// those operations then fail fast and determinization only happens through
@@ -410,7 +409,9 @@ impl ExecutionProfileBuilder {
     /// Caps the number of states an automaton may reach; operations that would
     /// exceed it abort with [`EngineError::AutomatonHasTooManyStates`]. This
     /// bounds the exponential blow-up of conversions such as determinization.
-    /// Unset by default (no cap).
+    /// The operations that walk sets of states without building an automaton
+    /// (`equivalent`, `subset`, `cardinality`) count what they visit against
+    /// the same cap. Unset by default (no cap).
     pub fn max_number_of_states(mut self, max_number_of_states: usize) -> Self {
         self.max_number_of_states = Some(max_number_of_states);
         self
@@ -747,14 +748,14 @@ mod tests {
                 // non-deterministic input on its own...
                 assert_eq!(nfa.clone().minimize().unwrap_err(), err);
                 assert_eq!(nfa.clone().complement().unwrap_err(), err);
-                assert_eq!(dfa.difference(&nfa).unwrap_err(), err);
-                assert_eq!(nfa.equivalent(&dfa).unwrap_err(), err);
-                assert_eq!(dfa.subset(&nfa).unwrap_err(), err);
-                assert_eq!(nfa.cardinality().unwrap_err(), err);
 
                 // ...but operations that work on NFAs directly are unaffected
-                // (difference only determinizes the subtrahend)...
                 assert!(nfa.difference(&dfa).is_ok());
+                assert!(dfa.difference(&nfa).unwrap().is_empty());
+                assert_eq!(nfa.cardinality(), dfa.cardinality());
+                assert!(nfa.equivalent(&dfa).unwrap());
+                assert!(dfa.subset(&nfa).unwrap());
+                assert!(nfa.subset(&dfa).unwrap());
 
                 // ...deterministic inputs keep working...
                 assert!(dfa.clone().minimize().is_ok());
@@ -781,14 +782,7 @@ mod tests {
             .run(|| {
                 // Methods that need a DFA internally determinize on Term's
                 // behalf (an explicit choice of the Term layer)...
-                assert!(term.difference(&other).is_ok());
-                assert!(other.difference(&term).is_ok());
                 assert!(term.complement().is_ok());
-                assert!(term.equivalent(&other).is_ok());
-                assert!(term.subset(&other).is_ok());
-                assert!(other.subset(&term).is_ok());
-                assert!(term.is_total().is_ok());
-                assert!(term.cardinality().is_ok());
                 assert!(term.minimize().is_ok());
                 assert!(
                     term.generate_strings(5, 0, GenerationOptions::new())
@@ -796,6 +790,13 @@ mod tests {
                 );
 
                 // ...and the rest of the API never needed one.
+                assert!(term.difference(&other).is_ok());
+                assert!(other.difference(&term).is_ok());
+                assert!(term.equivalent(&other).is_ok());
+                assert!(term.subset(&other).is_ok());
+                assert!(other.subset(&term).is_ok());
+                assert!(term.is_total().is_ok());
+                assert!(term.cardinality().is_ok());
                 assert!(term.concat(std::slice::from_ref(&other)).is_ok());
                 assert!(term.union(std::slice::from_ref(&other)).is_ok());
                 assert!(term.intersection(std::slice::from_ref(&other)).is_ok());
