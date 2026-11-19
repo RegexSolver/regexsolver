@@ -84,7 +84,7 @@ impl Condition {
     #[inline]
     pub(crate) fn single_base(i: usize, spanning_set: &SpanningSet) -> Self {
         let mut cond = Self::empty(spanning_set);
-        cond.0.set(i, true);
+        cond.insert_base(i);
         cond
     }
 
