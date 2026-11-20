@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-20
+
 ### Added
 - `Term::to_pattern_with`, the pattern of `Term::to_regex_with`.
 - `FastAutomaton::symmetric_difference`, the strings that exactly one of two automata accepts. Like `difference`, it does not determinize or complement an operand, and the result is deterministic when both operands are.
@@ -131,7 +133,8 @@ This is a major redesign of the public API around the `Term` enum (wrapping eith
 
 Releases prior to 1.0.0 (`v0.1.0` through `v0.3.1`) predate this changelog; see the [GitHub tags](https://github.com/RegexSolver/regexsolver/tags) and commit history for details.
 
-[Unreleased]: https://github.com/RegexSolver/regexsolver/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/RegexSolver/regexsolver/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/RegexSolver/regexsolver/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/RegexSolver/regexsolver/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/RegexSolver/regexsolver/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/RegexSolver/regexsolver/compare/v1.0.1...v1.0.2
