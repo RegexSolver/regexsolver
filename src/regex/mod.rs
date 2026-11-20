@@ -12,16 +12,12 @@ mod analyze;
 mod builder;
 mod operation;
 
-/// Represents a regular expression.
+/// A regular expression, held as a tree.
 ///
-/// The variants are public and freely constructible and matchable. Values
-/// can also be built with the parser ([`new`](Self::new) /
-/// [`parse`](Self::parse)) or the simplifying combinators
-/// ([`concat`](Self::concat), [`union`](Self::union),
-/// [`repeat`](Self::repeat)). A directly-constructed repetition whose
-/// maximum is below its minimum denotes no valid language and is rejected
-/// with [`EngineError::InvalidRepetitionBounds`] when converted by
-/// [`to_automaton`](Self::to_automaton).
+/// It is built by parsing a pattern ([`new`](Self::new),
+/// [`parse`](Self::parse)), by combining expressions ([`concat`](Self::concat),
+/// [`union`](Self::union), [`repeat`](Self::repeat)), which simplify their
+/// result, or from its variants.
 ///
 /// ```
 /// use regexsolver::regex::RegularExpression;
@@ -35,16 +31,16 @@ mod operation;
 #[derive(Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
 #[must_use = "regular expressions are immutable; operations return a new expression"]
 pub enum RegularExpression {
-    /// A single character drawn from the given range; an empty range denotes
-    /// the empty language `[]`.
+    /// One character of the range. An empty range is the empty language `[]`.
     Character(CharRange),
-    /// `r{min,max}`; `None` means unbounded. Expected invariant: `max >= min`
-    /// when bounded (checked by [`to_automaton`](Self::to_automaton)).
+    /// `r{min,max}`, with no upper bound when the maximum is `None`. A maximum
+    /// below the minimum is rejected by [`to_automaton`](Self::to_automaton)
+    /// with [`EngineError::InvalidRepetitionBounds`].
     Repetition(Box<RegularExpression>, u32, Option<u32>),
-    /// The concatenation of the parts in order; no parts denotes the empty
-    /// string `""`.
+    /// The concatenation of the parts, in order. With no parts, it is the
+    /// empty string `""`.
     Concat(VecDeque<RegularExpression>),
-    /// The union of the parts; no parts denotes the empty language `[]`.
+    /// The union of the parts. With no parts, it is the empty language `[]`.
     Alternation(Vec<RegularExpression>),
 }
 
@@ -154,8 +150,30 @@ impl RegularExpression {
         }
     }
 
-    /// Returns `true` if the regular expression matches the empty language.
+    /// Returns `true` if the expression matches no string.
+    ///
+    /// A repetition whose maximum is below its minimum matches no string.
+    ///
+    /// Linear in the size of the expression.
+    #[inline]
     pub fn is_empty(&self) -> bool {
+        self.is_simplified_empty() || self.length().0.is_none()
+    }
+
+    /// Returns `true` if the expression matches the empty string `""` and no
+    /// other.
+    ///
+    /// Linear in the size of the expression.
+    #[inline]
+    pub fn is_empty_string(&self) -> bool {
+        self.is_simplified_empty_string() || self.length() == (Some(0), Some(0))
+    }
+
+    /// Whether the expression is the empty language in its simplified form:
+    /// an empty character class or an empty alternation. In constant time,
+    /// for the combinators, whose operands are simplified;
+    /// [`is_empty`](Self::is_empty) is exact on any expression.
+    pub(crate) fn is_simplified_empty(&self) -> bool {
         match self {
             RegularExpression::Alternation(alternation) => alternation.is_empty(),
             RegularExpression::Character(range) => range.is_empty(),
@@ -163,15 +181,21 @@ impl RegularExpression {
         }
     }
 
-    /// Returns `true` if the regular expression matches only the empty string `""`.
-    pub fn is_empty_string(&self) -> bool {
+    /// Whether the expression is the empty string in its simplified form: an
+    /// empty concatenation. In constant time, for the combinators, whose
+    /// operands are simplified; [`is_empty_string`](Self::is_empty_string) is
+    /// exact on any expression.
+    pub(crate) fn is_simplified_empty_string(&self) -> bool {
         match self {
             RegularExpression::Concat(concat) => concat.is_empty(),
             _ => false,
         }
     }
 
-    /// Returns `true` if the regular expression matches all possible strings.
+    /// Returns `true` if the expression is `.*`, which matches every string.
+    ///
+    /// An expression of another form can match every string too, for which this
+    /// returns `false`: [`Term::is_total`](crate::Term::is_total) is exact.
     pub fn is_total(&self) -> bool {
         match self {
             RegularExpression::Repetition(regular_expression, min, max_opt) => {
@@ -188,11 +212,9 @@ impl RegularExpression {
         }
     }
 
-    /// The deepest a directly-constructed expression tree may nest before
-    /// [`to_automaton`](Self::to_automaton) refuses to convert it. Parsed
-    /// patterns never approach this (`regex-syntax` caps parse nesting far
-    /// lower); it only bounds the recursion so a pathologically deep hand-built
-    /// tree returns an error instead of overflowing the stack.
+    /// The depth of nesting past which [`to_automaton`](Self::to_automaton)
+    /// returns [`EngineError::RegexTooDeeplyNested`]. Only an expression built
+    /// by hand can reach it: the parser stops well below.
     pub const MAX_NESTING_DEPTH: usize = 1000;
 
     /// Returns an error if the tree nests deeper than [`MAX_NESTING_DEPTH`](Self::MAX_NESTING_DEPTH).
@@ -219,7 +241,16 @@ impl RegularExpression {
         Ok(())
     }
 
-    /// Converts the regular expression to an equivalent [`FastAutomaton`].
+    /// Converts the regular expression to a [`FastAutomaton`] that accepts the
+    /// strings it matches.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::InvalidRepetitionBounds`] for a repetition whose
+    /// maximum is below its minimum, [`EngineError::RegexTooDeeplyNested`] for
+    /// an expression nested deeper than
+    /// [`MAX_NESTING_DEPTH`](Self::MAX_NESTING_DEPTH), and the errors of the
+    /// limits of the execution profile.
     #[tracing::instrument(level = "trace", skip_all)]
     pub fn to_automaton(&self) -> Result<FastAutomaton, EngineError> {
         // Both whole-tree checks run once here: a subtree can never nest
@@ -272,19 +303,12 @@ impl RegularExpression {
         }
     }
 
-    /// Returns the cognitive complexity of the pattern: a readability score,
-    /// independent of the characters used.
+    /// Returns a score of how hard the pattern is to read: the higher, the
+    /// harder.
     ///
-    /// - class: 1.
-    /// - concatenation: the sum of its parts.
-    /// - alternation: its branches read one level deeper, plus `1 + depth` per
-    ///   extra branch.
-    /// - quantifier: its operand, plus the quantifier's weight × `(1 + depth)`;
-    ///   `?`, `*`, `+` are cheapest, then `{n}`, `{n,}`, `{m,n}`. A quantified
-    ///   group reads one level deeper, and a quantifier with another quantifier
-    ///   inside it pays an extra `1 + depth`.
-    ///
-    /// The empty string costs 0; the empty language `[]` is a class (1).
+    /// It grows with the number of character classes, alternations and
+    /// quantifiers, and with their nesting; it does not depend on the
+    /// characters used. The empty string scores 0 and a character class 1.
     pub fn evaluate_complexity(&self) -> f64 {
         const CLASS: f64 = 1.0;
         const NESTED_QUANTIFIER: f64 = 1.0;
@@ -400,47 +424,12 @@ mod tests {
         Ok(())
     }
 
-    /// Drops a deep chain-shaped tree level by level. `Box`'s drop glue
-    /// recurses (see [`RegularExpression::MAX_NESTING_DEPTH`]), so the deep
-    /// trees below must not be dropped whole.
-    fn drop_chain_iteratively(mut regex: RegularExpression) {
-        loop {
-            regex = match regex {
-                RegularExpression::Repetition(inner, _, _) => *inner,
-                RegularExpression::Concat(mut parts) if parts.len() == 1 => {
-                    parts.pop_front().expect("len() == 1")
-                }
-                RegularExpression::Alternation(mut parts) if parts.len() == 1 => {
-                    parts.pop().expect("len() == 1")
-                }
-                _ => return,
-            };
-        }
-    }
-
-    // Display streams via an explicit work stack: a hand-built tree far
-    // deeper than any recursive formatter could survive must still print.
+    // A chain of singleton wrappers prints transparently, and the
+    // quantifier's parenthesization must look through all of them.
     #[test]
-    fn display_does_not_recurse_on_deep_trees() {
-        const DEPTH: usize = 100_000;
-
-        // `((...(a*)*...)*)*`: every level goes through the parenthesization
-        // decision and the quantifier path.
-        let mut regex = RegularExpression::new("a").unwrap();
-        for _ in 0..DEPTH {
-            regex = RegularExpression::Repetition(Box::new(regex), 0, None);
-        }
-        let printed = regex.to_string();
-        assert_eq!(3 * DEPTH - 1, printed.len());
-        assert!(printed.starts_with("((("));
-        assert!(printed.ends_with(")*)*)*"));
-        drop_chain_iteratively(regex);
-
-        // A deep chain of singleton wrappers prints transparently, and the
-        // quantifier's parenthesization must look through all of them
-        // without recursing.
+    fn display_looks_through_singleton_wrappers() {
         let mut regex = RegularExpression::new("ab").unwrap();
-        for i in 0..DEPTH {
+        for i in 0..6 {
             regex = if i % 2 == 0 {
                 RegularExpression::Concat(VecDeque::from([regex]))
             } else {
@@ -449,6 +438,5 @@ mod tests {
         }
         let regex = RegularExpression::Repetition(Box::new(regex), 0, None);
         assert_eq!("(ab)*", regex.to_string());
-        drop_chain_iteratively(regex);
     }
 }

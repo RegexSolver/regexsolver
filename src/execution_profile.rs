@@ -4,14 +4,12 @@ use std::{sync::OnceLock, time::Instant};
 
 use crate::error::EngineError;
 
-/// A monotonic clock: the time elapsed since a fixed but otherwise arbitrary
-/// origin, such as process start or page load.
+/// A monotonic clock: the time elapsed since a fixed origin, such as the start
+/// of the process.
 ///
-/// The execution timeout is enforced by comparing readings of the profile's
-/// clock. Every profile starts with a clock backed by [`std::time::Instant`],
-/// except on `wasm32-unknown-unknown`, where the standard library cannot read
-/// the time and the host has to supply one through
-/// [`ExecutionProfileBuilder::clock`].
+/// The execution timeout compares readings of it. The default clock reads
+/// [`std::time::Instant`]; on `wasm32-unknown-unknown`, which has none, supply
+/// one with [`ExecutionProfileBuilder::clock`].
 pub type Clock = fn() -> Duration;
 
 /// [`std::time::Instant`], read as the time elapsed since the first reading.
@@ -29,7 +27,12 @@ const DEFAULT_CLOCK: Option<Clock> = Some(std_clock);
 #[cfg(all(target_family = "wasm", target_os = "unknown"))]
 const DEFAULT_CLOCK: Option<Clock> = None;
 
-/// Holds settings that constrain how operations execute within the engine.
+/// The limits that the operations of the crate run under: a timeout, a maximum
+/// number of states, and whether an operation may determinize an automaton on
+/// its own.
+///
+/// A profile applies to the operations run inside [`run`](Self::run), on the
+/// current thread. Build one with [`ExecutionProfileBuilder`].
 ///
 /// # Examples
 ///
@@ -68,10 +71,9 @@ const DEFAULT_CLOCK: Option<Clock> = None;
 ///
 /// The timeout compares readings of a monotonic [`Clock`]. The default reads
 /// [`std::time::Instant`]; on `wasm32-unknown-unknown`, where the standard
-/// library has no clock, pass one from the host (a binding to
-/// `performance.now()`, which is monotonic; `Date.now()` is not). Any monotonic
-/// `fn() -> Duration` works, which also makes a timeout testable without
-/// waiting for it:
+/// library has no clock, pass one from the host: a binding to
+/// `performance.now()`, which is monotonic (`Date.now()` is not). A clock of
+/// your own also makes a timeout testable without waiting for it:
 ///
 /// ```
 /// use std::sync::atomic::{AtomicU64, Ordering};
@@ -99,15 +101,14 @@ const DEFAULT_CLOCK: Option<Clock> = None;
 ///
 /// ## Disabling implicit determinization
 ///
-/// [`FastAutomaton`](crate::fast_automaton::FastAutomaton) operations that
-/// require a deterministic automaton (`minimize`, `complement`,
-/// `difference`, `equivalent`, `subset`, `cardinality`, ...)
-/// determinize a non-deterministic input on their own by default. Since
-/// subset construction can blow up exponentially, this can be disabled;
-/// those operations then fail fast and determinization only happens through
-/// an explicit `determinize()` call. [`Term`](crate::Term) methods are not
-/// affected: that layer manages the underlying representation itself, so
-/// its determinizations count as explicit.
+/// [`FastAutomaton::minimize`](crate::fast_automaton::FastAutomaton::minimize)
+/// and
+/// [`FastAutomaton::complement`](crate::fast_automaton::FastAutomaton::complement)
+/// need a deterministic automaton, and determinize a non-deterministic one on
+/// their own by default, which can take exponential time and space. When this
+/// is disabled, they return [`EngineError::DeterministicAutomatonRequired`]
+/// instead, and an automaton is only determinized by a call to `determinize()`.
+/// [`Term`](crate::Term) methods are not affected.
 ///
 /// ```
 /// use regexsolver::CharRange;
@@ -178,25 +179,20 @@ impl PartialEq for ExecutionProfile {
 }
 
 impl ExecutionProfile {
-    /// Retrieves the current thread-local execution profile.
+    /// Returns the profile installed on the current thread; the default one,
+    /// without limits, if there is none.
     pub fn get() -> ExecutionProfile {
         ThreadLocalParams::get_execution_profile()
     }
 
-    /// Whether a execution deadline is configured. When it is not,
-    /// [`assert_not_timed_out`](Self::assert_not_timed_out) can be
-    /// skipped entirely instead of being computed for a check that
-    /// cannot fail.
+    /// Returns `true` if the profile has a timeout.
     #[inline]
     pub fn limits_execution_time(&self) -> bool {
         self.execution_deadline.is_some()
     }
 
-    /// Assert that `execution_timeout` is not exceeded.
-    ///
-    /// Return empty if `execution_timeout` is not exceeded.
-    ///
-    /// Return [`EngineError::OperationTimeOutError`] otherwise.
+    /// Returns [`EngineError::OperationTimeOutError`] if the timeout has
+    /// passed.
     pub fn assert_not_timed_out(&self) -> Result<(), EngineError> {
         if let (Some(execution_deadline), Some(clock)) = (self.execution_deadline, self.clock)
             && clock() > execution_deadline
@@ -206,21 +202,15 @@ impl ExecutionProfile {
         Ok(())
     }
 
-    /// Whether a maximum number of states is configured. When it is not, the
-    /// state-count heuristics feeding
-    /// [`assert_max_number_of_states`](Self::assert_max_number_of_states) can
-    /// be skipped entirely instead of being computed for a check that cannot
-    /// fail.
+    /// Returns `true` if the profile has a maximum number of states.
     #[inline]
     pub fn limits_number_of_states(&self) -> bool {
         self.max_number_of_states.is_some()
     }
 
-    /// Assert that `max_number_of_states` is not exceeded.
-    ///
-    /// `max_number_of_states` is the largest number of states an automaton may
-    /// hold, so `number_of_states == max_number_of_states` is allowed and only
-    /// strictly exceeding it returns [`EngineError::AutomatonHasTooManyStates`].
+    /// Returns [`EngineError::AutomatonHasTooManyStates`] if `number_of_states`
+    /// is above the maximum number of states. A number equal to the maximum is
+    /// allowed.
     pub fn assert_max_number_of_states(&self, number_of_states: usize) -> Result<(), EngineError> {
         if let Some(max_number_of_states) = self.max_number_of_states
             && number_of_states > max_number_of_states
@@ -230,11 +220,8 @@ impl ExecutionProfile {
         Ok(())
     }
 
-    /// Assert that implicit determinization is allowed.
-    ///
-    /// Return empty if it is.
-    ///
-    /// Return [`EngineError::DeterministicAutomatonRequired`] otherwise.
+    /// Returns [`EngineError::DeterministicAutomatonRequired`] if the profile
+    /// disables implicit determinization.
     pub fn assert_implicit_determinization_allowed(&self) -> Result<(), EngineError> {
         if self.implicit_determinization {
             Ok(())
@@ -243,52 +230,51 @@ impl ExecutionProfile {
         }
     }
 
-    /// Returns a copy of this profile with the execution timeout set to
-    /// `execution_timeout_in_ms` milliseconds. Use these `with_*` methods to
-    /// derive a variant of an existing profile (e.g. one from
-    /// [`get`](Self::get)); to build one from scratch, prefer
-    /// [`ExecutionProfileBuilder`]. See
-    /// [`ExecutionProfileBuilder::execution_timeout`].
+    /// Returns the profile with its timeout set to `execution_timeout_in_ms`
+    /// milliseconds: see [`ExecutionProfileBuilder::execution_timeout`].
+    ///
+    /// The `with_*` methods derive a profile from another one, such as the one
+    /// [`get`](Self::get) returns.
     pub fn with_execution_timeout(mut self, execution_timeout_in_ms: u64) -> Self {
         self.execution_timeout = Some(execution_timeout_in_ms);
         self
     }
 
-    /// Returns a copy of this profile with the maximum number of states set to
-    /// `max_number_of_states`. See
+    /// Returns the profile with its maximum number of states set to
+    /// `max_number_of_states`: see
     /// [`ExecutionProfileBuilder::max_number_of_states`].
     pub fn with_max_number_of_states(mut self, max_number_of_states: usize) -> Self {
         self.max_number_of_states = Some(max_number_of_states);
         self
     }
 
-    /// Returns a copy of this profile with implicit determinization enabled or
-    /// disabled. See [`ExecutionProfileBuilder::implicit_determinization`].
+    /// Returns the profile with implicit determinization allowed or not: see
+    /// [`ExecutionProfileBuilder::implicit_determinization`].
     pub fn with_implicit_determinization(mut self, allowed: bool) -> Self {
         self.implicit_determinization = allowed;
         self
     }
 
-    /// Returns a copy of this profile reading the time from `clock`. See
+    /// Returns the profile with `clock` as its clock: see
     /// [`ExecutionProfileBuilder::clock`].
     ///
-    /// A deadline already computed by [`run`](Self::run) is dropped, since it
-    /// was measured against the previous clock and the two origins are
-    /// unrelated. The next `run` computes one against `clock`.
+    /// A deadline that [`run`](Self::run) has set is dropped, since it was read
+    /// from the previous clock: the next `run` sets one.
     pub fn with_clock(mut self, clock: Clock) -> Self {
         self.clock = Some(clock);
         self.execution_deadline = None;
         self
     }
 
-    /// Runs the given closure with this profile installed for the current thread, setting its start time to now.
+    /// Runs `f` with this profile installed on the current thread, and puts
+    /// back the previous one afterwards. The timeout counts from the call.
     ///
     /// # Panics
     ///
-    /// If an execution timeout is set but the profile has no [`Clock`]. That
-    /// only happens where the standard library cannot read the time and none
-    /// is installed by default; supply one with [`ExecutionProfileBuilder::clock`]
-    /// or [`with_clock`](Self::with_clock).
+    /// Panics if a timeout is set and the profile has no [`Clock`], which only
+    /// happens on a target where the standard library cannot read the time:
+    /// supply one with [`ExecutionProfileBuilder::clock`] or
+    /// [`with_clock`](Self::with_clock).
     pub fn run<F, R>(&self, f: F) -> R
     where
         F: FnOnce() -> R,
@@ -312,7 +298,8 @@ impl ExecutionProfile {
         f()
     }
 
-    /// Runs the closure like [`run`](Self::run), but does not reset the start time. Use this to propagate an already-started profile to worker threads without restarting the clock.
+    /// Runs `f` like [`run`](Self::run), without restarting the timeout: it
+    /// carries a running profile over to another thread.
     pub fn apply<F, R>(&self, f: F) -> R
     where
         F: FnOnce() -> R,
@@ -346,8 +333,8 @@ impl Drop for ProfileRestoreGuard {
     }
 }
 
-/// Builder for an [`ExecutionProfile`]. Start from [`new`](Self::new), set the
-/// limits you want, and [`build`](Self::build) the immutable profile.
+/// Builds an [`ExecutionProfile`]: start from [`new`](Self::new), set the
+/// limits, and call [`build`](Self::build).
 #[derive(Clone, Debug)]
 pub struct ExecutionProfileBuilder {
     /// The maximum number of states a non-deterministic finite automaton may
@@ -370,9 +357,8 @@ impl Default for ExecutionProfileBuilder {
 }
 
 impl ExecutionProfileBuilder {
-    /// Creates a builder with no limits set and implicit determinization
-    /// enabled (i.e. the defaults, equivalent to the ambient profile when none
-    /// has been installed).
+    /// Creates a builder with no limit and implicit determinization allowed:
+    /// the settings of a thread on which no profile is installed.
     pub fn new() -> Self {
         Self {
             max_number_of_states: None,
@@ -382,53 +368,61 @@ impl ExecutionProfileBuilder {
         }
     }
 
-    /// Sets the longest time, in milliseconds, that an operation may run before
-    /// it aborts with [`EngineError::OperationTimeOutError`]. Enforcement is
-    /// best-effort (checked between internal steps), so the exact deadline is
-    /// not guaranteed. Unset by default (no timeout). The time is read from
-    /// the profile's [`clock`](Self::clock).
+    /// Sets the time, in milliseconds, after which an operation returns
+    /// [`EngineError::OperationTimeOutError`]. No timeout by default.
+    ///
+    /// The time is checked between the steps of an operation, so an operation
+    /// can end after it. It is read from the profile's [`clock`](Self::clock).
     pub fn execution_timeout(mut self, execution_timeout_in_ms: u64) -> Self {
         self.execution_timeout = Some(execution_timeout_in_ms);
         self
     }
 
-    /// Sets the [`Clock`] the execution timeout is measured against: any
-    /// monotonic `fn() -> Duration`, compared by difference only.
+    /// Sets the [`Clock`] that the timeout reads: any monotonic `fn() ->
+    /// Duration`.
     ///
-    /// Defaults to [`std::time::Instant`], so this is only required where the
-    /// standard library cannot read the time: bind `performance.now()` from the
-    /// host and pass it here. A wall clock such as `Date.now()` does not
-    /// qualify: it steps when the system time is adjusted, which either times
-    /// an operation out early or never. Elsewhere it is a way to make the
-    /// timeout deterministic, as in the
-    /// [type-level example](ExecutionProfile#supplying-the-clock).
+    /// The default reads [`std::time::Instant`], so a clock is only needed on a
+    /// target where the standard library cannot read the time: pass a binding
+    /// to `performance.now()` there. A wall clock such as `Date.now()` is not
+    /// monotonic: it jumps when the system time is set, and an operation then
+    /// times out early or never.
+    ///
+    /// A clock of your own also makes a timeout testable, as in this
+    /// [example](ExecutionProfile#supplying-the-clock).
     pub fn clock(mut self, clock: Clock) -> Self {
         self.clock = Some(clock);
         self
     }
 
-    /// Caps the number of states an automaton may reach; operations that would
-    /// exceed it abort with [`EngineError::AutomatonHasTooManyStates`]. This
-    /// bounds the exponential blow-up of conversions such as determinization.
-    /// Unset by default (no cap).
+    /// Sets the largest number of states an automaton may have: an operation
+    /// that needs more returns [`EngineError::AutomatonHasTooManyStates`]. No
+    /// maximum by default.
+    ///
+    /// An operation that builds an automaton counts the states it builds,
+    /// including those it leaves out of its result. The operations that build
+    /// none (`equivalent`, `subset`, `cardinality`, `has_intersection`) count
+    /// what they visit: states, or sets of states.
     pub fn max_number_of_states(mut self, max_number_of_states: usize) -> Self {
         self.max_number_of_states = Some(max_number_of_states);
         self
     }
 
-    /// Whether [`FastAutomaton`](crate::fast_automaton::FastAutomaton)
-    /// operations that require a deterministic automaton may determinize a
-    /// non-deterministic input on their own (the default). When set to
-    /// `false`, those operations return
-    /// [`EngineError::DeterministicAutomatonRequired`] instead; explicit
-    /// `determinize()` calls and [`Term`](crate::Term) methods (which
-    /// manage the representation themselves) are always allowed.
+    /// Sets whether
+    /// [`FastAutomaton::minimize`](crate::fast_automaton::FastAutomaton::minimize)
+    /// and
+    /// [`FastAutomaton::complement`](crate::fast_automaton::FastAutomaton::complement)
+    /// may determinize a non-deterministic automaton on their own. Allowed by
+    /// default.
+    ///
+    /// When it is not, they return
+    /// [`EngineError::DeterministicAutomatonRequired`]. Calls to
+    /// `determinize()` and [`Term`](crate::Term) methods are not affected.
     pub fn implicit_determinization(mut self, allowed: bool) -> Self {
         self.implicit_determinization = allowed;
         self
     }
 
-    /// Builds the [`ExecutionProfile`]. Install it around a unit of work with
+    /// Builds the [`ExecutionProfile`], to install with
     /// [`ExecutionProfile::run`].
     pub fn build(self) -> ExecutionProfile {
         ExecutionProfile {
@@ -747,14 +741,15 @@ mod tests {
                 // non-deterministic input on its own...
                 assert_eq!(nfa.clone().minimize().unwrap_err(), err);
                 assert_eq!(nfa.clone().complement().unwrap_err(), err);
-                assert_eq!(dfa.difference(&nfa).unwrap_err(), err);
-                assert_eq!(nfa.equivalent(&dfa).unwrap_err(), err);
-                assert_eq!(dfa.subset(&nfa).unwrap_err(), err);
-                assert_eq!(nfa.cardinality().unwrap_err(), err);
 
                 // ...but operations that work on NFAs directly are unaffected
-                // (difference only determinizes the subtrahend)...
                 assert!(nfa.difference(&dfa).is_ok());
+                assert!(dfa.difference(&nfa).unwrap().is_empty());
+                assert!(nfa.symmetric_difference(&dfa).unwrap().is_empty());
+                assert_eq!(nfa.cardinality(), dfa.cardinality());
+                assert!(nfa.equivalent(&dfa).unwrap());
+                assert!(dfa.subset(&nfa).unwrap());
+                assert!(nfa.subset(&dfa).unwrap());
 
                 // ...deterministic inputs keep working...
                 assert!(dfa.clone().minimize().is_ok());
@@ -781,14 +776,7 @@ mod tests {
             .run(|| {
                 // Methods that need a DFA internally determinize on Term's
                 // behalf (an explicit choice of the Term layer)...
-                assert!(term.difference(&other).is_ok());
-                assert!(other.difference(&term).is_ok());
                 assert!(term.complement().is_ok());
-                assert!(term.equivalent(&other).is_ok());
-                assert!(term.subset(&other).is_ok());
-                assert!(other.subset(&term).is_ok());
-                assert!(term.is_total().is_ok());
-                assert!(term.cardinality().is_ok());
                 assert!(term.minimize().is_ok());
                 assert!(
                     term.generate_strings(5, 0, GenerationOptions::new())
@@ -796,6 +784,14 @@ mod tests {
                 );
 
                 // ...and the rest of the API never needed one.
+                assert!(term.difference(&other).is_ok());
+                assert!(other.difference(&term).is_ok());
+                assert!(term.symmetric_difference([&other]).is_ok());
+                assert!(term.equivalent(&other).is_ok());
+                assert!(term.subset(&other).is_ok());
+                assert!(other.subset(&term).is_ok());
+                assert!(term.is_total().is_ok());
+                assert!(term.cardinality().is_ok());
                 assert!(term.concat(std::slice::from_ref(&other)).is_ok());
                 assert!(term.union(std::slice::from_ref(&other)).is_ok());
                 assert!(term.intersection(std::slice::from_ref(&other)).is_ok());

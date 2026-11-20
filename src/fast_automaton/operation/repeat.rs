@@ -1,7 +1,11 @@
 use super::*;
 
 impl FastAutomaton {
-    /// Computes the repetition of the automaton between `min` and `max_opt` times; if `max_opt` is `None`, the repetition is unbounded.
+    /// Returns the repetition of `self`: the strings made of `n` strings of
+    /// `self` one after the other, for every `n` from `min` to `max_opt`, with
+    /// no upper bound when `max_opt` is `None`.
+    ///
+    /// A `max_opt` below `min` gives the automaton that accepts no string.
     #[tracing::instrument(level = "debug", skip(self), fields(states = self.number_of_states(), deterministic = self.is_deterministic(), min = min, max_opt = tracing::field::debug(max_opt)))]
     pub fn repeat(&self, min: u32, max_opt: Option<u32>) -> Result<FastAutomaton, EngineError> {
         let mut automaton = self.clone();

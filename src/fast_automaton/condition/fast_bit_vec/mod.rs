@@ -131,6 +131,19 @@ impl FastBitVec {
         false
     }
 
+    /// Returns `true` if every bit set in `self` is set in `other`.
+    #[inline]
+    pub fn is_subset(&self, other: &Self) -> bool {
+        self.assert_same_len(other);
+        self.bits.iter().zip(&other.bits).all(|(a, b)| *a & !b == 0)
+    }
+
+    /// Clears every bit.
+    #[inline]
+    pub fn clear(&mut self) {
+        self.bits.fill(0);
+    }
+
     #[inline]
     pub fn empty(&self) -> bool {
         self.bits.iter().all(|w| w == &0)

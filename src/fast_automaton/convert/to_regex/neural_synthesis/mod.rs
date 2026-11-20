@@ -1,26 +1,24 @@
-//! Short, readable regexes for automata, proposed by learned models.
+//! Short, readable regexes for automata, written by learned models.
 //!
 //! [`FastAutomaton::to_regex`] converts an automaton by state elimination:
-//! always correct, but often long and hard to read. A [`NeuralSynthesizer`]
-//! runs a model that reads the automaton's minimal DFA and writes regexes for
-//! it, usually much simpler ones. Every candidate is **checked** against the
-//! automaton with an equivalence test and discarded unless it describes
-//! exactly the same language, so a model can make a result simpler, never
-//! wrong. A `NeuralSynthesizer` is a [`RegexSynthesizer`]: pass it to
-//! [`FastAutomaton::to_regex_with`] or [`Term::to_regex_with`](crate::Term::to_regex_with).
-//!
-//! A model can come with its success rate by size and difficulty of the DFA
-//! (see [Models](#models)); the conversion does not run it on an automaton,
-//! or a piece of one, whose rate is below a threshold
-//! ([`NeuralSynthesizer::with_min_success`]): a piece that cannot be split
-//! further is then converted by state elimination.
+//! exact, but often long and hard to read. A [`NeuralSynthesizer`] runs a model
+//! that reads the automaton and writes regexes for it. Every regex is
+//! **checked** against the automaton, and dropped unless it matches the same
+//! strings: a model can make a result simpler, never wrong. A
+//! `NeuralSynthesizer` is a [`RegexSynthesizer`]: pass it to
+//! [`FastAutomaton::to_regex_with`] or
+//! [`Term::to_regex_with`](crate::Term::to_regex_with).
 //!
 //! When the model has no correct regex for an automaton, or the automaton is
-//! beyond its limits or below the threshold, the conversion splits the minimal DFA
-//! into independent pieces (concatenations, unions, stars, and the paths
-//! around a few hub states that break up large cycles), runs the model on
-//! every piece small enough, in batches, and combines the simplest regex of
-//! each piece. [`NeuralSynthesizer::with_decomposition`] turns this off.
+//! too large for it, the automaton is split into pieces that the model converts
+//! one by one, and their regexes are combined
+//! ([`NeuralSynthesizer::with_decomposition`] turns this off). A piece the
+//! model cannot convert is converted by state elimination, so the conversion
+//! does not depend on the model succeeding.
+//!
+//! A model can come with its success rate on automata of a given size and
+//! difficulty (see [Models](#models)): it is not run where that rate is below a
+//! threshold ([`NeuralSynthesizer::with_min_success`]).
 //!
 //! ```no_run
 //! use regexsolver::{
@@ -50,8 +48,8 @@
 //! [`from_dir`](NeuralSynthesizer::from_dir),
 //! [`from_bytes`](NeuralSynthesizer::from_bytes)), or, with the
 //! `neural-synthesis-hub` feature, download them from the Hugging Face Hub
-//! (`NeuralSynthesizer::from_hub`). The format is read from
-//! `config.json`; the formats supported so far:
+//! (`NeuralSynthesizer::from_hub`). The format is read from `config.json`. The
+//! supported formats:
 //!
 //! - `kleene` v1 and v2, the Kleene models (`kleene1-9m-b16-t128`,
 //!   `kleene2-9m-b16-t128`, `kleene2-5m-b16-t128`): a graph transformer over
@@ -59,13 +57,13 @@
 //!   most 16 states and 16 bases (the disjoint character ranges labelling the
 //!   transitions).
 //!
-//! `config.json` may give the model's success rate (`gate`): for each cell of
-//! a grid over features of a minimal DFA, the share of the DFAs of a
-//! calibration set for which one of the model's candidates is correct. The
-//! features are `states`, `bases` (its spanning ranges) and `complexity` (that
-//! of its state elimination regex); each axis lists the lower bounds of its
-//! bins, and the rates are in row-major order, `null` for a cell without DFAs
-//! (the model is then tried).
+//! `config.json` may give the model's success rate (`gate`): for each cell of a
+//! grid over features of a minimal DFA, the share of the DFAs of a calibration
+//! set for which one of the model's regexes is correct. The features are
+//! `states`, `bases` (the ranges of its spanning set) and `complexity` (that of
+//! its state elimination regex). Each axis lists the lower bounds of its bins,
+//! and the rates are in row-major order, `null` for a cell without DFAs, where
+//! the model is run.
 //!
 //! # Devices
 //!
@@ -363,21 +361,15 @@ impl fmt::Debug for NeuralSynthesizer {
 }
 
 impl NeuralSynthesizer {
-    /// Default number of candidates per automaton: the hypotheses of the
-    /// beam search ([`DEFAULT_BEAM`](Self::DEFAULT_BEAM)) alone, as samples
-    /// added to a beam make the regexes hardly simpler.
+    /// Default number of regexes the model writes per automaton: see
+    /// [`with_candidates`](Self::with_candidates).
     pub const DEFAULT_CANDIDATES: usize = 1;
 
-    /// Default width of the beam search replacing the greedy decoding: four
-    /// hypotheses find simpler regexes than four samples, in about the same
-    /// time. Each doubling of the width roughly doubles the time.
+    /// Default width of the beam search: see [`with_beam`](Self::with_beam).
     pub const DEFAULT_BEAM: usize = 4;
 
-    /// Default success rate below which the model is not run on an automaton
-    /// or a piece of its decomposition (see
-    /// [`with_min_success`](Self::with_min_success)). Higher thresholds save
-    /// little time: an automaton the model is not run on is decomposed, and
-    /// the model runs on its pieces.
+    /// Default success rate below which the model is not run: see
+    /// [`with_min_success`](Self::with_min_success).
     pub const DEFAULT_MIN_SUCCESS: f64 = 0.05;
 
     /// Loads a model from its `config.json` and `model.safetensors` files.
@@ -448,75 +440,77 @@ impl NeuralSynthesizer {
         })
     }
 
-    /// Sets how many candidates are decoded per automaton (at least 1): the
-    /// greedy decoding, or the hypotheses of the beam search
-    /// ([`with_beam`](Self::with_beam)), then samples (default
-    /// [`DEFAULT_CANDIDATES`](Self::DEFAULT_CANDIDATES)). More candidates find
-    /// a correct regex more often, at the cost of decoding and checking them.
+    /// Sets the number of regexes the model writes per automaton, at least 1
+    /// (default [`DEFAULT_CANDIDATES`](Self::DEFAULT_CANDIDATES)): the result
+    /// of the beam search ([`with_beam`](Self::with_beam)), then `candidates -
+    /// 1` samples.
+    ///
+    /// More regexes find a correct one more often, and take more time to write
+    /// and check.
     pub fn with_candidates(mut self, candidates: usize) -> Self {
         self.sampling.candidates = candidates.max(1);
         self
     }
 
-    /// Sets the sampling temperature of the candidates after the first
-    /// (default 1). A temperature that is not positive samples greedily, so
-    /// every candidate is the first.
+    /// Sets the sampling temperature of the regexes after the first (default
+    /// 1). At 0 or below, they are all the same regex: the one made of the
+    /// model's most likely choice at each step.
     pub fn with_temperature(mut self, temperature: f64) -> Self {
         self.sampling.temperature = temperature;
         self
     }
 
-    /// Sets the seed of the sampling (default 0). Proposals are
-    /// deterministic for a given seed and device.
+    /// Sets the seed of the sampling (default 0). The same seed on the same
+    /// device gives the same regexes.
     pub fn with_seed(mut self, seed: u64) -> Self {
         self.sampling.seed = seed;
         self
     }
 
-    /// Sets the width of a beam search that replaces the greedy decoding
-    /// (default [`DEFAULT_BEAM`](Self::DEFAULT_BEAM); 0 or 1 decodes
-    /// greedily). Its hypotheses, up to `beam` of the most likely regexes, are
-    /// checked with the [`with_candidates`](Self::with_candidates) `- 1`
-    /// samples. A beam of width `w` decodes up to `w` sequences per automaton,
-    /// about the cost of `w` candidates.
+    /// Sets the width of the beam search (default
+    /// [`DEFAULT_BEAM`](Self::DEFAULT_BEAM)): the model writes up to `beam` of
+    /// its most likely regexes, which are all checked. 0 and 1 turn the search
+    /// off, and the model writes its most likely regex alone.
+    ///
+    /// Time grows about in proportion to the width.
     pub fn with_beam(mut self, beam: usize) -> Self {
         self.sampling.beam = beam;
         self
     }
 
-    /// Sets whether converting ([`FastAutomaton::to_regex_with`]) splits an
-    /// automaton the model has no correct regex for, or is too large for,
-    /// into independent pieces and runs the model on those (default `true`).
-    /// Splitting finds simpler regexes for many more automata, at the cost of
-    /// running the model on many pieces: up to seconds on the CPU for
-    /// automata of dozens of states.
+    /// Sets whether [`FastAutomaton::to_regex_with`] splits an automaton that
+    /// the model has no correct regex for, or that is too large for it, into
+    /// pieces that the model converts one by one (default `true`).
+    ///
+    /// Splitting finds simpler regexes for many more automata, and can take
+    /// seconds on the CPU for automata of dozens of states.
     pub fn with_decomposition(mut self, decomposition: bool) -> Self {
         self.decomposition = decomposition;
         self
     }
 
-    /// Sets the success rate below which converting
-    /// ([`FastAutomaton::to_regex_with`]) does not run the model on an
-    /// automaton, going straight to its decomposition, nor on a piece of the
-    /// decomposition, which is then split further or converted by state
-    /// elimination (default [`DEFAULT_MIN_SUCCESS`](Self::DEFAULT_MIN_SUCCESS)).
-    /// The rate is the model's, from its `config.json`, for DFAs like the
-    /// automaton's (or the piece's) minimal DFA (see the [module
-    /// documentation](self)); a model without one is always run, and so is
-    /// every model with 0. Skipping saves the decoding and checking of
-    /// candidates that are almost never correct.
+    /// Sets the success rate below which [`FastAutomaton::to_regex_with`] does
+    /// not run the model on an automaton, or on a piece of one (default
+    /// [`DEFAULT_MIN_SUCCESS`](Self::DEFAULT_MIN_SUCCESS)): it is split
+    /// further, or converted by state elimination.
+    ///
+    /// The rate is the one the model's `config.json` gives for automata of that
+    /// size and difficulty (see the [module documentation](self#models)). A
+    /// model without rates is always run, and a threshold of 0 runs any model
+    /// on every automaton.
     pub fn with_min_success(mut self, min_success: f64) -> Self {
         self.min_success = min_success;
         self
     }
 
-    /// The model's success rate for `automaton`, from its `config.json`:
-    /// how often, on a calibration set, one of its candidates was correct for
-    /// DFAs like the automaton's minimal DFA. `None` when the model has no
-    /// rate or none for such DFAs.
+    /// Returns the model's success rate for `automaton`, from its
+    /// `config.json`: how often one of its regexes was correct for automata of
+    /// that size and difficulty. `None` when the model gives no rate for them.
+    ///
+    /// # Errors
     ///
     /// Fails if `automaton` cannot be minimized, or its minimal DFA converted
-    /// by state elimination, within the execution profile.
+    /// by state elimination, within the limits of the execution profile.
     pub fn success_rate(&self, automaton: &FastAutomaton) -> Result<Option<f64>, EngineError> {
         match &self.gate {
             Some(gate) => gate.rate(&minimal_dfa(automaton)?, None),
@@ -540,16 +534,18 @@ impl NeuralSynthesizer {
         self.model.max_bases()
     }
 
-    /// Asks the model for a regex describing exactly the language of
-    /// `automaton`.
+    /// Asks the model for a regex that matches the strings `automaton` accepts,
+    /// and no other.
     ///
-    /// Returns the simplest candidate equivalent to the automaton, or `None`
-    /// when its minimal DFA is beyond the model's limits or no candidate is
-    /// correct. Candidates whose check fails (for instance on the execution
-    /// profile's timeout) are skipped.
+    /// Returns the simplest correct regex the model wrote; `None` when the
+    /// automaton is beyond the model's limits or when no regex is correct. The
+    /// automaton is not split into pieces: [`FastAutomaton::to_regex_with`]
+    /// runs the whole conversion.
     ///
-    /// Fails if `automaton` cannot be minimized within the execution
-    /// profile, or if the profile's deadline passes during inference.
+    /// # Errors
+    ///
+    /// Fails if `automaton` cannot be minimized within the limits of the
+    /// execution profile, or if its timeout passes while the model runs.
     pub fn propose(
         &self,
         automaton: &FastAutomaton,
@@ -557,9 +553,9 @@ impl NeuralSynthesizer {
         Ok(self.propose_batch(&[automaton])?.pop().flatten())
     }
 
-    /// [`propose`](Self::propose) for several automata at once: the model
-    /// decodes them together, which is much faster than one by one. The
-    /// result for each automaton is the same as `propose`'s.
+    /// [`propose`](Self::propose) for several automata, which the model handles
+    /// together: it takes less time than one call per automaton, for the same
+    /// results.
     pub fn propose_batch(
         &self,
         automata: &[&FastAutomaton],
@@ -760,19 +756,19 @@ impl NeuralSynthesizer {
 }
 
 impl RegexSynthesizer for NeuralSynthesizer {
-    /// The model first proposes a regex for the whole automaton, unless its
-    /// success rate for it is below the threshold
-    /// ([`with_min_success`](NeuralSynthesizer::with_min_success)). When it has
-    /// no correct one, or the automaton is beyond its limits or below the
-    /// threshold, the automaton's
-    /// minimal DFA is split into independent pieces (unless
-    /// [`with_decomposition`](NeuralSynthesizer::with_decomposition) disables
-    /// it), each converted by the model or by state elimination, whichever is
-    /// simpler, and their regexes combined. Returns the simpler of that result
-    /// and [`FastAutomaton::to_regex`]'s state elimination; state elimination
-    /// alone if the model fails (for instance on the execution profile's
-    /// deadline). The result always describes exactly the automaton's
-    /// language.
+    /// Converts `automaton` with the model, as the [module documentation](self)
+    /// describes, and returns the simpler of the result and the regex of state
+    /// elimination ([`FastAutomaton::to_regex`]).
+    ///
+    /// The regex returned matches the strings the automaton accepts, and no
+    /// other, whatever the model writes. State elimination alone is returned
+    /// when the model fails, for instance on the timeout of the execution
+    /// profile.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error of state elimination when it fails and the model gave
+    /// no regex.
     fn synthesize(&self, automaton: &FastAutomaton) -> Result<RegularExpression, EngineError> {
         let (proposed, dfa_eliminated) = match self.propose_or_decompose(automaton) {
             Ok(proposed) => proposed,

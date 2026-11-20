@@ -335,6 +335,34 @@ fn set_identities_hold() {
             .unwrap()
     );
 
+    // symmetric_difference(a, b) == difference(union(a, b), intersection(a, b))
+    let symmetric_difference = a.symmetric_difference([&b]).unwrap();
+    assert!(
+        symmetric_difference
+            .equivalent(
+                &a.union([&b])
+                    .unwrap()
+                    .difference(&a.intersection([&b]).unwrap())
+                    .unwrap()
+            )
+            .unwrap()
+    );
+    assert!(a.symmetric_difference([&a]).unwrap().is_empty().unwrap());
+    // Commutative and associative: a term given twice cancels itself,
+    // wherever it is.
+    assert!(
+        b.symmetric_difference([&a])
+            .unwrap()
+            .equivalent(&symmetric_difference)
+            .unwrap()
+    );
+    assert!(
+        a.symmetric_difference([&b, &complement, &a, &complement])
+            .unwrap()
+            .equivalent(&b)
+            .unwrap()
+    );
+
     // Both operands are subsets of their union, and their intersection is a
     // subset of both.
     let union = a.union([&b]).unwrap();
@@ -365,6 +393,91 @@ fn patterns_round_trip_through_their_language() {
             "`{pattern}` printed as `{printed}`, which is a different language"
         );
     }
+}
+
+/// `is_empty` and `is_empty_string` are exact on an expression that is not
+/// simplified, on `RegularExpression` and on `Term`.
+#[test]
+fn emptiness_is_exact_on_an_expression_that_is_not_simplified() {
+    use regexsolver::regex_charclass::char::Char;
+    let a =
+        || RegularExpression::Character(CharRange::new_from_range(Char::new('a')..=Char::new('a')));
+
+    // Built from the variants: `[]a` matches no string, `a{0}` only `""`.
+    let nothing =
+        RegularExpression::Concat([RegularExpression::Character(CharRange::empty()), a()].into());
+    let empty_string = RegularExpression::Repetition(Box::new(a()), 0, Some(0));
+    assert!(nothing.is_empty() && !nothing.is_empty_string());
+    assert!(empty_string.is_empty_string() && !empty_string.is_empty());
+    assert!(Term::from_regex(nothing.clone()).is_empty().unwrap());
+    assert!(!Term::from_regex(nothing).is_empty_string().unwrap());
+    assert!(
+        Term::from_regex(empty_string.clone())
+            .is_empty_string()
+            .unwrap()
+    );
+    assert!(!Term::from_regex(empty_string).is_empty().unwrap());
+
+    // Parsed without simplification, against the automaton.
+    for pattern in [
+        "()*",
+        "()?()*",
+        "(|(b){0})",
+        "((a){0})*",
+        "a?",
+        "(a|)",
+        "[]",
+        "",
+    ] {
+        let regex = RegularExpression::parse(pattern, false).unwrap();
+        let automaton = regex.to_automaton().unwrap();
+        assert_eq!(regex.is_empty(), automaton.is_empty(), "{pattern}");
+        assert_eq!(
+            regex.is_empty_string(),
+            automaton.is_empty_string(),
+            "{pattern}"
+        );
+        let term = Term::from_regex(regex);
+        assert_eq!(term.is_empty().unwrap(), automaton.is_empty(), "{pattern}");
+        assert_eq!(
+            term.is_empty_string().unwrap(),
+            automaton.is_empty_string(),
+            "{pattern}"
+        );
+        assert_eq!(term.length(), automaton.length(), "{pattern}");
+    }
+
+    // A repetition whose maximum is below its minimum matches no string, as
+    // for `length` and `repeat`, although it cannot be converted.
+    let invalid = RegularExpression::Repetition(Box::new(a()), 5, Some(2));
+    assert!(invalid.is_empty() && invalid.to_automaton().is_err());
+    assert!(Term::from_regex(invalid).is_empty().unwrap());
+}
+
+/// The union of terms backed by regular expressions is bounded by the
+/// execution profile, as the union of automata is.
+#[test]
+fn union_of_regular_expressions_honors_the_timeout() {
+    use regexsolver::execution_profile::ExecutionProfileBuilder;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Duration;
+
+    let terms: Vec<Term> = (0..300).map(|i| term(&format!("x{i:05}y"))).collect();
+    assert!(terms[0].union(&terms[1..]).is_ok());
+
+    // A clock that advances at each reading: the deadline passes after a
+    // number of terms, whatever the machine.
+    static READINGS: AtomicU64 = AtomicU64::new(0);
+    ExecutionProfileBuilder::new()
+        .execution_timeout(100)
+        .clock(|| Duration::from_millis(READINGS.fetch_add(1, Ordering::Relaxed)))
+        .build()
+        .run(|| {
+            assert_eq!(
+                EngineError::OperationTimeOutError,
+                terms[0].union(&terms[1..]).unwrap_err()
+            );
+        });
 }
 
 /// The empty language and the language of the empty string are different.

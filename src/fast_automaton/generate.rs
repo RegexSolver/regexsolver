@@ -12,80 +12,51 @@ use std::ops::Range;
 /// charset leaves nothing of.
 type RangeIds<'a> = AHashMap<&'a Condition, Option<u32>>;
 
-/// How [`FastAutomaton::generate_strings`] schedules the *paths* of a
-/// language: one at a time, or interleaved so that every shape the pattern
-/// allows is covered early. Orthogonal to [`CharacterOrder`], which chooses
-/// the strings within each path.
+/// The order [`FastAutomaton::generate_strings`] visits the *paths* of an
+/// automaton in. A path is a sequence of transitions from the start state to an
+/// accept state: it yields one string per choice of characters, in the order
+/// [`CharacterOrder`] sets.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum PathOrder {
-    /// One path at a time, shortest first, expanded in full before the next
-    /// path is visited: `.*abc.*` yields `abc`, `abc\u{0}`, `abc\u{1}`, ...
-    /// The cheapest way to page through a whole language with `offset`.
+    /// One path at a time, shortest first: all the strings of a path come
+    /// before the next path. `.*abc.*` yields `abc`, `abc\u{0}`, `abc\u{1}`,
+    /// ... The fastest order to page through a whole language.
     #[default]
     Sweep,
-    /// A few strings per path before moving to the next one, so `.*abc.*`
-    /// yields `abc` and a string for each of the other shapes (`abc\u{0}`,
-    /// `\u{0}abc`, ...) instead of a million variations of one of them.
+    /// A few strings of each path at a time, so that every path yields a string
+    /// before any yields a second one: `.*abc.*` yields `abc`, then a string of
+    /// each other path (`abc\u{0}`, `\u{0}abc`, ...).
     ///
-    /// Shape comes first: the strings cover every path the automaton holds
-    /// before any path is asked for a second one, so a `limit` smaller than
-    /// the number of shapes is spent entirely on distinct shapes, and only a
-    /// larger one starts varying the characters within them.
-    ///
-    /// Deterministic, and pages with `offset` like [`Sweep`](Self::Sweep).
-    /// Each pass takes twice as many strings per path as the previous one, so
-    /// a finite language is still enumerated in full given a large enough
-    /// `limit`; those repeated passes make it slower than `Sweep`.
+    /// Slower than [`Sweep`](Self::Sweep), and pages with `offset` like it.
     Interleave,
-    /// [`Interleave`](Self::Interleave), with same-length paths visited in an
-    /// order drawn by the seed ([`GenerationOptions::with_seed`], 0 by
-    /// default) instead of a fixed one. Shorter paths still come first, since
-    /// the search has to stay shortest-first to emit anything at all on an
-    /// infinite language, so the seed only draws among paths of equal length.
+    /// [`Interleave`](Self::Interleave), with the paths of the same length
+    /// visited in an order drawn from the seed
+    /// ([`GenerationOptions::with_seed`]). Shorter paths still come first.
     ///
-    /// The draw within a length is a randomized cascade rather than a uniform
-    /// shuffle: the seed randomizes the pop order of the underlying
-    /// shortest-first search, and a path only becomes available once its whole
-    /// prefix chain has popped, so a shape branching off an already-visited
-    /// path leads more often than one sharing nothing with it. Coverage is
-    /// untouched, every shape still coming before any shape's second string.
-    ///
-    /// Independent of [`CharacterOrder`]: shuffled paths over
-    /// [`Ascending`](CharacterOrder::Ascending) characters yield each drawn
-    /// shape's smallest witness; pair with [`CharacterOrder::Shuffled`] for
-    /// fully random-looking test cases. Deterministic for a given seed, and
-    /// pages with `offset` like the other orders; offsets are only consistent
-    /// between calls sharing the seed.
+    /// The order is the same for the same seed, so `offset` pages through it.
+    /// It is not a uniform shuffle of the paths. Pair it with
+    /// [`CharacterOrder::Shuffled`] for strings that look random.
     Shuffled,
 }
 
-/// Which strings of a path [`FastAutomaton::generate_strings`] reaches for
-/// first: its character combinations in ascending order, or a seeded shuffle
-/// of them. Orthogonal to [`PathOrder`], which schedules the paths
-/// themselves.
+/// The order [`FastAutomaton::generate_strings`] yields the strings of one path
+/// in (see [`PathOrder`]).
 ///
-/// Neither changes *what* is generated: on a finite language every
-/// combination of the two axes enumerates exactly the same strings, given the
-/// `limit`. To generate from specific characters, restrict generation with
+/// Over a whole finite language, it changes the order of the strings, not which
+/// ones are generated. To generate from chosen characters, see
 /// [`GenerationOptions::with_charset`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum CharacterOrder {
-    /// Each position expanded from the low end of its character range first:
-    /// `[a-z]{8}` yields `aaaaaaaa`, `aaaaaaab`, ... A stable, documented
-    /// order: the smallest witnesses of a path come first.
+    /// From the lowest character of each position: `[a-z]{8}` yields
+    /// `aaaaaaaa`, `aaaaaaab`, ...
     #[default]
     Ascending,
-    /// A seeded permutation of each path's combinations, so `[a-z]{8}` yields
-    /// something like `sjtwsive` rather than `aaaaaaaa`. To draw the *shapes*
-    /// by the seed too, pair with [`PathOrder::Shuffled`].
+    /// In an order drawn from the seed ([`GenerationOptions::with_seed`]):
+    /// `[a-z]{8}` yields something like `sjtwsive`.
     ///
-    /// Random in look only: the seed ([`GenerationOptions::with_seed`], 0 by
-    /// default) picks one fixed permutation, so generation is reproducible and
-    /// pages with `offset` like [`Ascending`](Self::Ascending). The
-    /// permutation is a bijection, so it repeats no more strings across
-    /// offsets than `Ascending` does. Offsets are only consistent between
-    /// calls sharing the seed, and unlike `Ascending`'s the exact sequence is
-    /// implementation-defined: it may change between releases.
+    /// The order is the same for the same seed, so `offset` pages through it as
+    /// it does through [`Ascending`](Self::Ascending). The sequence a seed
+    /// gives may change between releases of the crate.
     Shuffled,
 }
 
@@ -137,15 +108,12 @@ impl PartialOrd for QueueItem {
     }
 }
 
-/// What [`FastAutomaton::generate_strings`] is allowed to generate: how paths
-/// are scheduled ([`PathOrder`]), how the strings within them are ordered
-/// ([`CharacterOrder`], with the seed behind the `Shuffled` modes of both
-/// axes), the characters it may use, and the string lengths it is confined
-/// to.
+/// The options of [`FastAutomaton::generate_strings`]: the order of the paths
+/// ([`PathOrder`]) and of the strings of a path ([`CharacterOrder`]), the seed
+/// of their `Shuffled` orders, and the characters and lengths allowed.
 ///
-/// Either axis converts into it, so one can be passed on its own wherever
-/// options are expected and the other keeps its default; so does a
-/// `(PathOrder, CharacterOrder)` pair.
+/// A [`PathOrder`], a [`CharacterOrder`] or a pair of them converts into it,
+/// the other options keeping their default.
 ///
 /// # Examples
 ///
@@ -178,35 +146,28 @@ pub struct GenerationOptions {
 }
 
 impl GenerationOptions {
-    /// Default options: [`PathOrder::Sweep`] over
-    /// [`CharacterOrder::Ascending`] combinations, using every character and
-    /// string length the automaton allows.
+    /// Creates the default options: [`PathOrder::Sweep`] and
+    /// [`CharacterOrder::Ascending`], with every character and length allowed.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Returns a copy of these options scheduling paths in `paths` order.
+    /// Sets the order of the paths.
     pub fn with_paths(mut self, paths: PathOrder) -> Self {
         self.paths = paths;
         self
     }
 
-    /// Returns a copy of these options ordering each path's strings in
-    /// `characters` order.
+    /// Sets the order of the strings of a path.
     pub fn with_characters(mut self, characters: CharacterOrder) -> Self {
         self.characters = characters;
         self
     }
 
-    /// Returns a copy of these options restricted to `charset`.
+    /// Restricts generation to the strings made of characters of `charset`.
     ///
-    /// Only strings made entirely of those characters are generated: a path
-    /// through a transition that `charset` rules out is dropped whole, never
-    /// shortened. Restricting to characters the automaton never matches
-    /// generates nothing.
-    ///
-    /// A [`CharRange`] is built from bounds, or out of a character class
-    /// pattern through [`RegularExpression`](crate::regex::RegularExpression):
+    /// A [`CharRange`] is built from bounds, or from a character class pattern
+    /// through [`RegularExpression`]:
     ///
     /// ```
     /// use regexsolver::{CharRange, regex::RegularExpression};
@@ -224,68 +185,63 @@ impl GenerationOptions {
         self
     }
 
-    /// Returns a copy of these options drawing [`PathOrder::Shuffled`]'s
-    /// path draws and [`CharacterOrder::Shuffled`]'s permutation from `seed`;
-    /// generation using neither ignores it.
+    /// Sets the seed of [`PathOrder::Shuffled`] and
+    /// [`CharacterOrder::Shuffled`], 0 by default.
     ///
-    /// The default seed is 0, a fixed seed rather than a random one, so two
-    /// calls with the same options generate the same strings and `offset`
-    /// pages through them consistently. Change the seed to draw a different
-    /// sequence of strings from the same pattern.
+    /// The same options generate the same strings, so `offset` pages through
+    /// them. Change the seed to get another sequence.
     pub fn with_seed(mut self, seed: u64) -> Self {
         self.seed = seed;
         self
     }
 
-    /// Returns a copy of these options generating only strings at least
-    /// `min_length` characters long: the shorter strings the automaton
-    /// matches are left out of the enumeration, `offset` never counting
-    /// them. 0 by default, which keeps every string.
+    /// Leaves out the strings shorter than `min_length` characters, which
+    /// `offset` does not count. 0 by default.
     pub fn with_min_length(mut self, min_length: usize) -> Self {
         self.min_length = min_length;
         self
     }
 
-    /// Returns a copy of these options generating only strings at most
-    /// `max_length` characters long: the longer strings the automaton
-    /// matches are left out of the enumeration, `offset` never counting
-    /// them. Unbounded by default; without a bound, a deep `offset` into a
-    /// looping language (`.*`) pages into arbitrarily long strings, so set one
-    /// when the offset is not under your control.
+    /// Leaves out the strings longer than `max_length` characters, which
+    /// `offset` does not count. No bound by default.
     ///
-    /// A bound below `min_length` leaves nothing to generate.
+    /// Set one when `offset` is not under your control: without it, a large
+    /// offset into an infinite language reaches strings of any length. A bound
+    /// below the minimum length leaves no string.
     pub fn with_max_length(mut self, max_length: usize) -> Self {
         self.max_length = Some(max_length);
         self
     }
 
-    /// The order paths are scheduled in.
+    /// Returns the order of the paths.
     pub fn paths(&self) -> PathOrder {
         self.paths
     }
 
-    /// The order each path's strings come out in.
+    /// Returns the order of the strings of a path.
     pub fn characters(&self) -> CharacterOrder {
         self.characters
     }
 
-    /// The characters generation is restricted to, `None` when it is not.
+    /// Returns the characters generation is restricted to, `None` when it is
+    /// not.
     pub fn charset(&self) -> Option<&CharRange> {
         self.charset.as_ref()
     }
 
-    /// The seed behind [`PathOrder::Shuffled`] and
+    /// Returns the seed of [`PathOrder::Shuffled`] and
     /// [`CharacterOrder::Shuffled`].
     pub fn seed(&self) -> u64 {
         self.seed
     }
 
-    /// The shortest string generation may emit.
+    /// Returns the length of the shortest strings generated.
     pub fn min_length(&self) -> usize {
         self.min_length
     }
 
-    /// The longest string generation may emit, `None` when unbounded.
+    /// Returns the length of the longest strings generated, `None` when there
+    /// is no bound.
     pub fn max_length(&self) -> Option<usize> {
         self.max_length
     }
@@ -320,27 +276,28 @@ impl From<(PathOrder, CharacterOrder)> for GenerationOptions {
 }
 
 impl FastAutomaton {
-    /// Generates up to `limit` distinct strings matched by the automaton under
-    /// the given [`GenerationOptions`], skipping the first `offset` strings.
+    /// Returns up to `limit` distinct strings that the automaton accepts,
+    /// skipping the first `offset` ones.
     ///
-    /// `options` is a [`PathOrder`] or [`CharacterOrder`] on its own (or a
-    /// pair of them), or a full [`GenerationOptions`] to also set the seed
-    /// and restrict the characters and string lengths used.
+    /// `options` sets the order of the strings, the seed of the shuffled
+    /// orders, and the characters and lengths allowed: see
+    /// [`GenerationOptions`]. A [`PathOrder`], a [`CharacterOrder`] or a pair
+    /// of them can be passed in its place.
     ///
-    /// Strings are only guaranteed to be distinct **within a single call**:
-    /// the offset fast-skips by counting paths, and in a non-deterministic
-    /// automaton the same string can be reached through several paths, so
-    /// calls with different offsets may repeat strings (or skip some).
-    /// [`determinize`](Self::determinize) (and ideally
-    /// [`minimize`](Self::minimize)) first to make pages disjoint. Offsets are
-    /// also only consistent between calls made with the same options.
+    /// # Pagination
     ///
-    /// [`GenerationOptions::with_min_length`] and
-    /// [`with_max_length`](GenerationOptions::with_max_length) confine the
-    /// enumeration to a band of string lengths. Without a max, a deep
-    /// `offset` into a looping language (`.*`) pages into arbitrarily long
-    /// strings. Generation runs under the active [`ExecutionProfile`]: its
-    /// timeout aborts with [`EngineError::OperationTimeOutError`].
+    /// `offset` pages through the strings. Pages are only consistent across
+    /// calls on the same automaton with the same options. A non-deterministic
+    /// automaton can repeat or skip strings from one page to the next:
+    /// [`determinize`](Self::determinize) it first.
+    ///
+    /// Without [`GenerationOptions::with_max_length`], a large `offset` into an
+    /// infinite language reaches strings of any length.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::OperationTimeOutError`] when the timeout of the
+    /// [`ExecutionProfile`] passes.
     #[tracing::instrument(level = "debug", skip(self, options), fields(states = self.number_of_states(), deterministic=self.is_deterministic(), limit=limit, offset=offset, paths=tracing::field::Empty, characters=tracing::field::Empty, charset=tracing::field::Empty, seed=tracing::field::Empty, min_length=tracing::field::Empty, max_length=tracing::field::Empty))]
     pub fn generate_strings(
         &self,

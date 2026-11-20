@@ -6,13 +6,19 @@ use regex_charclass::{CharacterClass, char::Char};
 use crate::{CharRange, error::EngineError};
 
 use super::spanning_set::SpanningSet;
-/// The [`ConditionConverter`](converter::ConditionConverter): remaps a
-/// [`Condition`] from one spanning set to another (used when merging automata
-/// with different alphabets).
+/// The [`ConditionConverter`](converter::ConditionConverter), which converts a
+/// [`Condition`] from one spanning set to another.
 pub mod converter;
 mod fast_bit_vec;
 
-/// Represents the condition of a transition in a [`crate::FastAutomaton`].
+/// The characters of a transition of a [`FastAutomaton`](crate::FastAutomaton):
+/// a set of bases of the automaton's [`SpanningSet`], held as one bit per base.
+/// The union, intersection and complement of conditions are bitwise operations
+/// (see [this
+/// article](https://alexvbrdn.me/post/optimizing-transition-conditions-automaton-representation)).
+///
+/// A condition only has a meaning with the spanning set it was built over, and
+/// two conditions that are combined must share it.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Condition(FastBitVec);
 
@@ -29,8 +35,7 @@ impl Hash for Condition {
 }
 
 impl Condition {
-    /// Returns the condition that matches no character, sized for
-    /// `spanning_set` (every bit cleared).
+    /// Returns the condition that matches no character, over `spanning_set`.
     #[inline]
     pub fn empty(spanning_set: &SpanningSet) -> Self {
         Self(FastBitVec::from_elem(
@@ -39,8 +44,7 @@ impl Condition {
         ))
     }
 
-    /// Returns the condition that matches every character, sized for
-    /// `spanning_set` (every bit set).
+    /// Returns the condition that matches every character, over `spanning_set`.
     #[inline]
     pub fn total(spanning_set: &SpanningSet) -> Self {
         Self(FastBitVec::from_elem(
@@ -49,13 +53,19 @@ impl Condition {
         ))
     }
 
-    /// Converts a [`CharRange`] to a `Condition` sized for `spanning_set`.
+    /// Converts `range` to a condition over `spanning_set`.
     ///
-    /// Returns [`EngineError::ConditionInvalidRange`] if the range is not
-    /// expressible in the current spanning set (no base is fully contained in
-    /// `range`). In that case, extend the spanning set first with
-    /// [`SpanningSet::merge`] or [`SpanningSet::compute_spanning_set`], apply
-    /// it with [`crate::fast_automaton::FastAutomaton::apply_new_spanning_set`], then retry.
+    /// Only the bases that lie entirely inside `range` are kept: when
+    /// `spanning_set` cannot express `range`, the condition matches fewer
+    /// characters than `range`. Compare [`to_range`](Self::to_range) with
+    /// `range` to detect it, or let
+    /// [`FastAutomaton::add_transition_from_range`](crate::fast_automaton::FastAutomaton::add_transition_from_range)
+    /// extend the spanning set.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::ConditionInvalidRange`] if `range` is not empty
+    /// and no base lies entirely inside it.
     pub fn from_range(range: &CharRange, spanning_set: &SpanningSet) -> Result<Self, EngineError> {
         if range.is_empty() {
             return Ok(Self::empty(spanning_set));
@@ -84,16 +94,22 @@ impl Condition {
     #[inline]
     pub(crate) fn single_base(i: usize, spanning_set: &SpanningSet) -> Self {
         let mut cond = Self::empty(spanning_set);
-        cond.0.set(i, true);
+        cond.insert_base(i);
         cond
     }
 
-    /// Converts this `Condition` back to the [`CharRange`] it represents,
-    /// evaluated against `spanning_set`.
+    /// Adds base `i` to the condition (see [`single_base`](Self::single_base)).
+    #[inline]
+    pub(crate) fn insert_base(&mut self, i: usize) {
+        self.0.set(i, true);
+    }
+
+    /// Returns the characters the condition matches, read over `spanning_set`.
     ///
-    /// Returns [`EngineError::IncompatibleSpanningSet`] if this condition's
-    /// bit width does not match `spanning_set` (they were built from different
-    /// spanning sets).
+    /// # Errors
+    ///
+    /// Returns [`EngineError::IncompatibleSpanningSet`] if the condition was
+    /// built over a spanning set with another number of bases.
     pub fn to_range(&self, spanning_set: &SpanningSet) -> Result<CharRange, EngineError> {
         // A condition only carries meaning relative to the spanning set it
         // was built from; a width mismatch means they differ, so reject it
@@ -113,8 +129,8 @@ impl Condition {
         Ok(range)
     }
 
-    /// Returns the condition matching characters in `self` or `other` (bitwise
-    /// OR). Both must share the same spanning set.
+    /// Returns the condition that matches the characters of `self` and those of
+    /// `other`. Both must share the same spanning set.
     #[inline]
     pub fn union(&self, other: &Condition) -> Self {
         let mut new_cond = self.clone();
@@ -122,15 +138,15 @@ impl Condition {
         new_cond
     }
 
-    /// Unions `other` into `self` in place (bitwise OR). Both must share the
-    /// same spanning set.
+    /// Adds the characters of `other` to `self`. Both must share the same
+    /// spanning set.
     #[inline]
     pub fn union_with(&mut self, other: &Condition) {
         self.0.union(&other.0);
     }
 
-    /// Returns the condition matching characters in both `self` and `other`
-    /// (bitwise AND). Both must share the same spanning set.
+    /// Returns the condition that matches the characters that `self` and
+    /// `other` have in common. Both must share the same spanning set.
     #[inline]
     pub fn intersection(&self, other: &Condition) -> Self {
         let mut new_cond = self.clone();
@@ -138,8 +154,7 @@ impl Condition {
         new_cond
     }
 
-    /// Returns the condition matching exactly the characters `self` does not,
-    /// relative to its spanning set.
+    /// Returns the condition that matches the characters that `self` does not.
     #[inline]
     pub fn complement(&self) -> Self {
         let mut new_cond = self.clone();
@@ -147,8 +162,8 @@ impl Condition {
         new_cond
     }
 
-    /// Returns the condition matching characters in `self` but not in `other`
-    /// (bitwise AND-NOT). Both must share the same spanning set.
+    /// Returns the condition that matches the characters of `self` that `other`
+    /// does not match. Both must share the same spanning set.
     #[inline]
     pub fn difference(&self, other: &Condition) -> Self {
         let mut new_cond = self.clone();
@@ -156,19 +171,34 @@ impl Condition {
         new_cond
     }
 
-    /// Returns `true` if `self` and `other` share at least one character (their
-    /// intersection is non-empty). Both must share the same spanning set.
+    /// Returns `true` if every character of `self` is in `other`. Both must
+    /// share the same spanning set.
+    #[inline]
+    pub(crate) fn is_subset_of(&self, other: &Condition) -> bool {
+        self.0.is_subset(&other.0)
+    }
+
+    /// Makes the condition match no character.
+    #[inline]
+    pub(crate) fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    /// Returns `true` if `self` and `other` have a character in common. Both
+    /// must share the same spanning set.
     #[inline]
     pub fn has_intersection(&self, other: &Condition) -> bool {
         self.0.has_intersection(&other.0)
     }
 
-    /// Returns `true` if the condition matches `character` (a Unicode scalar
-    /// value), evaluated against `spanning_set`. Values that are not valid
-    /// scalar values never match.
+    /// Returns `true` if the condition, read over `spanning_set`, matches
+    /// `character`, given as a Unicode scalar value. A value that is not a
+    /// scalar value is not matched.
     ///
-    /// Returns [`EngineError::IncompatibleSpanningSet`] if this condition's
-    /// bit width does not match `spanning_set`.
+    /// # Errors
+    ///
+    /// Returns [`EngineError::IncompatibleSpanningSet`] if the condition was
+    /// built over a spanning set with another number of bases.
     #[inline]
     pub fn has_character(
         &self,
@@ -214,11 +244,13 @@ impl Condition {
         self.0.total()
     }
 
-    /// Returns the number of characters the condition matches, evaluated
-    /// against `spanning_set`.
+    /// Returns the number of characters the condition matches, read over
+    /// `spanning_set`.
     ///
-    /// Returns [`EngineError::IncompatibleSpanningSet`] if this condition's
-    /// bit width does not match `spanning_set`.
+    /// # Errors
+    ///
+    /// Returns [`EngineError::IncompatibleSpanningSet`] if the condition was
+    /// built over a spanning set with another number of bases.
     #[inline]
     pub fn cardinality(&self, spanning_set: &SpanningSet) -> Result<u32, EngineError> {
         if self.0.len() != spanning_set.spanning_ranges_with_rest_len() {
@@ -236,8 +268,8 @@ impl Condition {
         Ok(cardinality)
     }
 
-    /// Returns the condition as a vector of bits, one per range of the spanning
-    /// set it was built against (the rest range first, when present).
+    /// Returns the bits of the condition, one per base of its spanning set: the
+    /// rest first, when it is not empty, then the ranges in order.
     #[inline]
     pub fn binary_representation(&self) -> Vec<bool> {
         self.0.bits()

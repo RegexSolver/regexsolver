@@ -1,7 +1,7 @@
 use super::*;
 
 impl RegularExpression {
-    /// Returns a simplified version by eliminating redundant constructs and applying canonical reductions.
+    /// Returns an expression that matches the same strings, in a simpler form.
     #[tracing::instrument(level = "trace", skip_all)]
     pub fn simplify(&self) -> Self {
         match self {
@@ -15,13 +15,10 @@ impl RegularExpression {
                 regex.simplify().repeat(*min, *max_opt)
             }
             RegularExpression::Concat(elements) => {
-                let elements: VecDeque<_> =
-                    elements.iter().map(|element| element.simplify()).collect();
-
                 let mut regex = RegularExpression::new_empty_string();
                 elements
                     .iter()
-                    .for_each(|element| regex = regex.concat(element, true));
+                    .for_each(|element| regex.concat_mut(element.simplify()));
                 regex
             }
             RegularExpression::Alternation(elements) => {

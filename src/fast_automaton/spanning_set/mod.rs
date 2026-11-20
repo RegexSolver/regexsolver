@@ -19,39 +19,48 @@ fn segments_to_range(segments: &[(u32, u32)]) -> CharRange {
     RangeSet(bounds)
 }
 
-/// A set of [`CharRange`] that spans all transitions of a [`crate::FastAutomaton`].
+/// A partition of the characters into disjoint ranges, the *bases*, over which
+/// the [`Condition`](crate::fast_automaton::condition::Condition)s of an
+/// automaton are expressed: its ranges, and a *rest* that holds every other
+/// character.
+///
+/// A condition cannot tell apart two characters of the same base, so the
+/// spanning set of an automaton has to separate the characters that its
+/// transitions do.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SpanningSet(Vec<CharRange>, CharRange);
 
 impl SpanningSet {
-    /// Creates a spanning set from explicit disjoint `ranges` plus the `rest`
-    /// range covering every character they don't. The caller is responsible for
-    /// these invariants; prefer [`compute_spanning_set`](Self::compute_spanning_set),
-    /// which derives a minimal, well-formed set from arbitrary ranges.
+    /// Creates a spanning set from `ranges` and `rest`, which are not checked:
+    /// the ranges must be disjoint, and `rest` must hold every character
+    /// outside of them. [`compute_spanning_set`](Self::compute_spanning_set)
+    /// builds a valid one from any ranges.
     pub fn new(ranges: Vec<CharRange>, rest: CharRange) -> Self {
         SpanningSet(ranges, rest)
     }
 
-    /// Creates the spanning set of an automaton with no transitions: no
-    /// explicit ranges, with the rest covering all characters.
+    /// Creates the spanning set with no range, whose rest holds every
+    /// character: that of an automaton without transitions.
     pub fn new_empty() -> Self {
         SpanningSet(vec![], CharRange::total())
     }
 
-    /// Creates the spanning set with a single range covering all characters and
+    /// Creates the spanning set with one range that holds every character, and
     /// an empty rest.
     pub fn new_total() -> Self {
         SpanningSet(vec![CharRange::total()], CharRange::empty())
     }
 
-    /// Returns `true` if this is the empty spanning set (no explicit ranges;
-    /// see [`new_empty`](Self::new_empty)).
+    /// Returns `true` if the spanning set has no range (see
+    /// [`new_empty`](Self::new_empty)).
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty() && self.1.is_total()
     }
 
-    /// Returns `true` if this is the total spanning set (one all-covering
-    /// range; see [`new_total`](Self::new_total)).
+    /// Returns `true` if the spanning set has one range that holds every
+    /// character (see [`new_total`](Self::new_total)).
+    #[inline]
     pub fn is_total(&self) -> bool {
         self.0.len() == 1 && self.0[0].is_total() && self.1.is_empty()
     }
@@ -70,27 +79,28 @@ impl SpanningSet {
             .chain(self.0.iter())
     }
 
-    /// Returns an iterator over the explicit (non-rest) ranges in the spanning set.
+    /// Returns an iterator over the ranges, the rest excluded.
     pub fn spanning_ranges(&self) -> Iter<'_, CharRange> {
         self.0.iter()
     }
 
-    /// Returns the number of explicit (non-rest) ranges in the spanning set.
+    /// Returns the number of ranges, the rest excluded.
     pub fn number_of_spanning_ranges(&self) -> usize {
         self.0.len()
     }
 
-    /// Returns the explicit range at index `i`, or `None` if out of bounds.
+    /// Returns the range at index `i`, `None` if there is none.
     pub fn spanning_range(&self, i: usize) -> Option<&CharRange> {
         self.0.get(i)
     }
 
-    /// Returns the "rest" range covering all characters not in any explicit range.
+    /// Returns the rest: the characters that no range holds.
     pub fn rest(&self) -> &CharRange {
         &self.1
     }
 
-    /// Compute a new minimal spanning set by merging the provided spanning set.
+    /// Returns the smallest spanning set that expresses everything `self` and
+    /// `other` express.
     pub fn merge(&self, other: &Self) -> Self {
         let mut ranges = Vec::with_capacity(self.0.len() + other.0.len());
         ranges.extend_from_slice(&self.0);
@@ -99,12 +109,10 @@ impl SpanningSet {
         Self::compute_spanning_set(&ranges)
     }
 
-    /// Compute a new minimal spanning set for the provided ranges.
+    /// Returns the smallest spanning set that expresses each of `ranges`: two
+    /// characters share a base when the same ranges hold them.
     ///
-    /// The bases are the *atoms* of the inputs: the classes of characters
-    /// covered by exactly the same subset of input ranges. They are computed
-    /// with one endpoint sweep over the surrogate-free index space,
-    /// O(E log E) in the total number of input intervals.
+    /// `O(n log n)`, with `n` the number of intervals in `ranges`.
     pub fn compute_spanning_set(ranges: &[CharRange]) -> Self {
         let mut inputs: Vec<&CharRange> = ranges.iter().filter(|r| !r.is_empty()).collect();
         inputs.sort_unstable();

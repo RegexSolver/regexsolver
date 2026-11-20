@@ -3,12 +3,17 @@ use crate::execution_profile::ExecutionProfile;
 use super::*;
 
 impl FastAutomaton {
-    /// Minimizes the automaton using Hopcroft's Algorithm.
+    /// Replaces the automaton with the minimal deterministic automaton of its
+    /// language, which is unique.
     ///
-    /// If `self` is non-deterministic, it is determinized in place first,
-    /// unless the [`ExecutionProfile`] disables implicit determinization, in
-    /// which case [`EngineError::DeterministicAutomatonRequired`] is
-    /// returned.
+    /// A non-deterministic automaton is determinized first, which is
+    /// exponential in the worst case.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::DeterministicAutomatonRequired`] for a
+    /// non-deterministic automaton when the [`ExecutionProfile`] disables
+    /// implicit determinization.
     #[tracing::instrument(level = "debug", skip_all, fields(states = self.number_of_states(), deterministic = self.is_deterministic(), minimal = self.is_minimal()))]
     pub fn minimize(&mut self) -> Result<(), EngineError> {
         // The `minimal` flag is conservatively cleared on every mutation, so

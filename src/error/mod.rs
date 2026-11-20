@@ -1,34 +1,36 @@
 use std::fmt::{self};
 
-/// An error thrown by the engine.
+/// An error returned by an operation of the crate.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum EngineError {
-    /// Invalid character used in regex.
+    /// The pattern holds a literal that is not valid UTF-8.
     InvalidCharacterInRegex,
-    /// The operation took too much time.
+    /// The operation ran past the timeout of the
+    /// [`ExecutionProfile`](crate::execution_profile::ExecutionProfile).
     OperationTimeOutError,
-    /// The automaton has too many states.
+    /// The operation needed more states than the `max_number_of_states` of the
+    /// [`ExecutionProfile`](crate::execution_profile::ExecutionProfile).
     AutomatonHasTooManyStates,
-    /// The regular expression cannot be parsed.
+    /// The pattern cannot be parsed; the string describes why.
     RegexSyntaxError(String),
-    /// The provided range cannot be built from the spanning set.
+    /// The spanning set cannot express the range.
     ConditionInvalidRange,
-    /// The repetition bounds are invalid: the maximum is below the minimum.
+    /// The maximum of a repetition, the second value, is below its minimum, the
+    /// first.
     InvalidRepetitionBounds(u32, u32),
-    /// The condition does not match the spanning set it is evaluated against.
+    /// The condition was not built over the spanning set it is read with.
     IncompatibleSpanningSet,
-    /// The operation requires a deterministic automaton, and implicit
-    /// determinization is disabled by the execution profile.
+    /// The operation needs a deterministic automaton, and the execution profile
+    /// disables implicit determinization.
     DeterministicAutomatonRequired,
-    /// The pattern uses a regex feature the engine cannot represent (an
-    /// unsupported anchor/boundary position, or inline flags). The string
-    /// describes the specific feature.
+    /// The pattern uses a construct the engine cannot represent: an anchor or a
+    /// word boundary where it is not supported, or an inline flag. The string
+    /// names it.
     UnsupportedRegexFeature(String),
-    /// A directly-constructed [`RegularExpression`](crate::regex::RegularExpression)
-    /// tree nests deeper than the engine converts safely (the payload is the
-    /// limit). Parsed patterns never hit this; it only guards against
-    /// stack-overflowing on pathologically deep hand-built trees.
+    /// A [`RegularExpression`](crate::regex::RegularExpression) built by hand
+    /// nests deeper than the limit, which the value holds. A parsed pattern
+    /// never does.
     RegexTooDeeplyNested(usize),
 }
 

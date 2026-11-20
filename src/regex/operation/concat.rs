@@ -1,7 +1,7 @@
 use super::*;
 
 impl RegularExpression {
-    /// Returns a regular expression that is the concatenation of all expressions in `regexes`.
+    /// Returns the concatenation of `regexes`, in order, simplified.
     #[tracing::instrument(level = "trace", skip_all)]
     pub fn concat_all<'a, I: IntoIterator<Item = &'a RegularExpression>>(
         regexes: I,
@@ -9,162 +9,78 @@ impl RegularExpression {
         let mut result = RegularExpression::new_empty_string();
 
         for other in regexes {
-            result = result.concat(other, true);
+            result.concat_mut(other.clone());
         }
 
         result
     }
 
-    /// Returns a new regular expression representing the concatenation of `self` and `other`; `append_back` determines their order.
+    /// Returns the concatenation of `self` and `other`, simplified: `self`
+    /// comes first if `append_back` is `true`, `other` if it is `false`.
     #[tracing::instrument(level = "trace", skip(self, other), fields(append_back = append_back))]
     pub fn concat(&self, other: &RegularExpression, append_back: bool) -> RegularExpression {
-        if self.is_empty() || other.is_empty() {
-            return RegularExpression::new_empty();
-        } else if self.is_empty_string() {
-            return other.clone();
-        } else if other.is_empty_string() {
-            return self.clone();
-        }
-
         let (front, back) = if append_back {
             (self, other)
         } else {
             (other, self)
         };
 
-        match (front, back) {
-            (RegularExpression::Concat(..), RegularExpression::Concat(..)) => {
-                Self::opconcat_concat_and_concat(front, back)
-            }
-            (RegularExpression::Concat(..), _) => Self::opconcat_concat_and_other(front, back),
-            (_, RegularExpression::Concat(..)) => Self::opconcat_other_and_concat(front, back),
-            (_, _) => Self::opconcat_other_and_other(front, back),
-        }
+        let mut result = front.clone();
+        result.concat_mut(back.clone());
+        result
     }
 
-    fn opconcat_other_and_other(
-        this: &RegularExpression,
-        that: &RegularExpression,
-    ) -> RegularExpression {
-        if let Some(merged) = Self::opconcat_can_be_merged(this, that) {
-            merged
-        } else {
-            let mut vec = VecDeque::with_capacity(2);
-            vec.push_back(this.clone());
-            vec.push_back(that.clone());
-            RegularExpression::Concat(vec)
+    /// Appends `that` to `self`, simplified: [`concat`](Self::concat) in
+    /// place. A fold of `concat` copies the expression accumulated so far at
+    /// each step, which takes quadratic time; a fold of `concat_mut` does
+    /// not.
+    pub(crate) fn concat_mut(&mut self, that: RegularExpression) {
+        if self.is_simplified_empty() || that.is_simplified_empty() {
+            *self = RegularExpression::new_empty();
+            return;
+        } else if that.is_simplified_empty_string() {
+            return;
+        } else if self.is_simplified_empty_string() {
+            *self = that;
+            return;
         }
-    }
 
-    fn opconcat_other_and_concat(
-        this: &RegularExpression,
-        that: &RegularExpression,
-    ) -> RegularExpression {
-        if let RegularExpression::Concat(that_elements) = that {
-            if that_elements.is_empty() {
-                return this.clone();
-            }
-
-            if let Some(merged) = Self::opconcat_can_be_merged(this, that) {
-                return merged;
-            }
-
-            // Clone the surviving elements only: the boundary element is
-            // either replaced by the merge or kept alongside `this`.
-            let mut vec: VecDeque<RegularExpression>;
-            if let Some(merged) = Self::opconcat_can_be_merged(this, &that_elements[0]) {
-                vec = that_elements.iter().skip(1).cloned().collect();
-                vec.push_front(merged);
-            } else {
-                vec = that_elements.clone();
-                vec.push_front(this.clone());
-            }
-
-            if vec.len() == 1 {
-                vec[0].clone()
-            } else {
-                RegularExpression::Concat(vec)
-            }
-        } else {
-            panic!("Not concat")
+        // The two as a whole, as `(ab)*` and `ab`.
+        if let Some(merged) = Self::opconcat_can_be_merged(self, &that) {
+            *self = merged;
+            return;
         }
-    }
 
-    fn opconcat_concat_and_other(
-        this: &RegularExpression,
-        that: &RegularExpression,
-    ) -> RegularExpression {
-        if let RegularExpression::Concat(this_elements) = this {
-            if this_elements.is_empty() {
-                return that.clone();
+        let this = std::mem::replace(self, RegularExpression::new_empty_string());
+        let mut elements = match (this, that) {
+            (RegularExpression::Concat(mut elements), RegularExpression::Concat(mut others)) => {
+                // Only the elements that meet can be merged.
+                if let Some(first) = others.pop_front() {
+                    Self::push_concat_element(&mut elements, first);
+                }
+                elements.extend(others);
+                elements
             }
-
-            if let Some(merged) = Self::opconcat_can_be_merged(this, that) {
-                return merged;
+            (RegularExpression::Concat(mut elements), that) => {
+                Self::push_concat_element(&mut elements, that);
+                elements
             }
-
-            // Clone the surviving elements only (see opconcat_other_and_concat).
-            let this_index = this_elements.len() - 1;
-            let mut vec: VecDeque<RegularExpression>;
-            if let Some(merged) = Self::opconcat_can_be_merged(&this_elements[this_index], that) {
-                vec = this_elements.iter().take(this_index).cloned().collect();
-                vec.push_back(merged);
-            } else {
-                vec = this_elements.clone();
-                vec.push_back(that.clone());
+            (this, RegularExpression::Concat(mut elements)) => {
+                match elements
+                    .front()
+                    .and_then(|first| Self::opconcat_can_be_merged(&this, first))
+                {
+                    Some(merged) => elements[0] = merged,
+                    None => elements.push_front(this),
+                }
+                elements
             }
-
-            if vec.len() == 1 {
-                vec[0].clone()
-            } else {
-                RegularExpression::Concat(vec)
-            }
-        } else {
-            panic!("Not concat")
-        }
-    }
-
-    fn opconcat_concat_and_concat(
-        this: &RegularExpression,
-        that: &RegularExpression,
-    ) -> RegularExpression {
-        if let (
-            RegularExpression::Concat(this_elements),
-            RegularExpression::Concat(that_elements),
-        ) = (this, that)
-        {
-            if this_elements.is_empty() {
-                return RegularExpression::Concat(that_elements.clone());
-            } else if that_elements.is_empty() {
-                return RegularExpression::Concat(this_elements.clone());
-            }
-
-            if let Some(merged) = Self::opconcat_can_be_merged(this, that) {
-                return merged;
-            }
-
-            // Clone the surviving elements only (see opconcat_other_and_concat).
-            let (this_index, that_index) = (this_elements.len() - 1, 0);
-            let mut vec: VecDeque<RegularExpression>;
-            if let Some(merged) =
-                Self::opconcat_can_be_merged(&this_elements[this_index], &that_elements[that_index])
-            {
-                vec = this_elements.iter().take(this_index).cloned().collect();
-                vec.push_back(merged);
-                vec.extend(that_elements.iter().skip(1).cloned());
-            } else {
-                vec = this_elements.clone();
-                vec.extend(that_elements.iter().cloned());
-            }
-
-            if vec.len() == 1 {
-                vec[0].clone()
-            } else {
-                RegularExpression::Concat(vec)
-            }
-        } else {
-            panic!("Not concat")
-        }
+            (this, that) => VecDeque::from([this, that]),
+        };
+        *self = match elements.len() {
+            1 => elements.pop_front().expect("len() == 1"),
+            _ => RegularExpression::Concat(elements),
+        };
     }
 
     /// Appends `that` to the fold accumulator `elements`, merging with the

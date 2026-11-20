@@ -8,20 +8,18 @@ mod state_elimination;
 /// [`FastAutomaton::to_regex_with`] and
 /// [`Term::to_regex_with`](crate::Term::to_regex_with).
 ///
-/// The crate provides [`StateElimination`], what
-/// [`FastAutomaton::to_regex`] uses, and, with the `neural-synthesis` feature,
+/// The crate provides [`StateElimination`], which [`FastAutomaton::to_regex`]
+/// uses, and, with the `neural-synthesis` feature,
 /// `neural_synthesis::NeuralSynthesizer`, which asks a learned model for a
 /// simpler regex.
 pub trait RegexSynthesizer {
-    /// A regular expression describing exactly the language of `automaton`.
+    /// Returns a regular expression that matches the strings `automaton`
+    /// accepts, and no other.
     fn synthesize(&self, automaton: &FastAutomaton) -> Result<RegularExpression, EngineError>;
 }
 
-/// Conversion by state elimination, what [`FastAutomaton::to_regex`] uses:
-/// the automaton's states are removed one at a time, each removal folding the
-/// paths through the state into regexes on the transitions around it, until
-/// one transition from the start to acceptance remains. The result is always
-/// exact, but often long and hard to read.
+/// Conversion by state elimination, which [`FastAutomaton::to_regex`] uses. The
+/// result is exact, but often long and hard to read.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct StateElimination;
 
@@ -32,12 +30,12 @@ impl RegexSynthesizer for StateElimination {
 }
 
 impl FastAutomaton {
-    /// Converts the automaton to a [`RegularExpression`] by state
-    /// elimination (see [`StateElimination`]).
+    /// Converts the automaton to a [`RegularExpression`] that matches the same
+    /// strings, by state elimination (see [`StateElimination`]).
     ///
-    /// The result describes exactly the automaton's language, but can be long
-    /// and hard to read; [`to_regex_with`](Self::to_regex_with) takes other
-    /// ways to convert it.
+    /// The result can be long and hard to read: its size can grow exponentially
+    /// with the number of states. [`to_regex_with`](Self::to_regex_with) takes
+    /// other ways to convert the automaton.
     #[tracing::instrument(level = "debug", skip_all, fields(states = self.number_of_states()))]
     pub fn to_regex(&self) -> Result<RegularExpression, EngineError> {
         state_elimination::convert_to_regex(self)

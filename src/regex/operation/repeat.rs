@@ -1,11 +1,11 @@
 use super::*;
 
 impl RegularExpression {
-    /// Computes the repetition of the expression between `min` and `max_opt` times; if `max_opt` is `None`, the repetition is unbounded.
+    /// Returns the repetition of `self`, simplified: the strings made of `n`
+    /// strings of `self` one after the other, for every `n` from `min` to
+    /// `max_opt`, with no upper bound when `max_opt` is `None`.
     ///
-    /// When `max_opt` is below `min` there is no valid repetition count and
-    /// the result is the empty language, consistently with
-    /// [`FastAutomaton::repeat`](crate::fast_automaton::FastAutomaton::repeat).
+    /// A `max_opt` below `min` gives the empty language.
     #[tracing::instrument(level = "trace", skip(self), fields(min = min, max_opt = tracing::field::debug(max_opt)))]
     pub fn repeat(&self, min: u32, max_opt: Option<u32>) -> RegularExpression {
         if let Some(max) = max_opt {
@@ -18,13 +18,13 @@ impl RegularExpression {
 
         if self.is_total() {
             return RegularExpression::new_total();
-        } else if self.is_empty() {
+        } else if self.is_simplified_empty() {
             return if min == 0 {
                 Self::new_empty_string()
             } else {
                 RegularExpression::new_empty()
             };
-        } else if self.is_empty_string() {
+        } else if self.is_simplified_empty_string() {
             return Self::new_empty_string();
         } else if min == 1 && max_opt == Some(1) {
             return self.clone();
@@ -113,22 +113,22 @@ mod tests {
     #[test]
     fn repeat_count_guards_precede_receiver_shortcuts() {
         let total = RegularExpression::new_total();
-        assert!(total.repeat(0, Some(0)).is_empty_string());
-        assert!(total.repeat(5, Some(2)).is_empty());
+        assert!(total.repeat(0, Some(0)).is_simplified_empty_string());
+        assert!(total.repeat(5, Some(2)).is_simplified_empty());
         assert!(total.repeat(0, Some(3)).is_total());
         assert!(total.repeat(2, None).is_total());
 
         let empty = RegularExpression::new_empty();
-        assert!(empty.repeat(0, Some(0)).is_empty_string());
-        assert!(empty.repeat(0, Some(5)).is_empty_string());
-        assert!(empty.repeat(0, None).is_empty_string());
-        assert!(empty.repeat(2, Some(5)).is_empty());
-        assert!(empty.repeat(2, None).is_empty());
+        assert!(empty.repeat(0, Some(0)).is_simplified_empty_string());
+        assert!(empty.repeat(0, Some(5)).is_simplified_empty_string());
+        assert!(empty.repeat(0, None).is_simplified_empty_string());
+        assert!(empty.repeat(2, Some(5)).is_simplified_empty());
+        assert!(empty.repeat(2, None).is_simplified_empty());
 
         let empty_string = RegularExpression::new_empty_string();
-        assert!(empty_string.repeat(0, Some(0)).is_empty_string());
-        assert!(empty_string.repeat(5, Some(2)).is_empty());
-        assert!(empty_string.repeat(3, Some(7)).is_empty_string());
+        assert!(empty_string.repeat(0, Some(0)).is_simplified_empty_string());
+        assert!(empty_string.repeat(5, Some(2)).is_simplified_empty());
+        assert!(empty_string.repeat(3, Some(7)).is_simplified_empty_string());
 
         // Each case must agree with the automaton construction.
         for receiver in [&total, &empty, &empty_string] {
@@ -157,7 +157,7 @@ mod tests {
         // on these edges.
         let degenerate =
             RegularExpression::Repetition(Box::new(RegularExpression::new_total()), 0, Some(0));
-        assert!(degenerate.simplify().is_empty_string());
+        assert!(degenerate.simplify().is_simplified_empty_string());
     }
 
     // The nested-repetition collapse must treat 0·∞ as 0: an unbounded
@@ -192,7 +192,7 @@ mod tests {
     #[test]
     fn repeat_with_max_below_min_is_empty() {
         let a = RegularExpression::new("a").unwrap();
-        assert!(a.repeat(5, Some(2)).is_empty());
+        assert!(a.repeat(5, Some(2)).is_simplified_empty());
 
         let automaton = a.to_automaton().unwrap().repeat(5, Some(2)).unwrap();
         assert!(automaton.is_empty());

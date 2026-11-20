@@ -5,14 +5,15 @@ use super::*;
 mod cardinality;
 mod equivalence;
 mod length;
+#[cfg(test)]
+mod reference_tests;
+pub(super) mod state_sets;
 mod subset;
 
 impl FastAutomaton {
-    /// Checks if the automaton matches the empty language.
+    /// Returns `true` if the automaton accepts no string.
     ///
-    /// Sound and complete: works on NFAs and non-minimal automata without
-    /// requiring determinization or minimization. O(V + E) worst case, with
-    /// O(1) fast paths for the common cases.
+    /// Exact whether the automaton is deterministic or not. Linear in its size.
     pub fn is_empty(&self) -> bool {
         if self.accept_states.is_empty() {
             return true;
@@ -48,16 +49,14 @@ impl FastAutomaton {
         true
     }
 
-    /// Checks if the automaton matches all possible strings.
+    /// Returns `true` if the automaton is found to accept every string.
     ///
-    /// Sound and complete for **deterministic** automata: a DFA's language
-    /// equals Σ\* iff every reachable state is accepting AND its outgoing
-    /// conditions union to Σ. For NFAs this is sound but conservative:
-    /// alternative paths may cover a character that no single reachable
-    /// state covers, so callers that need an exact answer on an NFA should
-    /// determinize first.
+    /// Exact for a deterministic automaton. For a non-deterministic one, `true`
+    /// is reliable, but `false` can be returned for an automaton that accepts
+    /// every string: [`determinize`](Self::determinize) it first, or test
+    /// `FastAutomaton::new_total().subset(&automaton)`.
     ///
-    /// O(V + E) plus one condition-union per outgoing transition.
+    /// Linear in the size of the automaton.
     pub fn is_total(&self) -> bool {
         let mut visited = IntSet::default();
         let mut worklist = VecDeque::new();
@@ -85,12 +84,10 @@ impl FastAutomaton {
         true
     }
 
-    /// Checks if the automaton only matches the empty string `""`.
+    /// Returns `true` if the automaton accepts the empty string `""` and no
+    /// other.
     ///
-    /// Sound and complete on any automaton (DFA or NFA): the language equals
-    /// `{""}` iff start is accepting AND no state reachable from start by at
-    /// least one non-empty transition is, or can reach, an accept state.
-    /// O(V + E).
+    /// Exact whether the automaton is deterministic or not. Linear in its size.
     pub fn is_empty_string(&self) -> bool {
         if !self.accept_states.contains(&self.start_state) {
             return false;
@@ -149,17 +146,16 @@ impl FastAutomaton {
         visited
     }
 
-    /// Returns the "live" (co-reachable) states: those that can **reach an
-    /// accept state** by following non-empty transitions. Computed by a reverse
-    /// traversal from the accept states.
+    /// Returns the states from which an accept state can be reached. They are
+    /// not the states that can be reached from the start state.
     ///
-    /// This is co-reachability; note it is *not* the set of states reachable
-    /// from the start state.
+    /// Linear in the size of the automaton.
     pub fn live_states(&self) -> IntSet<State> {
         // Reverse BFS over the maintained `transitions_in` adjacency.
-        // `transitions_in` doesn't filter empty-condition edges
-        // (constructible via the public `add_transition`), so each edge's
-        // condition is checked on traversal. The lookup on `transitions`
+        // `transitions_in` doesn't filter empty-condition edges, so each
+        // edge's condition is checked on traversal. `add_transition` adds
+        // none, but `apply_new_spanning_set` can leave one, with a spanning
+        // set that cannot express a condition. The lookup on `transitions`
         // also makes tombstoned predecessors fall out naturally.
         let mut worklist = VecDeque::from_iter(self.accept_states.iter().cloned());
         let mut live = self.accept_states.clone();
@@ -184,15 +180,9 @@ impl FastAutomaton {
         live
     }
 
-    /// Returns one [`Condition`] per base of the spanning set, including the
-    /// "rest" range when it is non-empty.
-    ///
-    /// The bases must partition the whole alphabet Σ: subset construction
-    /// ([`determinize`](Self::determinize)) and Hopcroft partitioning
-    /// ([`minimize`](Self::minimize)) iterate them and would otherwise silently
-    /// drop transitions whose condition lies in the "rest" range. (For a
-    /// spanning set with an empty rest this is exactly the spanning ranges, so
-    /// well-formed automata are unaffected.)
+    /// Returns one [`Condition`] per base of the spanning set: one for each of
+    /// its ranges, and one for its rest when it is not empty. Together, they
+    /// cover every character.
     pub fn spanning_bases(&self) -> Result<Vec<Condition>, EngineError> {
         // Base `i` is by construction exactly bit `i` of a condition.
         Ok((0..self.spanning_set.spanning_ranges_with_rest_len())
@@ -233,11 +223,11 @@ mod tests {
         Ok(())
     }
 
-    // An empty-condition transition (constructible via the public
-    // `add_transition`) can't be taken, so a state whose only path to an
-    // accept state goes through one is dead. `live_states` walks
+    // An empty-condition transition can't be taken, so a state whose only
+    // path to an accept state goes through one is dead. `live_states` walks
     // `transitions_in`, which records such edges, so it must check the
-    // condition instead of trusting the adjacency.
+    // condition instead of trusting the adjacency. `add_transition` ignores
+    // an empty condition: the edge is stored directly.
     #[test]
     fn live_states_ignores_empty_condition_edges() {
         use crate::fast_automaton::condition::Condition;
@@ -246,8 +236,11 @@ mod tests {
         let s1 = a.new_state();
         let s2 = a.new_state();
         a.add_transition(0, s1, &Condition::total(a.spanning_set()));
-        a.add_transition(s2, s1, &Condition::empty(a.spanning_set()));
+        let empty = Condition::empty(a.spanning_set());
+        a.transitions[s2].insert(s1, empty);
+        a.transitions_in.entry(s1).or_default().insert(s2);
         a.accept(s1);
+        assert!(a.has_transition(s2, s1));
 
         let live = a.live_states();
         assert!(live.contains(&0));

@@ -1,17 +1,13 @@
 use super::*;
 
 impl FastAutomaton {
-    /// Returns the minimum and maximum length of matched strings.
+    /// Returns the minimum and maximum length of the strings accepted.
     ///
-    /// Cycles are only treated as "language-extending" if they sit on an
-    /// accepting path. Cycles among dead states (states that can't reach any
-    /// accept) don't extend the language and therefore don't make the max
-    /// infinite.
+    /// Both are `None` when the automaton accepts no string. The maximum is
+    /// also `None` when the strings have no longest length: a cycle lies on a
+    /// path from the start state to an accept state.
     ///
-    /// Runs in O(V + E): the minimum is a BFS distance; the maximum is a
-    /// longest path over the subgraph of states lying on accepting paths,
-    /// which is unbounded exactly when that subgraph has a cycle (any such
-    /// cycle can be pumped).
+    /// Linear in the size of the automaton.
     #[must_use]
     pub fn length(&self) -> (Option<u32>, Option<u32>) {
         // States that can reach an accept state. If the start state can't,

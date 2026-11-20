@@ -7,14 +7,19 @@ use crate::{error::EngineError, execution_profile::ExecutionProfile};
 use super::*;
 
 impl FastAutomaton {
-    /// Computes the union between `self` and `other`.
+    /// Returns the union of `self` and `other`: the strings that at least one
+    /// of them accepts.
+    ///
+    /// Linear in the sizes of both automata. The result is not deterministic in
+    /// general.
     pub fn union(&self, other: &FastAutomaton) -> Result<Self, EngineError> {
         let mut new_automaton = self.clone();
         new_automaton.union_mut(other)?;
         Ok(new_automaton)
     }
 
-    /// Computes the union of all automata in the given iterator.
+    /// Returns the union of `automata`: the strings that at least one of them
+    /// accepts. An empty iterator gives the automaton that accepts no string.
     #[tracing::instrument(level = "debug", skip_all)]
     pub fn union_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(
         automata: I,
@@ -44,10 +49,11 @@ impl FastAutomaton {
         Ok(new_automaton)
     }
 
-    /// Computes in parallel the union of all automata in the given iterator.
+    /// Returns the union of `automata`, as [`union_all`](Self::union_all) does,
+    /// working in parallel.
     ///
     /// Only available with the `parallel` feature (enabled by default), and not
-    /// on `wasm`, which has no threads and does not depend on `rayon`.
+    /// on `wasm`.
     #[cfg(all(feature = "parallel", not(target_family = "wasm")))]
     #[tracing::instrument(level = "debug", skip_all)]
     pub fn union_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(
@@ -229,9 +235,7 @@ impl FastAutomaton {
     /// them on the growing result at every fold step made large alternations
     /// quadratic.
     fn union_mut_nondegenerate(&mut self, other: &FastAutomaton) -> Result<(), EngineError> {
-        self.assert_nondegenerate_operation_fits(other, || {
-            self.union_state_count_nondegenerate(other)
-        })?;
+        self.assert_nondegenerate_operation_fits(other, || self.union_state_count(other))?;
 
         // Equal spanning sets (the dominant case in `union_all` folds) skip
         // the quadratic merge and treat every condition conversion as identity.
@@ -282,25 +286,11 @@ impl FastAutomaton {
         Ok(())
     }
 
-    /// Computes the expected number of states after calling `union_mut`.
-    /// Kept as the specification of the union's state growth; the exactness
-    /// tests validate it against `union_mut`, and the non-degenerate half
-    /// backs the state-limit check in the union core.
-    #[cfg(test)]
-    fn union_state_count_heuristic(&self, other: &FastAutomaton) -> usize {
-        // Edge cases
-        if other.is_empty() || self.is_total() {
-            return self.number_of_states();
-        } else if other.is_total() || self.is_empty() {
-            return other.number_of_states();
-        }
-
-        self.union_state_count_nondegenerate(other)
-    }
-
-    /// [`union_state_count_heuristic`](Self::union_state_count_heuristic) for
-    /// operands already known to be non-degenerate: no emptiness walks.
-    fn union_state_count_nondegenerate(&self, other: &FastAutomaton) -> usize {
+    /// The number of states [`union_mut_nondegenerate`](Self::union_mut_nondegenerate)
+    /// leaves `self` with, computed without building the union, which backs
+    /// its state-limit check. Like it, assumes neither operand is `∅` or
+    /// `Σ*`, so it never walks them to check.
+    fn union_state_count(&self, other: &FastAutomaton) -> usize {
         let v1 = self.number_of_states();
         let v2 = other.number_of_states();
 
@@ -657,6 +647,18 @@ mod tests {
         Ok(())
     }
 
+    /// The number of states `union_mut` leaves `a1` with: the degenerate
+    /// cases it handles itself, and `union_state_count` for the rest.
+    fn expected_union_states(a1: &FastAutomaton, a2: &FastAutomaton) -> usize {
+        if a2.is_empty() || a1.is_total() {
+            a1.number_of_states()
+        } else if a2.is_total() || a1.is_empty() {
+            a2.number_of_states()
+        } else {
+            a1.union_state_count(a2)
+        }
+    }
+
     fn assert_heuristic(regex1: &str, regex2: &str) {
         println!("Testing union heuristic for: '{}' | '{}'", regex1, regex2);
 
@@ -675,7 +677,7 @@ mod tests {
             actual_union.union_mut(a2).unwrap();
 
             let actual_states = actual_union.number_of_states();
-            let heuristic_states = a1.union_state_count_heuristic(a2);
+            let heuristic_states = expected_union_states(a1, a2);
 
             assert_eq!(
                 actual_states, heuristic_states,

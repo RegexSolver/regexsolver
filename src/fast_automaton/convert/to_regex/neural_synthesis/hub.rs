@@ -10,11 +10,12 @@ use std::path::PathBuf;
 use super::{Device, NeuralSynthesisError, NeuralSynthesizer};
 
 impl NeuralSynthesizer {
-    /// The model [`from_hub`](Self::from_hub) loads by default.
+    /// The repository of the default model, to pass to
+    /// [`from_hub`](Self::from_hub).
     pub const DEFAULT_HUB_MODEL: &str = "alexvbrdn/kleene2-9m-b16-t128";
 
-    /// Downloads a model from the Hugging Face Hub (its latest revision) and
-    /// loads it. `repo_id` is `owner/name`, e.g.
+    /// Downloads a model from the Hugging Face Hub, at the head of its `main`
+    /// branch, and loads it. `repo_id` is `owner/name`, e.g.
     /// [`DEFAULT_HUB_MODEL`](Self::DEFAULT_HUB_MODEL).
     pub fn from_hub(repo_id: &str, device: Device) -> Result<Self, NeuralSynthesisError> {
         Self::from_hub_revision(repo_id, "main", device)
