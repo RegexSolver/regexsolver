@@ -1,10 +1,11 @@
-/// Represents a cardinality: either a specific integer, a number too large to represent exactly, or infinite.
+/// The number of strings of a language: a count, a count too large for its
+/// integer type, or infinite.
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Cardinality<U> {
-    /// An infinite number.
+    /// Infinitely many.
     Infinite,
-    /// A finite number.
+    /// A count that fits its integer type.
     Integer(U),
-    /// A finite number too big to be represented.
+    /// A finite count too large for its integer type.
     BigInteger,
 }

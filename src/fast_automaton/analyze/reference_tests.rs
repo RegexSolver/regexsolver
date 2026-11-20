@@ -1,6 +1,6 @@
-//! `equivalent`, `subset`, `cardinality` and `difference`, checked against
-//! the textbook definitions (determinize, then complement and intersect, or
-//! count paths).
+//! `equivalent`, `subset`, `cardinality`, `difference` and
+//! `symmetric_difference`, checked against the textbook definitions
+//! (determinize, then complement and intersect, or count paths).
 
 use proptest::prelude::*;
 use regex_charclass::char::Char;
@@ -52,6 +52,21 @@ fn assert_difference_matches_reference(a: &FastAutomaton, b: &FastAutomaton) {
         "difference is larger on\n{a}\n{b}"
     );
     assert!(!a.is_deterministic() || difference.is_deterministic());
+}
+
+fn assert_symmetric_difference_matches_reference(a: &FastAutomaton, b: &FastAutomaton) {
+    let symmetric_difference = a.symmetric_difference(b).unwrap();
+    let reference = difference_by_complement(a, b)
+        .union(&difference_by_complement(b, a))
+        .unwrap();
+    assert!(
+        equivalent_by_complement(&symmetric_difference, &reference),
+        "symmetric difference disagrees on\n{a}\n{b}"
+    );
+    // Deterministic when both operands are, where it pairs their states.
+    assert!(
+        !a.is_deterministic() || !b.is_deterministic() || symmetric_difference.is_deterministic()
+    );
 }
 
 /// The check on two deterministic automata, on the determinized operands
@@ -137,6 +152,9 @@ fn matches_the_reference_on_patterns() {
             assert_matches_reference(a, b);
             assert_matches_reference(&determinized, b);
             assert_difference_matches_reference(a, b);
+            assert_symmetric_difference_matches_reference(a, b);
+            // Two deterministic operands, whose states are paired.
+            assert_symmetric_difference_matches_reference(&determinized, &b.determinize().unwrap());
             assert_deterministic_equivalence_matches_reference(a, b);
         }
     }
@@ -216,6 +234,33 @@ fn difference_only_builds_the_pairs_a_word_reaches() {
         });
 }
 
+// Neither difference determinizes its subtrahend: `b` cannot be determinized
+// under the cap, and `a` only reaches a few of its sets.
+#[test]
+fn symmetric_difference_only_builds_the_pairs_a_word_reaches() {
+    let a = automaton("(a|b){0,6}");
+    let b = automaton("(a|b)*a(a|b){11}");
+    let symmetric_difference = ExecutionProfileBuilder::new()
+        .max_number_of_states(200)
+        .build()
+        .run(|| {
+            assert_eq!(
+                b.determinize().unwrap_err(),
+                EngineError::AutomatonHasTooManyStates
+            );
+            assert_eq!(
+                automaton("(a|b)*").symmetric_difference(&b).unwrap_err(),
+                EngineError::AutomatonHasTooManyStates
+            );
+            a.symmetric_difference(&b).unwrap()
+        });
+    // The reference determinizes `b`: it is compared outside of the cap.
+    let reference = difference_by_complement(&a, &b)
+        .union(&difference_by_complement(&b, &a))
+        .unwrap();
+    assert!(symmetric_difference.equivalent(&reference).unwrap());
+}
+
 #[test]
 fn respects_the_state_budget_and_the_timeout() {
     let a = automaton("(a|b)*a(a|b){11}");
@@ -229,6 +274,9 @@ fn respects_the_state_budget_and_the_timeout() {
             assert_eq!(a.equivalent(&b).unwrap_err(), err);
             assert_eq!(a.subset(&b).unwrap_err(), err);
             assert_eq!(a_dfa.equivalent(&b_dfa).unwrap_err(), err);
+            assert_eq!(a.difference(&b).unwrap_err(), err);
+            assert_eq!(a.symmetric_difference(&b).unwrap_err(), err);
+            assert_symmetric_difference_all_fails(&[&a, &b, a_dfa.as_ref()], &err);
         });
     ExecutionProfileBuilder::new()
         .execution_timeout(0)
@@ -242,7 +290,22 @@ fn respects_the_state_budget_and_the_timeout() {
             let err = EngineError::OperationTimeOutError;
             assert_eq!(a.equivalent(&b).unwrap_err(), err);
             assert_eq!(a.subset(&b).unwrap_err(), err);
+            assert_eq!(a.difference(&b).unwrap_err(), err);
+            assert_eq!(a.symmetric_difference(&b).unwrap_err(), err);
+            assert_symmetric_difference_all_fails(&[&a, &b, a_dfa.as_ref()], &err);
         });
+}
+
+/// Asserts that the symmetric difference of `automata` fails with `error`,
+/// walked together and by groups in parallel.
+fn assert_symmetric_difference_all_fails(automata: &[&FastAutomaton], error: &EngineError) {
+    let all = FastAutomaton::symmetric_difference_all(automata.iter().copied());
+    assert_eq!(&all.unwrap_err(), error);
+    #[cfg(all(feature = "parallel", not(target_family = "wasm")))]
+    {
+        let all = FastAutomaton::symmetric_difference_all_par(automata.to_vec());
+        assert_eq!(&all.unwrap_err(), error);
+    }
 }
 
 /// A random automaton of up to `max_states` states over ranges cut from
@@ -302,8 +365,12 @@ fn assert_matches_reference_and_itself(a: &FastAutomaton, b: &FastAutomaton) {
     assert_matches_reference(a, b);
     assert_difference_matches_reference(a, b);
     assert_difference_matches_reference(b, a);
+    assert_symmetric_difference_matches_reference(a, b);
     assert_deterministic_equivalence_matches_reference(a, b);
     let determinized = a.determinize().unwrap();
+    // One and two deterministic operands.
+    assert_symmetric_difference_matches_reference(&determinized, b);
+    assert_symmetric_difference_matches_reference(&determinized, &b.determinize().unwrap());
     assert!(a.equivalent_over_state_sets(&determinized).unwrap());
     assert!(determinized.subset_over_state_sets(a).unwrap());
     // Same language as `a`, over the states of both.

@@ -8,17 +8,14 @@ use super::state_sets::{Id, Marks, Operand, SetTrie};
 use super::*;
 
 impl FastAutomaton {
-    /// Returns `true` if both automata accept the same language.
+    /// Returns `true` if both automata accept the same strings.
     ///
-    /// Non-deterministic operands are not determinized: the two automata are
-    /// walked together over the sets of states a word can reach, and a pair
-    /// of sets is skipped when it follows from the pairs already met
-    /// (bisimulation up to congruence). The walk is still exponential in the
-    /// worst case; the execution profile's timeout applies, and its
-    /// `max_number_of_states` caps the number of pairs walked.
+    /// Neither automaton is determinized.
     ///
-    /// Two deterministic automata are compared state by state instead, in
-    /// time close to linear in their number of states.
+    /// Close to linear in the number of states for two deterministic automata.
+    /// Exponential in the worst case otherwise: the timeout of the execution
+    /// profile applies, and its `max_number_of_states` caps the number of pairs
+    /// of sets of states visited.
     #[tracing::instrument(level = "debug", skip_all, fields(self_states = self.number_of_states(), self_deterministic = self.is_deterministic(), other_states = other.number_of_states(), other_deterministic = other.is_deterministic()))]
     pub fn equivalent(&self, other: &FastAutomaton) -> Result<bool, EngineError> {
         // `is_empty` is exact, so a mismatch proves the languages differ.
@@ -210,7 +207,8 @@ impl FastAutomaton {
         // Both operands share one id space, `self` first: the sets a rule
         // rewrites mix states of the two.
         let other_offset = self.transitions.len();
-        let (left, right, bases) = Operand::pair(self, 0, other, other_offset)?;
+        let (left, right, shared) = Operand::pair(self, 0, other, other_offset)?;
+        let bases = shared.spanning_set().spanning_ranges_with_rest_len();
 
         let (Some(left_start), Some(right_start)) = (left.start, right.start) else {
             return Ok(left.start.is_none() && right.start.is_none());

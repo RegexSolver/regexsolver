@@ -81,7 +81,7 @@ Constructs a regular language can't express, such as backreferences, lookaround,
 | | Methods |
 |---|---|
 | Build | `from_pattern`, `parse`, `concat`, `repeat` |
-| Combine | `union`, `intersection`, `difference`, `complement` |
+| Combine | `union`, `intersection`, `difference`, `symmetric_difference`, `complement` |
 | Compare | `equivalent`, `subset`, `is_match` |
 | Analyze | `is_empty`, `is_total`, `length`, `cardinality` |
 | Generate | `generate_strings`, `iter_strings` |

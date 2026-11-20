@@ -7,14 +7,19 @@ use crate::{error::EngineError, execution_profile::ExecutionProfile};
 use super::*;
 
 impl FastAutomaton {
-    /// Computes the union between `self` and `other`.
+    /// Returns the union of `self` and `other`: the strings that at least one
+    /// of them accepts.
+    ///
+    /// Linear in the sizes of both automata. The result is not deterministic in
+    /// general.
     pub fn union(&self, other: &FastAutomaton) -> Result<Self, EngineError> {
         let mut new_automaton = self.clone();
         new_automaton.union_mut(other)?;
         Ok(new_automaton)
     }
 
-    /// Computes the union of all automata in the given iterator.
+    /// Returns the union of `automata`: the strings that at least one of them
+    /// accepts. An empty iterator gives the automaton that accepts no string.
     #[tracing::instrument(level = "debug", skip_all)]
     pub fn union_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(
         automata: I,
@@ -44,10 +49,11 @@ impl FastAutomaton {
         Ok(new_automaton)
     }
 
-    /// Computes in parallel the union of all automata in the given iterator.
+    /// Returns the union of `automata`, as [`union_all`](Self::union_all) does,
+    /// working in parallel.
     ///
     /// Only available with the `parallel` feature (enabled by default), and not
-    /// on `wasm`, which has no threads and does not depend on `rayon`.
+    /// on `wasm`.
     #[cfg(all(feature = "parallel", not(target_family = "wasm")))]
     #[tracing::instrument(level = "debug", skip_all)]
     pub fn union_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(

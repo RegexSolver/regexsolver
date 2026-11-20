@@ -46,9 +46,9 @@ impl FastAutomaton {
         Ok(())
     }
 
-    /// Removes "dead" states (those that cannot reach any accept state), since
-    /// they never contribute to the language. If the language is empty the whole
-    /// automaton collapses to the canonical empty automaton.
+    /// Removes the states from which no accept state can be reached. An
+    /// automaton that accepts no string becomes the one
+    /// [`new_empty`](Self::new_empty) creates.
     pub fn remove_dead_states(&mut self) {
         if !self.is_empty() {
             let live_states = self.live_states();

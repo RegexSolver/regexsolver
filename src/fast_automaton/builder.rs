@@ -5,7 +5,7 @@ use crate::error::EngineError;
 use super::*;
 
 impl FastAutomaton {
-    /// Creates an automaton that matches the empty language.
+    /// Creates an automaton that accepts no string.
     #[inline]
     pub fn new_empty() -> Self {
         Self {
@@ -20,7 +20,7 @@ impl FastAutomaton {
         }
     }
 
-    /// Creates an automaton that only matches the empty string `""`.
+    /// Creates an automaton that accepts the empty string `""` and no other.
     #[inline]
     pub fn new_empty_string() -> Self {
         let mut automaton = Self::new_empty();
@@ -29,7 +29,7 @@ impl FastAutomaton {
         automaton
     }
 
-    /// Creates an automaton that matches all possible strings.
+    /// Creates an automaton that accepts every string.
     #[inline]
     pub fn new_total() -> Self {
         let mut automaton: FastAutomaton = Self::new_empty();
@@ -40,7 +40,8 @@ impl FastAutomaton {
         automaton
     }
 
-    /// Creates an automaton that matches one of the characters in the given [`CharRange`].
+    /// Creates an automaton that accepts the strings made of one character of
+    /// `range`.
     pub fn new_from_range(range: &CharRange) -> Self {
         let mut automaton = Self::new_empty();
         if range.is_empty() {
@@ -58,7 +59,7 @@ impl FastAutomaton {
         automaton
     }
 
-    /// Creates a new state and returns its identifier.
+    /// Adds a state and returns its identifier.
     #[inline]
     pub fn new_state(&mut self) -> State {
         self.minimal = false;
@@ -71,7 +72,11 @@ impl FastAutomaton {
         }
     }
 
-    /// Marks the provided state as an accepting (final) state.
+    /// Makes `state` an accept state.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `state` does not exist.
     #[inline]
     pub fn accept(&mut self, state: State) {
         self.assert_state_exists(state);
@@ -79,7 +84,11 @@ impl FastAutomaton {
         self.accept_states.insert(state);
     }
 
-    /// Marks the provided state as a non-accepting state.
+    /// Makes `state` a state that does not accept.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `state` does not exist.
     #[inline]
     pub fn unaccept(&mut self, state: State) {
         self.assert_state_exists(state);
@@ -87,13 +96,22 @@ impl FastAutomaton {
         self.accept_states.remove(&state);
     }
 
-    /// Creates a new transition with the given condition; the condition must follow the automaton’s current spanning set.
+    /// Adds a transition from `from_state` to `to_state` for the characters of
+    /// `new_cond`, which must be expressed over the automaton's current
+    /// [`SpanningSet`].
     ///
-    /// If you don't want to deal with conditions and spanning sets, use
-    /// [`add_transition_from_range`](Self::add_transition_from_range), which
-    /// handles the bookkeeping for you.
+    /// If the two states already have a transition, the characters are added to
+    /// it. An empty condition adds nothing.
     ///
-    /// This method accepts a [`Condition`] rather than a raw character set. To build a [`Condition`], call:
+    /// [`add_transition_from_range`](Self::add_transition_from_range) takes a
+    /// [`CharRange`] and maintains the spanning set: use it unless you manage
+    /// the spanning set yourself.
+    ///
+    /// # Building the condition
+    ///
+    /// [`Condition::from_range`] converts a [`CharRange`] that the spanning set
+    /// can express:
+    ///
     /// ```rust
     /// # use regexsolver::CharRange;
     /// # use regexsolver::fast_automaton::{condition::Condition, spanning_set::SpanningSet};
@@ -101,35 +119,46 @@ impl FastAutomaton {
     /// # let spanning_set = SpanningSet::new_total();
     /// Condition::from_range(&range, &spanning_set);
     /// ```
-    /// where `spanning_set` is the automaton's current [`SpanningSet`]. The [`CharRange`] you pass must be fully covered by that spanning set. If it isn't, you have two options:
     ///
-    /// 1. Merge an existing spanning set with another:
-    /// ```rust
-    /// # use regexsolver::fast_automaton::spanning_set::SpanningSet;
-    /// # let old_set = SpanningSet::new_total();
-    /// # let other_set = SpanningSet::new_total();
-    /// let new_set = SpanningSet::merge(&old_set, &other_set);
-    /// ```
+    /// When it cannot, compute a spanning set that can, with
+    /// [`SpanningSet::merge`] or [`SpanningSet::compute_spanning_set`], and
+    /// apply it to the automaton first:
     ///
-    /// 2. Recompute from a list of ranges:
     /// ```rust
     /// # use regexsolver::CharRange;
-    /// # use regexsolver::fast_automaton::spanning_set::SpanningSet;
-    /// # let range_set1 = CharRange::total();
-    /// # let range_set2 = CharRange::total();
-    /// let new_set = SpanningSet::compute_spanning_set(&[range_set1, range_set2]);
-    /// ```
-    ///
-    /// After constructing `new_set`, apply it to the automaton:
-    /// ```rust
     /// # use regexsolver::fast_automaton::{FastAutomaton, spanning_set::SpanningSet};
-    /// # let mut fast_automaton = FastAutomaton::new_total();
-    /// # let new_set = SpanningSet::new_total();
-    /// fast_automaton.apply_new_spanning_set(&new_set);
+    /// # let mut automaton = FastAutomaton::new_total();
+    /// # let range = CharRange::total();
+    /// let spanning_set = automaton
+    ///     .spanning_set()
+    ///     .merge(&SpanningSet::compute_spanning_set(&[range]));
+    /// automaton.apply_new_spanning_set(&spanning_set).unwrap();
     /// ```
     ///
-    /// This design allows us to perform unions, intersections, and complements of transition conditions in O(1) time, but it does add some complexity to automaton construction. For more details, you can check [this article](https://alexvbrdn.me/post/optimizing-transition-conditions-automaton-representation).
+    /// # Panics
+    ///
+    /// Panics if a state does not exist.
     pub fn add_transition(&mut self, from_state: State, to_state: State, new_cond: &Condition) {
+        self.add_transition_cow(from_state, to_state, Cow::Borrowed(new_cond));
+    }
+
+    /// [`add_transition`](Self::add_transition) of a condition the caller
+    /// has no further use for, which is stored instead of being cloned.
+    pub(crate) fn add_owned_transition(
+        &mut self,
+        from_state: State,
+        to_state: State,
+        new_cond: Condition,
+    ) {
+        self.add_transition_cow(from_state, to_state, Cow::Owned(new_cond));
+    }
+
+    fn add_transition_cow(
+        &mut self,
+        from_state: State,
+        to_state: State,
+        new_cond: Cow<'_, Condition>,
+    ) {
         self.assert_state_exists(from_state);
         if from_state != to_state {
             self.assert_state_exists(to_state);
@@ -145,7 +174,7 @@ impl FastAutomaton {
                 if state == &to_state {
                     continue;
                 }
-                if condition.has_intersection(new_cond) {
+                if condition.has_intersection(&new_cond) {
                     deterministic = false;
                     break;
                 }
@@ -159,24 +188,27 @@ impl FastAutomaton {
             .insert(from_state);
         match self.transitions[from_state].entry(to_state) {
             Entry::Occupied(mut o) => {
-                o.get_mut().union_with(new_cond);
+                o.get_mut().union_with(&new_cond);
             }
             Entry::Vacant(v) => {
-                v.insert(new_cond.clone());
+                v.insert(new_cond.into_owned());
             }
         };
     }
 
-    /// Adds a transition labeled with the given character range, taking care
-    /// of the spanning-set bookkeeping.
+    /// Adds a transition from `from_state` to `to_state` for the characters of
+    /// `range`.
     ///
-    /// This is the convenient counterpart to
-    /// [`add_transition`](Self::add_transition): the range is converted to a
-    /// [`Condition`] automatically, and when it is not exactly expressible
-    /// in the automaton's current spanning set, the spanning set is extended
-    /// and every existing condition is re-projected first.
+    /// If the two states already have a transition, the characters are added to
+    /// it. An empty range adds nothing.
     ///
-    /// An empty range matches no character, so no transition is added.
+    /// When the automaton's spanning set cannot express `range`, it is
+    /// extended, and the conditions of the existing transitions are converted
+    /// to it: that takes time proportional to their number.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a state does not exist and `range` is not empty.
     ///
     /// # Examples
     ///
@@ -230,12 +262,17 @@ impl FastAutomaton {
         Ok(())
     }
 
-    /// Adds a transition, but refuses if it would turn a DFA into an NFA.
+    /// Adds a transition as [`add_transition`](Self::add_transition) does,
+    /// unless it would make a deterministic automaton non-deterministic.
     ///
-    /// On `Err(DeterminismLost)` the automaton is left untouched; on `Ok`,
-    /// the transition has been added and `is_deterministic()` still holds
-    /// (provided it held before the call). This is the opt-in strict
-    /// counterpart to [`add_transition`](Self::add_transition).
+    /// # Errors
+    ///
+    /// Returns [`DeterminismLost`] in that case, and leaves the automaton
+    /// unchanged.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a state does not exist.
     pub fn try_add_transition(
         &mut self,
         from_state: State,
@@ -263,12 +300,17 @@ impl FastAutomaton {
         Ok(())
     }
 
-    /// Adds an epsilon transition by eagerly folding `to_state`'s **current**
-    /// transitions (and acceptance) into `from_state`.
+    /// Adds an epsilon transition from `from_state` to `to_state`: `from_state`
+    /// gets a copy of the transitions of `to_state`, and becomes an accept
+    /// state if `to_state` is one.
     ///
-    /// This is a snapshot: transitions added to `to_state` *afterwards* are
-    /// not propagated retroactively. When building automata incrementally,
-    /// add epsilon transitions last.
+    /// The copy is made at the time of the call: transitions added to
+    /// `to_state` afterwards are not copied. When you build an automaton step
+    /// by step, add its epsilon transitions last.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a state does not exist.
     pub fn add_epsilon_transition(&mut self, from_state: State, to_state: State) {
         if from_state == to_state {
             return;
@@ -316,7 +358,11 @@ impl FastAutomaton {
         }
     }
 
-    /// Removes the transition between the two provided states if it exists.
+    /// Removes the transition from `from_state` to `to_state`, if there is one.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a state does not exist.
     pub fn remove_transition(&mut self, from_state: State, to_state: State) {
         self.assert_state_exists(from_state);
         if from_state != to_state {
@@ -332,7 +378,11 @@ impl FastAutomaton {
         self.transitions[from_state].remove(&to_state);
     }
 
-    /// Removes the state and its connected transitions; panics if it's a start state.
+    /// Removes `state` and its transitions.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `state` does not exist or is the start state.
     pub fn remove_state(&mut self, state: State) {
         self.assert_state_exists(state);
         if self.start_state == state {
@@ -371,8 +421,11 @@ impl FastAutomaton {
         }
     }
 
-    /// Removes the given states and their connected transitions; panics if any
-    /// state does not exist or is the start state.
+    /// Removes `states` and their transitions.
+    ///
+    /// # Panics
+    ///
+    /// Panics if one of them does not exist or is the start state.
     pub fn remove_states(&mut self, states: &IntSet<State>) {
         for &state in states {
             self.assert_state_exists(state);
@@ -409,7 +462,8 @@ impl FastAutomaton {
         }
     }
 
-    /// Recompute a minimal spanning set for the automaton and apply it.
+    /// Replaces the spanning set with the smallest one that expresses the
+    /// conditions of the transitions.
     pub fn recompute_minimal_spanning_set(&mut self) -> Result<(), EngineError> {
         let mut ranges = Vec::with_capacity(self.number_of_states());
 
@@ -424,7 +478,8 @@ impl FastAutomaton {
         self.apply_new_spanning_set(&new_spanning_set)
     }
 
-    /// Applies the provided spanning set and projects all existing conditions onto it.
+    /// Replaces the spanning set with `new_spanning_set`, which has to express
+    /// the conditions of all the transitions, and converts them to it.
     pub fn apply_new_spanning_set(
         &mut self,
         new_spanning_set: &SpanningSet,

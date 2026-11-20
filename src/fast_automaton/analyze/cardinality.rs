@@ -6,17 +6,18 @@ use super::state_sets::{Id, Operand};
 use super::*;
 
 impl FastAutomaton {
-    /// Returns the cardinality of the automaton (i.e., the number of possible matched strings).
+    /// Returns the number of strings the automaton accepts.
     ///
-    /// Non-deterministic automata are not determinized: when the language is
-    /// finite, its strings are counted over the sets of states a word can
-    /// reach. That count can visit exponentially many sets; the
-    /// [`crate::execution_profile::ExecutionProfile`]'s timeout applies, and
-    /// its `max_number_of_states` caps the number of sets visited.
+    /// [`Cardinality::Infinite`] when a cycle lies on a path from the start
+    /// state to an accept state, and [`Cardinality::BigInteger`] when the count
+    /// exceeds `u32::MAX`.
     ///
-    /// As in [`length`](Self::length), only cycles **on accepting
-    /// paths** make the count infinite: cycles among dead or unreachable
-    /// states don't add a single matched string.
+    /// A non-deterministic automaton is not determinized.
+    ///
+    /// Linear in the size of a deterministic automaton. Exponential in the
+    /// worst case otherwise: the timeout of the [`ExecutionProfile`] applies,
+    /// and its `max_number_of_states` caps the number of sets of states
+    /// visited.
     #[tracing::instrument(level = "debug", skip_all, fields(states = self.number_of_states(), deterministic = self.is_deterministic()))]
     pub fn cardinality(&self) -> Result<Cardinality<u32>, EngineError> {
         if self.is_empty() {

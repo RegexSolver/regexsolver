@@ -2,7 +2,7 @@ use crate::{CharRange, error::EngineError, fast_automaton::spanning_set::Spannin
 
 use super::Condition;
 
-/// Converter to project [`Condition`] on a [`SpanningSet`].
+/// Converts [`Condition`]s from one [`SpanningSet`] to another.
 pub struct ConditionConverter<'a, 'b> {
     from_spanning_set: &'a SpanningSet,
     to_spanning_set: &'b SpanningSet,
@@ -10,14 +10,14 @@ pub struct ConditionConverter<'a, 'b> {
 }
 
 impl<'a, 'b> ConditionConverter<'a, 'b> {
-    /// Build a converter to project [`Condition`] from `from_spanning_set` to `to_spanning_set`.
+    /// Creates a converter from `from_spanning_set` to `to_spanning_set`.
     ///
-    /// Two directions are legitimate: refinement (a merged spanning set
-    /// before a binary operation) and coarsening (a recomputed minimal
-    /// spanning set, where bases no transition uses fold into the rest). The
-    /// pair is therefore not validated here; instead [`convert`](Self::convert)
-    /// asserts in debug builds that each projection preserves the
-    /// condition's character range.
+    /// `to_spanning_set` has to express the conditions converted. A spanning
+    /// set that splits the ranges of `from_spanning_set` expresses all of them;
+    /// one that merges some of its ranges only expresses the conditions that
+    /// hold all or none of the ranges merged. Neither spanning set is checked
+    /// here, and [`convert`](Self::convert) only checks its result in debug
+    /// builds.
     pub fn new(
         from_spanning_set: &'a SpanningSet,
         to_spanning_set: &'b SpanningSet,
@@ -51,10 +51,12 @@ impl<'a, 'b> ConditionConverter<'a, 'b> {
         })
     }
 
-    /// Project the given [`Condition`] from `from_spanning_set` to `to_spanning_set`.
+    /// Converts `condition` from `from_spanning_set` to `to_spanning_set`.
     ///
-    /// Returns [`EngineError::IncompatibleSpanningSet`] if the given
-    /// [`Condition`] was not built over `from_spanning_set`.
+    /// # Errors
+    ///
+    /// Returns [`EngineError::IncompatibleSpanningSet`] if `condition` was not
+    /// built over `from_spanning_set`.
     pub fn convert(&self, condition: &Condition) -> Result<Condition, EngineError> {
         if condition.0.len() != self.from_spanning_set.spanning_ranges_with_rest_len() {
             return Err(EngineError::IncompatibleSpanningSet);

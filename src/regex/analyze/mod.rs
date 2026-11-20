@@ -4,7 +4,12 @@ mod affixes;
 mod number_of_states;
 
 impl RegularExpression {
-    /// Returns the minimum and maximum length of possible matched strings.
+    /// Returns the minimum and maximum length of the strings matched.
+    ///
+    /// Both are `None` when the expression matches no string. The maximum is
+    /// also `None` when the strings have no longest length.
+    ///
+    /// Linear in the size of the expression.
     #[must_use]
     pub fn length(&self) -> (Option<u32>, Option<u32>) {
         match self {
@@ -31,10 +36,11 @@ impl RegularExpression {
                 let (min_length, max_length_opt) = regex.length();
                 if let Some(min_length) = min_length {
                     let new_min_length = min.saturating_mul(min_length);
-                    let new_max_length = if let Some(max_length) = max_length_opt {
-                        max_opt.as_ref().map(|max| max.saturating_mul(max_length))
-                    } else {
-                        None
+                    let new_max_length = match (max_length_opt, max_opt) {
+                        // The empty string, however many times.
+                        (Some(0), _) => Some(0),
+                        (Some(max_length), Some(max)) => Some(max.saturating_mul(max_length)),
+                        _ => None,
                     };
                     (Some(new_min_length), new_max_length)
                 } else if min == &0 {
@@ -121,6 +127,73 @@ mod tests {
         let degenerate = RegularExpression::Repetition(Box::new(a), 5, Some(2));
         assert_eq!((None, None), degenerate.length());
         assert_eq!(RegularExpression::new_empty().length(), degenerate.length());
+    }
+
+    /// A random expression built from the variants, in forms the parser and
+    /// the combinators do not produce: empty classes, concatenations and
+    /// alternations at any depth, and repetitions with any bounds.
+    fn arbitrary(depth: u32, seed: &mut u64) -> RegularExpression {
+        let mut random = |below: u64| {
+            *seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (*seed >> 33) % below
+        };
+        let choice = if depth == 0 { random(4) } else { random(10) };
+        match choice {
+            0 => RegularExpression::Character(CharRange::empty()),
+            1 => RegularExpression::Concat(VecDeque::new()),
+            2 => RegularExpression::Alternation(vec![]),
+            3 | 4 => RegularExpression::new("[ab]").unwrap(),
+            5 | 6 => {
+                let min = random(3) as u32;
+                let max = [None, Some(0), Some(1), Some(2), Some(3)][random(5) as usize];
+                RegularExpression::Repetition(Box::new(arbitrary(depth - 1, seed)), min, max)
+            }
+            7 | 8 => {
+                let parts = random(4);
+                RegularExpression::Concat((0..parts).map(|_| arbitrary(depth - 1, seed)).collect())
+            }
+            _ => {
+                let parts = random(4);
+                RegularExpression::Alternation(
+                    (0..parts).map(|_| arbitrary(depth - 1, seed)).collect(),
+                )
+            }
+        }
+    }
+
+    // `is_empty`, `is_empty_string` and `length` are exact on expressions
+    // that are not simplified, as the automaton tells.
+    #[test]
+    fn emptiness_and_length_are_exact_on_any_expression() {
+        let mut seed = 7;
+        let (mut empty, mut empty_string, mut invalid) = (0, 0, 0);
+        for _ in 0..5000 {
+            let regex = arbitrary(4, &mut seed);
+            let Ok(automaton) = regex.to_automaton() else {
+                // A repetition whose maximum is below its minimum.
+                invalid += 1;
+                assert_eq!(regex.is_empty(), regex.length().0.is_none(), "{regex}");
+                continue;
+            };
+            assert_eq!(regex.is_empty(), automaton.is_empty(), "{regex}");
+            assert_eq!(
+                regex.is_empty_string(),
+                automaton.is_empty_string(),
+                "{regex}"
+            );
+            assert_eq!(regex.length(), automaton.length(), "{regex}");
+            empty += usize::from(regex.is_empty());
+            empty_string += usize::from(regex.is_empty_string());
+        }
+        // Every case is met many times.
+        assert!(empty > 500 && empty_string > 500 && invalid > 100);
+
+        // An unbounded repetition of the empty string is the empty string.
+        let unbounded = RegularExpression::parse("()*", false).unwrap();
+        assert!(!unbounded.is_simplified_empty_string() && unbounded.is_empty_string());
+        assert_eq!((Some(0), Some(0)), unbounded.length());
     }
 
     #[test]

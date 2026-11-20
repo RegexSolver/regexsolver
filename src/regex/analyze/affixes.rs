@@ -29,7 +29,7 @@ impl RegularExpression {
         Option<RegularExpression>, // common affix
         (RegularExpression, RegularExpression),
     ) {
-        if self.is_empty() || other.is_empty() {
+        if self.is_simplified_empty() || other.is_simplified_empty() {
             return (None, (self.clone(), other.clone()));
         } else if self == other {
             return (
@@ -220,12 +220,14 @@ impl RegularExpression {
                     new_common_affix = new_common_affix.concat(&common_affix_temp, is_prefix);
                 }
 
-                if !self_concat_element_temp.is_empty_string() || other_temp.is_empty_string() {
+                if !self_concat_element_temp.is_simplified_empty_string()
+                    || other_temp.is_simplified_empty_string()
+                {
                     new_self_concat = new_self_concat.concat(&self_concat_element_temp, is_prefix);
                     break;
                 }
             }
-            if !new_common_affix.is_empty_string() {
+            if !new_common_affix.is_simplified_empty_string() {
                 let iter: Box<dyn Iterator<Item = _>> = if is_prefix {
                     Box::new(c..this_elements.len())
                 } else {

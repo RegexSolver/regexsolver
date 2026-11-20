@@ -3,18 +3,17 @@ use std::collections::BTreeSet;
 use super::*;
 
 impl RegularExpression {
-    /// Returns a regular expression matching the union of `self` and `other`.
+    /// Returns the union of `self` and `other`, simplified: it matches the
+    /// strings that at least one of them matches.
     #[tracing::instrument(level = "trace", skip_all)]
     pub fn union(&self, other: &RegularExpression) -> RegularExpression {
         Self::union_all([self, other])
     }
 
-    /// Returns a regular expression that is the union of all expressions in `regexes`.
+    /// Returns the union of `regexes`, simplified.
     ///
-    /// Folding through [`union`](Self::union) directly would clone the whole
-    /// accumulated alternation once per operand (quadratic in the number of
-    /// operands); the accumulator below applies the same element-merging
-    /// rules in place instead.
+    /// Takes less time than a chain of [`union`](Self::union) calls, each of
+    /// which copies the result of the previous one.
     #[tracing::instrument(level = "trace", skip_all)]
     pub fn union_all<'a, I: IntoIterator<Item = &'a RegularExpression>>(
         regexes: I,
@@ -59,13 +58,13 @@ impl RegularExpression {
     fn union_<'a>(&self, other: &'a RegularExpression) -> Cow<'a, RegularExpression> {
         if self.is_total() || other.is_total() {
             return Cow::Owned(RegularExpression::new_total());
-        } else if self.is_empty() {
+        } else if self.is_simplified_empty() {
             return Cow::Borrowed(other);
-        } else if other.is_empty() || self == other {
+        } else if other.is_simplified_empty() || self == other {
             return Cow::Owned(self.clone());
-        } else if other.is_empty_string() {
+        } else if other.is_simplified_empty_string() {
             return Cow::Owned(self.repeat(0, Some(1)));
-        } else if self.is_empty_string() {
+        } else if self.is_simplified_empty_string() {
             return Cow::Owned(other.repeat(0, Some(1)));
         }
         Cow::Owned(match (self, other) {
@@ -160,8 +159,8 @@ impl RegularExpression {
             regex = regex.concat(prefix, true);
         }
 
-        let regex_from_alternate = if !self_regex.is_empty_string() {
-            if !other_regex.is_empty_string() {
+        let regex_from_alternate = if !self_regex.is_simplified_empty_string() {
+            if !other_regex.is_simplified_empty_string() {
                 if prefix.is_none() && suffix.is_none() {
                     let mut alternate_elements = vec![self_regex, other_regex];
                     alternate_elements.sort_unstable();
@@ -172,7 +171,7 @@ impl RegularExpression {
             } else {
                 Cow::Owned(self_regex.repeat(0, Some(1)))
             }
-        } else if !other_regex.is_empty_string() {
+        } else if !other_regex.is_simplified_empty_string() {
             Cow::Owned(other_regex.repeat(0, Some(1)))
         } else {
             Cow::Owned(RegularExpression::new_empty_string())
@@ -555,10 +554,10 @@ impl UnionAccumulator {
         if other.is_total() {
             return Some(RegularExpression::new_total());
         }
-        if other.is_empty() {
+        if other.is_simplified_empty() {
             return None;
         }
-        if other.is_empty_string() {
+        if other.is_simplified_empty_string() {
             // L ∪ {""} = L?, exactly like the empty-string arm of `union_`.
             return Some(Self::materialize(set).repeat(0, Some(1)));
         }

@@ -4,12 +4,24 @@ use regex_syntax::ParserBuilder;
 use super::*;
 
 impl RegularExpression {
-    /// Parses and simplifies the provided pattern and returns the resulting [`RegularExpression`].
+    /// Parses `pattern` and simplifies the result.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`EngineError`] if the pattern is not valid or uses a
+    /// construct the engine does not support (see
+    /// [Semantics](crate#semantics)).
     pub fn new(pattern: &str) -> Result<Self, EngineError> {
         Self::parse(pattern, true)
     }
 
-    /// Parses the provided pattern and returns the resulting [`RegularExpression`]. If `simplify` is `true`, the expression is simplified during parsing.
+    /// Parses `pattern`, and simplifies the result if `simplify` is `true`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`EngineError`] if the pattern is not valid or uses a
+    /// construct the engine does not support (see
+    /// [Semantics](crate#semantics)).
     #[tracing::instrument(level = "debug", skip(pattern), fields(pattern_len = pattern.len()))]
     pub fn parse(pattern: &str, simplify: bool) -> Result<Self, EngineError> {
         if pattern.is_empty() {
@@ -73,7 +85,7 @@ impl RegularExpression {
         }
     }
 
-    /// Creates a regular expression that matches all possible strings.
+    /// Creates the regular expression `.*`, which matches every string.
     pub fn new_total() -> Self {
         RegularExpression::Repetition(
             Box::new(RegularExpression::Character(CharRange::total())),
@@ -82,12 +94,13 @@ impl RegularExpression {
         )
     }
 
-    /// Creates a regular expression that matches the empty language.
+    /// Creates the regular expression `[]`, which matches no string.
     pub fn new_empty() -> Self {
         RegularExpression::Character(CharRange::empty())
     }
 
-    /// Creates a regular expression that matches only the empty string `""`.
+    /// Creates the regular expression that matches the empty string `""` and no
+    /// other.
     pub fn new_empty_string() -> Self {
         RegularExpression::Concat(VecDeque::new())
     }
@@ -153,9 +166,11 @@ impl RegularExpression {
                 Self::convert_to_regex(&capture.sub, simplify, at_start, at_end)
             }
             HirKind::Concat(concat) => {
+                let execution_profile = ExecutionProfile::get();
                 let len = concat.len();
                 let mut concat_regex = RegularExpression::Concat(VecDeque::with_capacity(len));
                 for (i, c) in concat.iter().enumerate() {
+                    execution_profile.assert_not_timed_out()?;
                     // Only the first element can be at the overall start, and
                     // only the last at the overall end.
                     let child_at_start = at_start && i == 0;
@@ -163,7 +178,7 @@ impl RegularExpression {
                     let concat_value =
                         Self::convert_to_regex(c, simplify, child_at_start, child_at_end)?;
                     if simplify {
-                        concat_regex = concat_regex.concat(&concat_value, true);
+                        concat_regex.concat_mut(concat_value);
                     } else if let RegularExpression::Concat(mut values) = concat_regex {
                         values.push_back(concat_value);
                         concat_regex = RegularExpression::Concat(values);
@@ -257,6 +272,37 @@ impl RegularExpression {
 #[cfg(test)]
 mod tests {
     use crate::regex::RegularExpression;
+
+    // A long concatenation is folded in place, in time linear in its length:
+    // copying the expression accumulated so far for each element took
+    // minutes on this pattern. The fold also checks the execution deadline.
+    #[test]
+    fn parse_folds_a_long_concatenation_in_place() {
+        use crate::error::EngineError;
+        use crate::execution_profile::ExecutionProfileBuilder;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::time::Duration;
+
+        let pattern = "[ab]c".repeat(20_000);
+        match RegularExpression::new(&pattern).unwrap() {
+            RegularExpression::Concat(elements) => assert_eq!(40_000, elements.len()),
+            other => panic!("not a concatenation: {other}"),
+        }
+
+        // A clock that advances at each reading: the deadline passes after a
+        // number of elements, whatever the machine.
+        static READINGS: AtomicU64 = AtomicU64::new(0);
+        ExecutionProfileBuilder::new()
+            .execution_timeout(100)
+            .clock(|| Duration::from_millis(READINGS.fetch_add(1, Ordering::Relaxed)))
+            .build()
+            .run(|| {
+                assert_eq!(
+                    EngineError::OperationTimeOutError,
+                    RegularExpression::new(&pattern).unwrap_err()
+                );
+            });
+    }
 
     // Folding an alternation with many shared-affix branches is quadratic in
     // the branch count; the parse must honor the execution deadline instead

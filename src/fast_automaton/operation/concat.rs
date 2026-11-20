@@ -7,14 +7,18 @@ use crate::error::EngineError;
 use super::*;
 
 impl FastAutomaton {
-    /// Computes the concatenation between `self` and `other`.
+    /// Returns the concatenation of `self` and `other`: the strings made of a
+    /// string of `self` followed by a string of `other`.
+    ///
+    /// The result has about as many states as both automata together.
     pub fn concat(&self, other: &FastAutomaton) -> Result<Self, EngineError> {
         let mut new_automaton = self.clone();
         new_automaton.concat_mut(other)?;
         Ok(new_automaton)
     }
 
-    /// Computes the concatenation of all automata in the given iterator.
+    /// Returns the concatenation of `automata`, in order. An empty iterator
+    /// gives the automaton that accepts the empty string `""` and no other.
     #[tracing::instrument(level = "debug", skip_all)]
     pub fn concat_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(
         automata: I,

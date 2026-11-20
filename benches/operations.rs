@@ -36,6 +36,14 @@ fn dfa(pattern: &str) -> FastAutomaton {
     automaton(pattern).determinize().unwrap().into_owned()
 }
 
+/// The intersection with the complement of the determinized subtrahend,
+/// which is what `difference` used to do.
+fn difference_via_complement(minuend: &FastAutomaton, subtrahend: &FastAutomaton) -> FastAutomaton {
+    let mut complement = subtrahend.determinize().unwrap().into_owned();
+    complement.complement().unwrap();
+    minuend.intersection(&complement).unwrap()
+}
+
 /// `(a|b)*a(a|b){n}`: an n+2-state NFA whose minimal DFA has 2^(n+1) states.
 fn blowup_pattern(n: usize) -> String {
     format!("(a|b)*a(a|b){{{n}}}")
@@ -48,6 +56,11 @@ fn bench_parse(c: &mut Criterion) {
             b.iter(|| RegularExpression::new(black_box(pattern)).unwrap())
         });
     }
+    // A long concatenation, which is folded in time linear in its length.
+    let concatenation = "[ab]c".repeat(2000);
+    group.bench_function("concatenation_2000", |b| {
+        b.iter(|| RegularExpression::new(black_box(&concatenation)).unwrap())
+    });
     group.finish();
 }
 
@@ -122,14 +135,8 @@ fn bench_set_operations(c: &mut Criterion) {
         b.iter(|| black_box(&a).union(black_box(&b_op)).unwrap())
     });
 
-    // `via_complement` is the intersection with the complement of the
-    // determinized subtrahend, which is what `difference` used to do.
     let mut bench_difference = |name: &str, minuend: &FastAutomaton, subtrahend: &FastAutomaton| {
-        let via_complement = || {
-            let mut complement = subtrahend.determinize().unwrap().into_owned();
-            complement.complement().unwrap();
-            black_box(minuend).intersection(&complement).unwrap()
-        };
+        let via_complement = || difference_via_complement(black_box(minuend), subtrahend);
         assert!(
             minuend
                 .difference(subtrahend)
@@ -166,6 +173,71 @@ fn bench_set_operations(c: &mut Criterion) {
         &automaton("(a|b){0,6}"),
         &automaton(&blowup_pattern(12)),
     );
+
+    // `via_complement` is the union of the two differences, which
+    // determinizes both operands.
+    let mut bench_symmetric_difference = |name: &str, a: &FastAutomaton, b: &FastAutomaton| {
+        let via_complement = || {
+            difference_via_complement(black_box(a), b)
+                .union(&difference_via_complement(black_box(b), a))
+                .unwrap()
+        };
+        assert!(
+            a.symmetric_difference(b)
+                .unwrap()
+                .equivalent(&via_complement())
+                .unwrap()
+        );
+        group.bench_function(name, |bencher| {
+            bencher.iter(|| black_box(a).symmetric_difference(black_box(b)).unwrap())
+        });
+        group.bench_function(format!("{name}/via_complement"), |bencher| {
+            bencher.iter(via_complement)
+        });
+    };
+
+    bench_symmetric_difference(
+        "symmetric_difference",
+        &automaton(".*abc.*"),
+        &automaton(".*def.*"),
+    );
+    bench_symmetric_difference("symmetric_difference/dfa", &dfa(".*abc.*"), &dfa(".*def.*"));
+    bench_symmetric_difference(
+        "symmetric_difference/large",
+        &automaton(LARGE.1),
+        &automaton(".*abc.*def.*ksd"),
+    );
+    // Every set of states of one operand is reached.
+    bench_symmetric_difference(
+        "symmetric_difference/blowup_8",
+        &automaton("(a|b)*"),
+        &automaton(&blowup_pattern(8)),
+    );
+    // One operand reaches a few of the 2^13 sets of the other.
+    bench_symmetric_difference(
+        "symmetric_difference/blowup_12_short_operand",
+        &automaton("(a|b){0,6}"),
+        &automaton(&blowup_pattern(12)),
+    );
+
+    // More than two automata are walked together: combined two by two, the
+    // 16 suffixes take thousands of states where 17 are enough.
+    let suffixes: Vec<FastAutomaton> = ('a'..='p')
+        .map(|letter| automaton(&format!(".*{letter}")))
+        .collect();
+    let contains: Vec<FastAutomaton> = ["abc", "def", "ghi", "jkl", "mno", "pqr"]
+        .iter()
+        .map(|word| automaton(&format!(".*{word}.*")))
+        .collect();
+    for (name, automata) in [("suffixes_16", &suffixes), ("contains_6", &contains)] {
+        group.bench_function(format!("symmetric_difference_all/{name}"), |b| {
+            b.iter(|| FastAutomaton::symmetric_difference_all(black_box(automata)).unwrap())
+        });
+        #[cfg(all(feature = "parallel", not(target_family = "wasm")))]
+        group.bench_function(format!("symmetric_difference_all_par/{name}"), |b| {
+            b.iter(|| FastAutomaton::symmetric_difference_all_par(black_box(automata)).unwrap())
+        });
+    }
 
     let complement_input = dfa(".*abc.*");
     group.bench_function("complement", |b| {

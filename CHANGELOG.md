@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 - `Term::to_pattern_with`, the pattern of `Term::to_regex_with`.
+- `FastAutomaton::symmetric_difference`, the strings that exactly one of two automata accepts. Like `difference`, it does not determinize or complement an operand, and the result is deterministic when both operands are.
+- `FastAutomaton::symmetric_difference_all` and `FastAutomaton::symmetric_difference_all_par`, the strings that an odd number of the given automata accepts, and `Term::symmetric_difference`, which takes several terms like `Term::union` and `Term::intersection`. The automata are walked together rather than two by two, none of them is determinized, and the result is deterministic when every automaton is. Like `union_all_par` and `intersection_all_par`, `symmetric_difference_all_par` needs the `parallel` feature and is absent on `wasm`.
 
 ### Changed
 - `equivalent` and `subset`, on `FastAutomaton` and on `Term`, no longer determinize or complement their operands. They walk the sets of states a word can reach in each automaton and skip the pairs that follow from the ones already met: bisimulation up to congruence (Bonchi & Pous, POPL 2013) for `equivalent`, antichains (De Wulf, Doyen, Henzinger & Raskin, CAV 2006) for `subset`. On the benchmarked patterns both take 2 to 20 times less time, and about 100 times less where most pairs are skipped. Two deterministic automata are compared by `equivalent` state by state (Hopcroft & Karp, 1971), in time close to linear in their number of states: 2 to 8 times less time on the benchmarked pairs that share a spanning set, and about as long as before on pairs that do not.
@@ -19,6 +21,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `Term::is_total` no longer determinizes a non-deterministic automaton: it checks that every string is included in it, with `subset`.
 - When the execution profile disables implicit determinization, `FastAutomaton::equivalent`, `FastAutomaton::subset`, `FastAutomaton::cardinality` and `FastAutomaton::difference` accept non-deterministic automata instead of returning `EngineError::DeterministicAutomatonRequired`. For the first three, which build no automaton, `max_number_of_states` caps the number of pairs or sets visited.
 - Updated `regex-charclass` to 1.3, which makes `Char::index` and `Char::from_index` public: the mapping of a `char` to its position among all `char` values, the surrogate block skipped. They replace the crate's own copy of that mapping, and since `regex_charclass` is re-exported they are usable through it.
+
+### Fixed
+- Parsing a pattern, `RegularExpression::concat_all`, `RegularExpression::simplify` and `Term::concat` take time linear in the number of expressions concatenated, where each expression added copied the ones before it: a pattern of 5,000 concatenated groups is parsed in 10 ms instead of 1.3 s. The parser also checks the execution timeout as it concatenates.
+- `Term::union` of terms backed by regular expressions returns `EngineError::OperationTimeOutError` past the execution timeout, as it does for terms backed by automata.
+- `RegularExpression::is_empty` and `RegularExpression::is_empty_string` are exact on an expression that is not simplified, built from its variants or parsed with `RegularExpression::parse(pattern, false)`, and so are `Term::is_empty` and `Term::is_empty_string` on a term created from one with `Term::from_regex`. They only recognised the simplified form of the empty language and of the empty string, and returned `false` for `()*` parsed that way. They now take time linear in the size of an expression that is not the empty language or the empty string in simplified form, where they took constant time.
+- `RegularExpression::length`, and `Term::length` on a term backed by a regular expression, return a maximum length of 0 for an unbounded repetition of the empty string (`()*`, `()+`, `(){2,}`, which the simplification does not leave in an expression), where they returned no maximum.
 
 ## [1.2.0] - 2026-11-14
 

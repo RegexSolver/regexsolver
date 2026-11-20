@@ -40,20 +40,18 @@ pub(crate) struct Operand {
 
 impl Operand {
     /// Prepares both operands over their merged spanning set, and returns
-    /// them with its number of bases (the letters of the walk).
-    pub(crate) fn pair(
-        left: &FastAutomaton,
+    /// them with it: its bases are the letters of the walk.
+    pub(crate) fn pair<'a>(
+        left: &'a FastAutomaton,
         left_offset: usize,
-        right: &FastAutomaton,
+        right: &'a FastAutomaton,
         right_offset: usize,
-    ) -> Result<(Operand, Operand, usize), EngineError> {
+    ) -> Result<(Operand, Operand, SharedSpanningSet<'a>), EngineError> {
         let shared = SharedSpanningSet::new(&left.spanning_set, &right.spanning_set);
         let (left_converter, right_converter) = shared.converters()?;
-        Ok((
-            Operand::new(left, left_offset, left_converter.as_ref())?,
-            Operand::new(right, right_offset, right_converter.as_ref())?,
-            shared.spanning_set().spanning_ranges_with_rest_len(),
-        ))
+        let left = Operand::new(left, left_offset, left_converter.as_ref())?;
+        let right = Operand::new(right, right_offset, right_converter.as_ref())?;
+        Ok((left, right, shared))
     }
 
     /// Prepares one operand; `converter` projects its conditions on another
@@ -231,20 +229,30 @@ impl<T> SetTrie<T> {
     }
 
     /// Returns `true` if a set stored below `root` is contained in `set`.
-    pub(super) fn has_subset_of(&self, root: usize, set: &Marks) -> bool {
-        let node = &self.nodes[root];
-        if !node.values.is_empty() {
-            return true;
+    ///
+    /// Iterative: a stored set is as deep as it is large, and a word can
+    /// reach more states than the call stack allows calls. `stack` holds the
+    /// nodes to visit, and is only passed to be reused from one call to the
+    /// next.
+    pub(super) fn has_subset_of(&self, root: usize, set: &Marks, stack: &mut Vec<usize>) -> bool {
+        stack.clear();
+        stack.push(root);
+        while let Some(node) = stack.pop() {
+            let node = &self.nodes[node];
+            if !node.values.is_empty() {
+                return true;
+            }
+            match node.few_children() {
+                Some(children) => stack.extend(
+                    children
+                        .iter()
+                        .filter(|(id, _)| set.contains(*id))
+                        .map(|(_, child)| *child),
+                ),
+                None => stack.extend(set.members().iter().filter_map(|&id| node.child(id))),
+            }
         }
-        match node.few_children() {
-            Some(children) => children
-                .iter()
-                .any(|&(id, child)| set.contains(id) && self.has_subset_of(child, set)),
-            None => set.members().iter().any(|&id| {
-                node.child(id)
-                    .is_some_and(|child| self.has_subset_of(child, set))
-            }),
-        }
+        false
     }
 }
 
@@ -305,7 +313,7 @@ mod tests {
         let mut marks = Marks::new(2 * wide as usize);
         let mut has_subset_of = |trie: &SetTrie<()>, root: usize, set: &[Id]| {
             set.iter().for_each(|&id| assert!(marks.insert(id)));
-            let found = trie.has_subset_of(root, &marks);
+            let found = trie.has_subset_of(root, &marks, &mut Vec::new());
             marks.clear();
             found
         };

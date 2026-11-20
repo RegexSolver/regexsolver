@@ -17,7 +17,12 @@ impl FastAutomaton {
         self.determinize()
     }
 
-    /// Determinizes the automaton and returns the result.
+    /// Returns an equivalent deterministic automaton. `self` is borrowed when
+    /// it is known to be deterministic.
+    ///
+    /// Exponential in the worst case: an automaton of `n` states can need `2^n`
+    /// of them once deterministic. The timeout and the `max_number_of_states`
+    /// of the execution profile apply.
     #[tracing::instrument(level = "debug", skip_all, fields(states = self.number_of_states(), deterministic = self.is_deterministic()))]
     pub fn determinize(&self) -> Result<Cow<'_, Self>, EngineError> {
         if self.deterministic {

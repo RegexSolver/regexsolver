@@ -4,15 +4,15 @@ use super::state_sets::{Marks, Operand, SetTrie};
 use super::*;
 
 impl FastAutomaton {
-    /// Returns `true` if all strings accepted by `self` are also accepted by `other`.
+    /// Returns `true` if every string that `self` accepts is also accepted by
+    /// `other`.
     ///
-    /// Non-deterministic operands are not determinized: each state of `self`
-    /// is walked together with the set of states of `other` that the same
-    /// word reaches, and a pair is skipped when the same state was already
-    /// met with a subset of that set (antichains). The walk is still
-    /// exponential in `other` in the worst case; the execution profile's
-    /// timeout applies, and its `max_number_of_states` caps the number of
-    /// pairs walked.
+    /// Neither automaton is determinized.
+    ///
+    /// Exponential in the size of `other` in the worst case: the timeout of the
+    /// execution profile applies, and its `max_number_of_states` caps the
+    /// number of pairs visited, each made of a state of `self` and a set of
+    /// states of `other`.
     #[tracing::instrument(level = "debug", skip_all, fields(self_states = self.number_of_states(), self_deterministic = self.is_deterministic(), other_states = other.number_of_states(), other_deterministic = other.is_deterministic()))]
     pub fn subset(&self, other: &FastAutomaton) -> Result<bool, EngineError> {
         if self.is_empty() || other.is_total() || self == other {
@@ -45,7 +45,8 @@ impl FastAutomaton {
     ) -> Result<bool, EngineError> {
         let execution_profile = ExecutionProfile::get();
 
-        let (left, right, bases) = Operand::pair(self, 0, other, 0)?;
+        let (left, right, shared) = Operand::pair(self, 0, other, 0)?;
+        let bases = shared.spanning_set().spanning_ranges_with_rest_len();
 
         let Some(start) = left.start else {
             return Ok(true);
@@ -71,6 +72,8 @@ impl FastAutomaton {
 
         let mut successors = vec![Vec::new(); bases];
         let mut query = Marks::new(other.transitions.len());
+        // The nodes `has_subset_of` has to visit, reused by each call.
+        let mut stack = Vec::new();
         let mut pairs = 1;
 
         while let Some((state, set)) = worklist.pop_front() {
@@ -89,7 +92,7 @@ impl FastAutomaton {
                     set.iter().for_each(|&id| {
                         query.insert(id);
                     });
-                    let met = visited.has_subset_of(root, &query);
+                    let met = visited.has_subset_of(root, &query, &mut stack);
                     query.clear();
                     if met {
                         continue;
@@ -108,7 +111,43 @@ impl FastAutomaton {
 #[cfg(test)]
 mod tests {
 
+    use crate::CharRange;
+    use crate::fast_automaton::FastAutomaton;
     use crate::regex::RegularExpression;
+    use regex_charclass::char::Char;
+
+    // One `a` reaches every one of the 20,000 states of `other`, which makes
+    // a stored set that deep: looking it up must not recurse per state,
+    // which overflowed the stack of a thread.
+    #[test]
+    fn subset_with_a_large_set_of_states() {
+        let character = |c| CharRange::new_from_range(Char::new(c)..=Char::new(c));
+
+        let mut a_star = FastAutomaton::new_empty();
+        a_star.accept(0);
+        a_star
+            .add_transition_from_range(0, 0, &character('a'))
+            .unwrap();
+
+        let mut other = FastAutomaton::new_empty();
+        other.accept(0);
+        other
+            .add_transition_from_range(0, 0, &character('b'))
+            .unwrap();
+        for _ in 0..20_000 {
+            let state = other.new_state();
+            other.accept(state);
+            other
+                .add_transition_from_range(0, state, &character('a'))
+                .unwrap();
+            other
+                .add_transition_from_range(state, state, &character('a'))
+                .unwrap();
+        }
+
+        assert!(a_star.subset(&other).unwrap());
+        assert!(!other.subset(&a_star).unwrap());
+    }
 
     #[test]
     fn test_subset() -> Result<(), String> {

@@ -9,12 +9,17 @@ use crate::{error::EngineError, execution_profile::ExecutionProfile};
 use super::*;
 
 impl FastAutomaton {
-    /// Computes the intersection between `self` and `other`.
+    /// Returns the intersection of `self` and `other`: the strings that both
+    /// accept.
+    ///
+    /// With `n` and `m` the numbers of states of `self` and `other`, the result
+    /// has up to `n × m` states. It is deterministic when both automata are.
     pub fn intersection(&self, other: &FastAutomaton) -> Result<Self, EngineError> {
         FastAutomaton::intersection_all([self, other])
     }
 
-    /// Computes the intersection of all automata in the given iterator.
+    /// Returns the intersection of `automata`: the strings that all of them
+    /// accept. An empty iterator gives the automaton that accepts every string.
     #[tracing::instrument(level = "debug", skip_all)]
     pub fn intersection_all<'a, I: IntoIterator<Item = &'a FastAutomaton>>(
         automata: I,
@@ -32,10 +37,11 @@ impl FastAutomaton {
         Ok(result.into_owned())
     }
 
-    /// Computes in parallel the intersection of all automata in the given iterator.
+    /// Returns the intersection of `automata`, as
+    /// [`intersection_all`](Self::intersection_all) does, working in parallel.
     ///
     /// Only available with the `parallel` feature (enabled by default), and not
-    /// on `wasm`, which has no threads and does not depend on `rayon`.
+    /// on `wasm`.
     #[cfg(all(feature = "parallel", not(target_family = "wasm")))]
     #[tracing::instrument(level = "debug", skip_all)]
     pub fn intersection_all_par<'a, I: IntoParallelIterator<Item = &'a FastAutomaton>>(
@@ -139,11 +145,11 @@ impl FastAutomaton {
         Ok(Cow::Owned(new_automaton))
     }
 
-    /// Returns `true` if the two automata have a non-empty intersection.
+    /// Returns `true` if a string is accepted by both automata.
     ///
-    /// The intersection is not built: the pairs of states the two automata
-    /// reach together are visited until one has both states accepting. The
-    /// execution profile's timeout applies, and its `max_number_of_states`
+    /// The intersection is not built. With `n` and `m` the numbers of states of
+    /// `self` and `other`, up to `n × m` pairs of states are visited: the
+    /// timeout of the execution profile applies, and its `max_number_of_states`
     /// caps the number of pairs visited.
     #[tracing::instrument(level = "debug", skip_all, fields(self_states = self.number_of_states(), other_states = other.number_of_states()))]
     pub fn has_intersection(&self, other: &FastAutomaton) -> Result<bool, EngineError> {

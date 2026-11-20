@@ -408,8 +408,30 @@ fn probes() -> Vec<String> {
     probes_over(ALPHABET, 4)
 }
 
-/// Asserts that intersection / union / difference of `a` and `b` agree with
-/// the boolean combination of the operands on every probe string.
+/// Asserts that a probe string is in the symmetric difference of `automata`
+/// iff an odd number of them accepts it, sequentially and in parallel.
+fn assert_symmetric_difference_all_membership(
+    automata: &[FastAutomaton],
+    probes: &[String],
+) -> Result<(), TestCaseError> {
+    let odd = |s: &str| automata.iter().filter(|a| a.is_match(s)).count() % 2 == 1;
+    if let Some(all) = bounded(|| FastAutomaton::symmetric_difference_all(automata)) {
+        for s in probes {
+            prop_assert_eq!(all.is_match(s), odd(s), "membership for {:?}", s);
+        }
+    }
+    #[cfg(all(feature = "parallel", not(target_family = "wasm")))]
+    if let Some(all) = bounded(|| FastAutomaton::symmetric_difference_all_par(automata)) {
+        for s in probes {
+            prop_assert_eq!(all.is_match(s), odd(s), "parallel membership for {:?}", s);
+        }
+    }
+    Ok(())
+}
+
+/// Asserts that intersection / union / difference / symmetric difference of
+/// `a` and `b` agree with the boolean combination of the operands on every
+/// probe string.
 fn assert_set_ops_membership(
     a: &FastAutomaton,
     b: &FastAutomaton,
@@ -441,6 +463,16 @@ fn assert_set_ops_membership(
                 diff.is_match(s),
                 a.is_match(s) && !b.is_match(s),
                 "difference membership for {:?}",
+                s
+            );
+        }
+    }
+    if let Some(diff) = bounded(|| a.symmetric_difference(b)) {
+        for s in probes {
+            prop_assert_eq!(
+                diff.is_match(s),
+                a.is_match(s) != b.is_match(s),
+                "symmetric difference membership for {:?}",
                 s
             );
         }
@@ -552,6 +584,27 @@ proptest! {
     #[test]
     fn set_ops_membership(a in arb_nfa(), b in arb_nfa()) {
         assert_set_ops_membership(&a, &b, &probes())?;
+    }
+
+    /// A string is in the symmetric difference of several automata iff an
+    /// odd number of them accepts it, whether they are walked together or
+    /// by groups in parallel.
+    #[test]
+    fn symmetric_difference_all_membership(automata in prop::collection::vec(arb_nfa(), 0..5)) {
+        assert_symmetric_difference_all_membership(&automata, &probes())?;
+    }
+
+    /// The same across automata built over *different* alphabets ({a,b},
+    /// {b,c} and {c,d}), whose spanning sets are merged into one for the
+    /// walk.
+    #[test]
+    fn symmetric_difference_all_membership_different_alphabets(
+        a in arb_nfa_over(&['a', 'b']),
+        b in arb_nfa_over(&['b', 'c']),
+        c in arb_nfa_over(&['c', 'd']),
+    ) {
+        let probes = probes_over(&['a', 'b', 'c', 'd'], 4);
+        assert_symmetric_difference_all_membership(&[a, b, c], &probes)?;
     }
 
     /// Set operations across operands built over *overlapping but different*

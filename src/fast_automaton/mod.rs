@@ -16,8 +16,8 @@ pub type State = usize;
 
 mod analyze;
 mod builder;
-/// Transition labels: the bitvector [`Condition`] type over an automaton's
-/// spanning set of disjoint character ranges.
+/// The [`Condition`] of a transition: a set of characters, expressed over the
+/// spanning set of its automaton.
 pub mod condition;
 pub(crate) mod convert;
 mod generate;
@@ -29,7 +29,26 @@ pub mod spanning_set;
 pub use convert::to_regex::{RegexSynthesizer, StateElimination};
 pub use generate::{CharacterOrder, GenerationOptions, PathOrder};
 
-/// Represents a finite-state automaton.
+/// A finite automaton over Unicode characters, deterministic or not.
+///
+/// It has one start state, and its states are identified by a [`State`]. A
+/// transition holds a [`Condition`]: a set of characters, expressed over the
+/// automaton's [`SpanningSet`].
+///
+/// An automaton is built from a pattern with
+/// [`RegularExpression::to_automaton`](crate::regex::RegularExpression::to_automaton),
+/// or by hand with [`new_state`](Self::new_state) and
+/// [`add_transition_from_range`](Self::add_transition_from_range).
+///
+/// # Examples
+///
+/// ```
+/// use regexsolver::regex::RegularExpression;
+///
+/// let automaton = RegularExpression::new("ab*")?.to_automaton()?;
+/// assert!(automaton.is_match("abb"));
+/// # Ok::<(), regexsolver::error::EngineError>(())
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[must_use = "non-`_mut` operations return a new automaton"]
 pub struct FastAutomaton {
@@ -43,8 +62,9 @@ pub struct FastAutomaton {
     minimal: bool,
 }
 
-/// Returned by [`FastAutomaton::try_add_transition`] when adding the requested
-/// condition would turn a DFA into an NFA. The automaton is left unchanged.
+/// Returned by [`FastAutomaton::try_add_transition`] when the transition would
+/// make a deterministic automaton non-deterministic. The automaton is left
+/// unchanged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DeterminismLost;
 
@@ -97,14 +117,14 @@ impl FastAutomaton {
         }
     }
 
-    /// Returns the number of transitions to the provided state.
+    /// Returns the number of transitions to `state`, `0` if it does not exist.
     #[inline]
     pub fn in_degree(&self, state: State) -> usize {
         self.transitions_in.get(&state).map_or(0, IntSet::len)
     }
 
-    /// Returns the number of transitions from the provided state.
-    /// Returns `0` if the state does not exist.
+    /// Returns the number of transitions from `state`, `0` if it does not
+    /// exist.
     #[inline]
     pub fn out_degree(&self, state: State) -> usize {
         if !self.has_state(state) {
@@ -113,20 +133,20 @@ impl FastAutomaton {
         self.transitions[state].len()
     }
 
-    /// Returns an iterator over the automaton’s states.
+    /// Returns an iterator over the states.
     #[inline]
     pub fn states(&self) -> impl Iterator<Item = State> + '_ {
         (0..self.transitions.len()).filter(|s| !self.removed_states.contains(s))
     }
 
-    /// Returns a vector containing the automaton’s states.
+    /// Returns the states.
     #[inline]
     pub fn states_vec(&self) -> Vec<State> {
         self.states().collect()
     }
 
-    /// Returns an iterator over states directly reachable from the given state in one transition.
-    /// Returns an empty iterator if the state does not exist.
+    /// Returns an iterator over the states that `state` has a transition to;
+    /// empty if it does not exist.
     #[inline]
     pub fn direct_states(&self, state: State) -> impl Iterator<Item = State> + '_ {
         self.transitions.get(state).into_iter().flat_map(move |t| {
@@ -136,13 +156,13 @@ impl FastAutomaton {
         })
     }
 
-    /// Returns a vector of states directly reachable from the given state in one transition.
+    /// Returns the states that `state` has a transition to.
     #[inline]
     pub fn direct_states_vec(&self, state: State) -> Vec<State> {
         self.direct_states(state).collect()
     }
 
-    /// Returns a vector of transitions to the given state.
+    /// Returns the transitions to `state`, with the state each comes from.
     pub fn transitions_to_vec(&self, state: State) -> Vec<(State, Condition)> {
         if !self.has_state(state) {
             return vec![];
@@ -162,8 +182,8 @@ impl FastAutomaton {
         in_transitions
     }
 
-    /// Returns a vector of transitions from the given state.
-    /// Returns an empty vector if the state does not exist.
+    /// Returns the transitions from `state`, with the state each leads to;
+    /// empty if it does not exist.
     #[inline]
     pub fn transitions_from_vec(&self, state: State) -> Vec<(Condition, State)> {
         self.transitions
@@ -177,8 +197,8 @@ impl FastAutomaton {
             .unwrap_or_default()
     }
 
-    /// Returns an iterator over transitions from the given state.
-    /// Returns an empty iterator if the state does not exist.
+    /// Returns an iterator over the transitions from `state`, with the state
+    /// each leads to; empty if it does not exist.
     #[inline]
     pub fn transitions_from(
         &self,
@@ -191,7 +211,7 @@ impl FastAutomaton {
         })
     }
 
-    /// Returns `true` if there is a directed transition from `from_state` to `to_state`.
+    /// Returns `true` if there is a transition from `from_state` to `to_state`.
     #[inline]
     pub fn has_transition(&self, from_state: State, to_state: State) -> bool {
         if !self.has_state(from_state) || !self.has_state(to_state) {
@@ -214,14 +234,14 @@ impl FastAutomaton {
             .collect()
     }
 
-    /// Returns the number of states in the automaton.
+    /// Returns the number of states.
     #[inline]
     pub fn number_of_states(&self) -> usize {
         self.transitions.len() - self.removed_states.len()
     }
 
-    /// Returns a reference to the condition of the directed transition between the two states, if any.
-    /// Returns `None` if either state does not exist.
+    /// Returns the condition of the transition from `from_state` to `to_state`;
+    /// `None` if there is none or if a state does not exist.
     #[inline]
     pub fn condition(&self, from_state: State, to_state: State) -> Option<&Condition> {
         self.transitions
@@ -235,49 +255,54 @@ impl FastAutomaton {
         self.start_state
     }
 
-    /// Returns a reference to the set of accept (final) states.
+    /// Returns the accept states.
     #[inline]
     pub fn accept_states(&self) -> &IntSet<State> {
         &self.accept_states
     }
 
-    /// Returns a reference to the automaton's spanning set.
+    /// Returns the spanning set: the ranges of characters that the conditions
+    /// of the transitions are expressed over.
     #[inline]
     pub fn spanning_set(&self) -> &SpanningSet {
         &self.spanning_set
     }
 
-    /// Returns `true` if the given state is one of the accept states.
+    /// Returns `true` if `state` is an accept state.
     #[inline]
     pub fn is_accepted(&self, state: State) -> bool {
         self.accept_states.contains(&state)
     }
 
-    /// Returns `true` if the automaton is deterministic.
+    /// Returns `true` if the automaton is known to be deterministic.
     ///
-    /// Note: this flag degrades monotonically. Once `add_transition` introduces
-    /// an overlapping condition, the flag flips to `false` and is not
-    /// re-checked by `remove_transition` or `remove_state`. The automaton may
-    /// in fact be deterministic again after such removals; call
-    /// [`determinize`](Self::determinize) if you need a fresh DFA.
+    /// `false` does not prove the contrary: adding a transition that overlaps
+    /// another one makes it `false`, and removing transitions or states does
+    /// not make it `true` again. [`determinize`](Self::determinize) returns an
+    /// automaton for which it is `true`.
     #[inline]
     pub fn is_deterministic(&self) -> bool {
         self.deterministic
     }
 
-    /// Returns `true` if the automaton is minimal.
+    /// Returns `true` if the automaton is known to be the minimal deterministic
+    /// automaton of its language. [`minimize`](Self::minimize) makes it hold.
     #[inline]
     pub fn is_minimal(&self) -> bool {
         self.minimal
     }
 
-    /// Returns `true` if the automaton contains the given state.
+    /// Returns `true` if `state` is a state of the automaton.
     #[inline]
     pub fn has_state(&self, state: State) -> bool {
         !(state >= self.transitions.len() || self.removed_states.contains(&state))
     }
 
-    /// Returns `true` if the automaton matches the given string.
+    /// Returns `true` if the automaton accepts `string`, as a whole.
+    ///
+    /// Linear in the length of `string` for a deterministic automaton.
+    /// Otherwise, each character can take time proportional to the number of
+    /// transitions.
     #[tracing::instrument(level = "debug", skip(self, string), fields(states = self.number_of_states(), string_len=string.len()))]
     pub fn is_match(&self, string: &str) -> bool {
         let mut current: IntSet<State> = IntSet::default();
@@ -316,13 +341,13 @@ impl FastAutomaton {
         current.iter().any(|s| self.accept_states.contains(s))
     }
 
-    /// Returns the automaton's DOT representation.
+    /// Returns the automaton in Graphviz DOT format.
     #[inline]
     pub fn to_dot(&self) -> String {
         format!("{self}")
     }
 
-    /// Prints the automaton's DOT representation.
+    /// Prints the automaton in Graphviz DOT format to the standard output.
     #[inline]
     pub fn print_dot(&self) {
         println!("{self}");
