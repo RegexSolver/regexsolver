@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+- `subset`, on `FastAutomaton` and on `Term`, no longer explores a pair of a state and a set of states once it has met the same state with a smaller set. The sets of a state are met in the order of the words that reach them, not smallest first, and each set met before the smallest one was explored. `a(a|b){20}` ⊆ `(a|b)*a(a|b){20}` takes 11 µs instead of 33 s, and the other benchmarked patterns of the `(a|b)*a(a|b){n}` family 13 to 470 times less time. The other benchmarked patterns take up to 12% more time.
+
 ## [1.3.0] - 2026-11-20
 
 ### Added

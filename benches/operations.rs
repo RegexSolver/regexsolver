@@ -288,8 +288,10 @@ fn bench_decision(c: &mut Criterion) {
         });
     };
 
-    // Nothing to skip: the 2^(N+1) reachable sets of states all accept
-    // different languages, so the walk is as long as determinization.
+    // Nothing for `equivalent` to skip: the 2^(N+1) reachable sets of states
+    // accept different languages, so its walk is as long as determinization.
+    // `subset` leaves most of its pairs unexplored, as the same state is met
+    // with a smaller set after them.
     for n in [8, 12] {
         let left = automaton(&blowup_pattern(n));
         let right = automaton(&format!("(a*b*)*a(a|b){{{n}}}"));
@@ -337,12 +339,25 @@ fn bench_decision(c: &mut Criterion) {
     bench_pair("spanning_sets", &left, &right);
 
     // Different languages: the walk stops at the first counterexample, which
-    // here is a dozen letters in, so part of the blow-up is still walked.
+    // here is a dozen letters in, so `equivalent` walks part of the blow-up.
+    // `subset` leaves most of it unexplored, as for `blowup_N`.
     let left = automaton(&blowup_pattern(12));
     let right = automaton(&blowup_pattern(11));
     assert!(!left.equivalent(&right).unwrap());
     assert!(!left.subset(&right).unwrap());
     bench_pair("counterexample", &left, &right);
+
+    // `subset` only: the left operand reaches the 2^N sets of the right one
+    // that record where the `a`s were, which all contain the set `ab…b`
+    // reaches. Larger sets are met first and must be dropped once it is.
+    for n in [12, 20] {
+        let left = automaton(&format!("a(a|b){{{n}}}"));
+        let right = automaton(&blowup_pattern(n));
+        assert!(left.subset(&right).unwrap());
+        group.bench_function(format!("subset/blowup_{n}_minuend"), |b| {
+            b.iter(|| black_box(&left).subset(black_box(&right)).unwrap())
+        });
+    }
 
     let left = automaton(".*abc.*");
     let right = automaton(".*cba.*");

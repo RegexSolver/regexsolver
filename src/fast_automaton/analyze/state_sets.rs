@@ -254,6 +254,44 @@ impl<T> SetTrie<T> {
         }
         false
     }
+
+    /// Returns `true` if a set stored below `root` is contained in `set`
+    /// and smaller than it. `stack` is reused as in
+    /// [`has_subset_of`](Self::has_subset_of), with the depth of each node.
+    pub(super) fn has_strict_subset_of(
+        &self,
+        root: usize,
+        set: &Marks,
+        stack: &mut Vec<(usize, usize)>,
+    ) -> bool {
+        // A stored subset as large as `set` is `set` itself, which ends at
+        // the depth of its size.
+        let size = set.members().len();
+        stack.clear();
+        stack.push((root, 0));
+        while let Some((node, depth)) = stack.pop() {
+            let node = &self.nodes[node];
+            if depth < size && !node.values.is_empty() {
+                return true;
+            }
+            let depth = depth + 1;
+            match node.few_children() {
+                Some(children) => stack.extend(
+                    children
+                        .iter()
+                        .filter(|(id, _)| set.contains(*id))
+                        .map(|&(_, child)| (child, depth)),
+                ),
+                None => stack.extend(
+                    set.members()
+                        .iter()
+                        .filter_map(|&id| node.child(id))
+                        .map(|child| (child, depth)),
+                ),
+            }
+        }
+        false
+    }
 }
 
 /// A set of states with membership in constant time, and reset in time
@@ -334,6 +372,34 @@ mod tests {
         assert!(has_subset_of(&trie, second, &[2, 5, wide + 5, wide + 6]));
         assert!(!has_subset_of(&trie, second, &[5, wide + 6]));
         assert!(!has_subset_of(&trie, first, &[5, wide + 5]));
+    }
+
+    #[test]
+    fn has_strict_subset_of_ignores_the_set_itself() {
+        let mut trie = SetTrie::new();
+        let (root, other) = (trie.new_root(), trie.new_root());
+        let mut marks = Marks::new(8);
+        let mut has_strict_subset_of = |trie: &SetTrie<()>, root: usize, set: &[Id]| {
+            set.iter().for_each(|&id| assert!(marks.insert(id)));
+            let found = trie.has_strict_subset_of(root, &marks, &mut Vec::new());
+            marks.clear();
+            found
+        };
+
+        trie.insert(root, &[1, 2, 3], ());
+        trie.insert(root, &[2, 4], ());
+        trie.insert(other, &[2], ());
+        assert!(!has_strict_subset_of(&trie, root, &[1, 2, 3]));
+        assert!(!has_strict_subset_of(&trie, root, &[2, 4]));
+        assert!(has_strict_subset_of(&trie, root, &[1, 2, 3, 4]));
+        assert!(has_strict_subset_of(&trie, root, &[0, 2, 4]));
+        assert!(!has_strict_subset_of(&trie, root, &[1, 3, 4]));
+
+        trie.insert(root, &[2], ());
+        assert!(has_strict_subset_of(&trie, root, &[1, 2, 3]));
+        assert!(!has_strict_subset_of(&trie, root, &[2]));
+        assert!(!has_strict_subset_of(&trie, other, &[2]));
+        assert!(has_strict_subset_of(&trie, other, &[2, 4]));
     }
 
     #[test]

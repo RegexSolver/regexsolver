@@ -31,9 +31,14 @@ impl FastAutomaton {
     /// The walk visits the pairs `(x, Y)` of a state of `self` and the set of
     /// `other`'s states that one word reaches. A pair is a counterexample
     /// when `x` accepts and `Y` does not, or when `Y` is empty (`x` is live).
-    /// It is skipped when `(x, Y')` was met for some `Y' ⊆ Y`. The pairs
-    /// kept are not a strict antichain: a pair met earlier with a superset
-    /// of `Y` is not removed, which costs memory but skips the same pairs.
+    /// It is skipped when `(x, Y')` was met for some `Y' ⊆ Y`, and, once
+    /// queued, it is left unexplored when `(x, Y')` has been met since for
+    /// some `Y' ⊊ Y`: `(x, Y')` leads to every counterexample it leads to.
+    /// The sets of a state are met in the order of the words that reach
+    /// them, not smallest first: without that second check, the walk
+    /// explores every set met before the smallest, 2^n of them on
+    /// `a(a|b){n}` ⊆ `(a|b)*a(a|b){n}`. The pairs left unexplored stay
+    /// stored: a pair they skip, `(x, Y')` skips.
     ///
     /// Inclusion is also the equivalence `self ∪ other ≡ other`, but
     /// [`equivalent_over_state_sets`](Self::equivalent_over_state_sets)
@@ -72,15 +77,27 @@ impl FastAutomaton {
 
         let mut successors = vec![Vec::new(); bases];
         let mut query = Marks::new(other.transitions.len());
-        // The nodes `has_subset_of` has to visit, reused by each call.
+        // The nodes `has_subset_of` and `has_strict_subset_of` have to
+        // visit, reused by each call.
         let mut stack = Vec::new();
+        let mut strict_stack = Vec::new();
         let mut pairs = 1;
 
         while let Some((state, set)) = worklist.pop_front() {
+            let set = &sets[set];
+            set.iter().for_each(|&id| {
+                query.insert(id);
+            });
+            let root = roots[state as usize].expect("a queued pair is stored");
+            let dominated = visited.has_strict_subset_of(root, &query, &mut strict_stack);
+            query.clear();
+            if dominated {
+                continue;
+            }
             execution_profile.assert_not_timed_out()?;
             execution_profile.assert_max_number_of_states(pairs)?;
 
-            right.successors(&sets[set], &mut successors);
+            right.successors(set, &mut successors);
 
             for (condition, to_state) in left.transitions_from(state) {
                 for base in condition.iter_set_bits() {
@@ -147,6 +164,33 @@ mod tests {
 
         assert!(a_star.subset(&other).unwrap());
         assert!(!other.subset(&a_star).unwrap());
+    }
+
+    // After `a(a|b){k}`, `other` is in a set of states that records where
+    // the `a`s were: 2^k sets, all containing the one reached by `ab…b`.
+    // The `a` successors are queued first, so the larger sets are met before
+    // it, and their pairs must be dropped once it is met.
+    #[test]
+    fn subset_drops_pairs_met_with_a_superset() {
+        use crate::execution_profile::ExecutionProfileBuilder;
+
+        let n = 30;
+        let left = RegularExpression::new(&format!("a(a|b){{{n}}}"))
+            .unwrap()
+            .to_automaton()
+            .unwrap();
+        let right = RegularExpression::new(&format!("(a|b)*a(a|b){{{n}}}"))
+            .unwrap()
+            .to_automaton()
+            .unwrap();
+
+        ExecutionProfileBuilder::new()
+            .max_number_of_states(10 * n)
+            .build()
+            .run(|| {
+                assert!(left.subset(&right).unwrap());
+                assert!(!right.subset(&left).unwrap());
+            });
     }
 
     #[test]

@@ -266,13 +266,23 @@ fn respects_the_state_budget_and_the_timeout() {
     let a = automaton("(a|b)*a(a|b){11}");
     let b = automaton("(a*b*)*a(a|b){11}");
     let (a_dfa, b_dfa) = (a.determinize().unwrap(), b.determinize().unwrap());
+    // `a ⊆ b` drops the pairs met with a superset and fits the budget. Here
+    // the sets of states `(a|b)*` reaches record the last 11 letters and are
+    // pairwise incomparable: none can be dropped.
+    let universal = automaton("(a|b)*");
+    let last_letters = FastAutomaton::union_all(&[
+        automaton("(a|b)*a(a|b){11}"),
+        automaton("(a|b)*b(a|b){11}"),
+        automaton("(a|b){0,11}"),
+    ])
+    .unwrap();
     ExecutionProfileBuilder::new()
         .max_number_of_states(100)
         .build()
         .run(|| {
             let err = EngineError::AutomatonHasTooManyStates;
             assert_eq!(a.equivalent(&b).unwrap_err(), err);
-            assert_eq!(a.subset(&b).unwrap_err(), err);
+            assert_eq!(universal.subset(&last_letters).unwrap_err(), err);
             assert_eq!(a_dfa.equivalent(&b_dfa).unwrap_err(), err);
             assert_eq!(a.difference(&b).unwrap_err(), err);
             assert_eq!(a.symmetric_difference(&b).unwrap_err(), err);
