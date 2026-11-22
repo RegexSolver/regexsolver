@@ -6,8 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-11-22
+
 ### Fixed
-- `subset`, on `FastAutomaton` and on `Term`, no longer explores a pair of a state and a set of states once it has met the same state with a smaller set. The sets of a state are met in the order of the words that reach them, not smallest first, and each set met before the smallest one was explored. `a(a|b){20}` ⊆ `(a|b)*a(a|b){20}` takes 11 µs instead of 33 s, and the other benchmarked patterns of the `(a|b)*a(a|b){n}` family 13 to 470 times less time. The other benchmarked patterns take up to 12% more time.
+- `subset`, on `FastAutomaton` and on `Term`, no longer explores a pair of a state and a set of states once it has met the same state with a smaller set. The sets of a state are met in the order of the words that reach them, not smallest first, and each set met before the smallest one was explored. `a(a|b){20}` ⊆ `(a|b)*a(a|b){20}` takes microseconds instead of around 30 s, and the other benchmarked patterns of the `(a|b)*a(a|b){n}` family 10 to 500 times less time. The other benchmarked patterns take a few percent more time.
 
 ## [1.3.0] - 2026-11-20
 
@@ -136,7 +138,8 @@ This is a major redesign of the public API around the `Term` enum (wrapping eith
 
 Releases prior to 1.0.0 (`v0.1.0` through `v0.3.1`) predate this changelog; see the [GitHub tags](https://github.com/RegexSolver/regexsolver/tags) and commit history for details.
 
-[Unreleased]: https://github.com/RegexSolver/regexsolver/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/RegexSolver/regexsolver/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/RegexSolver/regexsolver/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/RegexSolver/regexsolver/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/RegexSolver/regexsolver/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/RegexSolver/regexsolver/compare/v1.0.2...v1.1.0
